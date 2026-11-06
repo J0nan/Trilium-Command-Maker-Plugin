@@ -13,6 +13,9 @@ yarn-error.log*
 coverage/
 *.log
 
+# Agent/planning artifacts kept locally only
+odd/
+
 # Editors and OS
 .vscode/
 .idea/
