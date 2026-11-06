@@ -1,0 +1,25 @@
+# Code intelligence / agent tooling — not part of the plugin
+.codegraph/
+.atl/
+.alt/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# Local test / coverage output
+coverage/
+*.log
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+.env.*
+
+# dist/ is intentionally committed: it is the artifact users import into Trilium.
