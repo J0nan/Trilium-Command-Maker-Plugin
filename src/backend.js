@@ -225,7 +225,7 @@ function beRun(params) {
 
         if (!hasSeededCommands(template.noteId)) {
             seedCommand('ffmpeg compress', 'ffmpeg -i "{{input}}"', [
-                { label: 'Input file', flag: '-i', type: 'path', placeholder: 'input', order: 10, quote: 'double' },
+                { label: 'Input file', flag: '-i', type: 'path', placeholder: 'input', order: 10 },
                 { label: 'Video codec', flag: '-c:v', type: 'enum', enumValues: ['libx264', 'libx265', 'libvpx-vp9'], defaultValue: 'libx264', order: 20 },
                 { label: 'CRF quality', flag: '-crf', type: 'number', defaultValue: '23', order: 30 },
                 { label: 'Overwrite output', flag: '-y', type: 'boolean', order: 40 }
@@ -311,15 +311,15 @@ function beRun(params) {
     }
 
     switch (options.action) {
-        case ACTIONS.bootstrap:
+        case 'bootstrap':
             return bootstrap();
-        case ACTIONS.createCommand:
+        case 'createCommand':
             return createCommand();
-        case ACTIONS.addOption:
+        case 'addOption':
             return addOption();
-        case ACTIONS.savePreset:
+        case 'savePreset':
             return savePreset();
-        case ACTIONS.deletePreset:
+        case 'deletePreset':
             return deletePreset();
         default:
             throw new Error('Unknown action: ' + options.action);

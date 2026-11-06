@@ -707,7 +707,7 @@ function beRun(params) {
 
         if (!hasSeededCommands(template.noteId)) {
             seedCommand('ffmpeg compress', 'ffmpeg -i "{{input}}"', [
-                { label: 'Input file', flag: '-i', type: 'path', placeholder: 'input', order: 10, quote: 'double' },
+                { label: 'Input file', flag: '-i', type: 'path', placeholder: 'input', order: 10 },
                 { label: 'Video codec', flag: '-c:v', type: 'enum', enumValues: ['libx264', 'libx265', 'libvpx-vp9'], defaultValue: 'libx264', order: 20 },
                 { label: 'CRF quality', flag: '-crf', type: 'number', defaultValue: '23', order: 30 },
                 { label: 'Overwrite output', flag: '-y', type: 'boolean', order: 40 }
@@ -793,15 +793,15 @@ function beRun(params) {
     }
 
     switch (options.action) {
-        case ACTIONS.bootstrap:
+        case 'bootstrap':
             return bootstrap();
-        case ACTIONS.createCommand:
+        case 'createCommand':
             return createCommand();
-        case ACTIONS.addOption:
+        case 'addOption':
             return addOption();
-        case ACTIONS.savePreset:
+        case 'savePreset':
             return savePreset();
-        case ACTIONS.deletePreset:
+        case 'deletePreset':
             return deletePreset();
         default:
             throw new Error('Unknown action: ' + options.action);
@@ -1583,6 +1583,22 @@ async function readOptionTitles(note) {
     });
 }
 
+/**
+ * The base string lives in the note content (code note, raw text) unless
+ * #cmBase overrides it. It must be indexed here: search has to match the
+ * command text, not just the title.
+ */
+async function readBase(note, labels) {
+    if (labels && labels[Model.LABELS.base] !== undefined) {
+        return String(labels[Model.LABELS.base]);
+    }
+    try {
+        return String(await note.getContent());
+    } catch (error) {
+        return '';
+    }
+}
+
 async function refresh() {
     await ensureBootstrap();
     const apiRef = getApi();
@@ -1614,6 +1630,7 @@ async function refresh() {
             noteId: note.noteId,
             title: note.title,
             labels: labels,
+            base: await readBase(note, labels),
             optionTitles: optionTitles
         });
     }
@@ -1629,7 +1646,7 @@ function search(query) {
             title: item.title,
             description: item.labels[Model.LABELS.description] || '',
             tags: item.labels[Model.LABELS.tags] || '',
-            base: item.labels[Model.LABELS.base] || '',
+            base: item.base || item.labels[Model.LABELS.base] || '',
             options: [],
             optionTitles: item.optionTitles || []
         }, query);

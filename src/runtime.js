@@ -83,6 +83,22 @@ async function readOptionTitles(note) {
     });
 }
 
+/**
+ * The base string lives in the note content (code note, raw text) unless
+ * #cmBase overrides it. It must be indexed here: search has to match the
+ * command text, not just the title.
+ */
+async function readBase(note, labels) {
+    if (labels && labels[Model.LABELS.base] !== undefined) {
+        return String(labels[Model.LABELS.base]);
+    }
+    try {
+        return String(await note.getContent());
+    } catch (error) {
+        return '';
+    }
+}
+
 async function refresh() {
     await ensureBootstrap();
     const apiRef = getApi();
@@ -114,6 +130,7 @@ async function refresh() {
             noteId: note.noteId,
             title: note.title,
             labels: labels,
+            base: await readBase(note, labels),
             optionTitles: optionTitles
         });
     }
@@ -129,7 +146,7 @@ function search(query) {
             title: item.title,
             description: item.labels[Model.LABELS.description] || '',
             tags: item.labels[Model.LABELS.tags] || '',
-            base: item.labels[Model.LABELS.base] || '',
+            base: item.base || item.labels[Model.LABELS.base] || '',
             options: [],
             optionTitles: item.optionTitles || []
         }, query);

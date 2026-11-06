@@ -41,8 +41,8 @@ Add the label `#cmPlugin`, then either create a launcher pointing at it
 
 ## Using it
 
-- **Search** filters command notes by title, description, tags, base command and
-  option names. `ArrowUp` / `ArrowDown` / `Enter`.
+- **Search** filters command notes by title, description, tags, base command
+  (note content or `#cmBase`) and option names. `ArrowUp` / `ArrowDown` / `Enter`.
 - **Options** render as checkboxes (boolean), selects (enum), number inputs and
   text inputs. Required options are marked `*`.
 - **Command** is an editable code box. Editing it stops the generator from
@@ -66,7 +66,7 @@ Command Maker/
 ├── Option Template/           #template #cmOptionTemplate
 └── ffmpeg compress/           #cmCommand
     ├── Options/
-    │   ├── Input file         #cmFlag=-i   #cmPlaceholder=input #cmType=path #cmQuote=double
+    │   ├── Input file         #cmFlag=-i   #cmPlaceholder=input #cmType=path
     │   ├── Video codec        #cmFlag=-c:v #cmType=enum #cmValues=libx264,libx265 #cmDefault=libx264
     │   ├── CRF quality        #cmFlag=-crf #cmType=number #cmDefault=23
     │   └── Overwrite output   #cmFlag=-y   #cmType=boolean
@@ -98,7 +98,7 @@ Option notes:
 | `#cmDefault` | initial value | empty / `false` |
 | `#cmRequired` | `true` marks the option required | `false` |
 | `#cmOrder` | numeric ordering of emitted segments | `100` |
-| `#cmQuote` | `none`, `single`, `double` | `none` |
+| `#cmQuote` | `none`, `single`, `double` (flag segments only) | `none` |
 | `#cmSep` | `space` or `=` (`--flag=value`) | `space` |
 
 ### Flags and placeholders together
@@ -113,6 +113,8 @@ Both mechanisms coexist:
 3. A placeholder with no backing option becomes an **inferred** text field in
    the palette.
 4. `\{{name}}` emits a literal `{{name}}`.
+5. Inline substitution is verbatim: quoting inside the base string is yours.
+   `#cmQuote` only applies to emitted flag segments.
 
 Values are rendered left to right: the substituted base first, then flag
 segments ordered by `#cmOrder` (ties broken by title).
