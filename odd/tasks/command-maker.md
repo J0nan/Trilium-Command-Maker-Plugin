@@ -103,3 +103,8 @@ Verifier ran a scratch copy at `%TEMP%\opencode\cm-verify-7k2d9`; workspace unto
 - **B2 (blocker, fixed):** search indexed only `#cmBase`, not the note content, which is where the base string actually lives. `search('ffmpeg')` returned 0 for a command titled `My encode`. Fix: `readBase()` indexes content (or `#cmBase`) during `refresh()`; regression test asserts content-based matching.
 - Advisories fixed: `node-compile-cache/` added to `.gitignore`; the seeded inline option no longer carries a dead `#cmQuote`.
 - Advisories accepted: inline substitution is verbatim (documented in S7.6 and the README); empty inline values leave dangling context but emit a warning; all Trilium API calls remain unverifiable at runtime.
+
+### L6 — bounded recheck and review assessment
+- Recheck at `d0d9c72` (B1/B2 only): serialised `beRun` dispatches all five actions; `Runtime.search('ffmpeg')` finds a command whose content is `ffmpeg -i "{{input}}"`; both new test files **fail** on the pre-fix sources (`git checkout 0a780ba -- src/backend.js src/runtime.js`) and pass at HEAD. 34/34 tests, `dist/*` deterministic.
+- `gentle-ai review assess --base-ref 6705ad1 --committed-only` → risk `medium`, changed_paths 19, changed_lines 4706, `review_due: false`, reason `under_budget`. Native review not started: not due and not explicitly requested.
+- Scratch copies removed: `%TEMP%\opencode\cm-verify-7k2d9`, `%TEMP%\opencode\cm-verify-recheck-4m8t`.
