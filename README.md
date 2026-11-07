@@ -1,13 +1,11 @@
 # Command Maker for Trilium
 
-A TriliumNext plugin that turns notes into a command palette: search a command,
-fill in its options, get a runnable string you can edit, copy, insert, or save
-as a preset.
+A TriliumNext plugin that turns notes into a command palette: search a command, fill in its options, get a runnable string you can edit, copy, insert, or save as a preset.
 
 Built for TriliumNext ≥ 0.101 (templates, launcher API, frontend scripts).
 
 ```
-Ctrl+Shift+K  →  search  →  fill options  →  command  →  copy / insert / preset
+Ctrl+Shift+Space  →  search  →  fill options  →  command  →  copy / insert / preset
 ```
 
 ## Install
@@ -16,7 +14,7 @@ Ctrl+Shift+K  →  search  →  fill options  →  command  →  copy / insert /
    **JavaScript (Trilium backend)**.
 2. Paste the whole content of [`dist/install.js`](dist/install.js) into it.
 3. Press the **Execute** button on the note (or right-click → Execute script).
-4. Press `Ctrl+Shift+K`.
+4. Press `Ctrl+Shift+Space`.
 
 The installer is idempotent. It creates:
 
@@ -28,9 +26,34 @@ The installer is idempotent. It creates:
 | `Command Maker.js` (`#cmPlugin`) | the plugin runtime |
 | two example commands | `ffmpeg compress`, `git commit` |
 
-It also registers a launcher (`Command Maker`, `Ctrl+Shift+K`) through
+It also registers a launcher (`Command Maker`, `Ctrl+Shift+Space`) through
 `api.createOrUpdateLauncher`, so no attribute editing and no `#widget` label are
-required.
+required. The shortcut can be changed afterwards — see below.
+
+### Changing the keyboard shortcut
+
+The default is `Ctrl+Shift+Space`. The shortcut belongs to the **launcher note**
+(`#keyboardShortcut`), not to the plugin code, so you can change it without
+rebuilding or reinstalling:
+
+1. **Global menu → Configure launchbar → Command Maker**, and set the shortcut
+   field. The launcher must be in **Visible launchers**, otherwise the shortcut
+   never fires.
+2. Or edit the launcher note `al_commandmaker` (hidden subtree) and change its
+   `#keyboardShortcut` label. Removing the label keeps the launcher button and
+   disables the hotkey.
+
+Re-running the installer **preserves** the shortcut you set. Resolution order:
+
+| Priority | Source |
+| --- | --- |
+| 1 | `#cmShortcut` on the `Command Maker` root note (empty value = no shortcut) |
+| 2 | `#keyboardShortcut` already present on the launcher |
+| 3 | `ctrl+shift+space` (default for a fresh install) |
+
+So to pin a shortcut that survives reinstalls, add `#cmShortcut=ctrl+alt+k` to the
+`Command Maker` note. Useful alternatives that rarely collide: `ctrl+alt+k`,
+`alt+shift+k`, `ctrl+shift+space`.
 
 ### Manual install (no installer script)
 
@@ -41,8 +64,8 @@ Add the label `#cmPlugin`, then either create a launcher pointing at it
 
 ## Using it
 
-- **Search** filters command notes by title, description, tags, base command and
-  option names. `ArrowUp` / `ArrowDown` / `Enter`.
+- **Search** filters command notes by title, description, tags, base command
+  (note content or `#cmBase`) and option names. `ArrowUp` / `ArrowDown` / `Enter`.
 - **Options** render as checkboxes (boolean), selects (enum), number inputs and
   text inputs. Required options are marked `*`.
 - **Command** is an editable code box. Editing it stops the generator from
@@ -66,7 +89,7 @@ Command Maker/
 ├── Option Template/           #template #cmOptionTemplate
 └── ffmpeg compress/           #cmCommand
     ├── Options/
-    │   ├── Input file         #cmFlag=-i   #cmPlaceholder=input #cmType=path #cmQuote=double
+    │   ├── Input file         #cmFlag=-i   #cmPlaceholder=input #cmType=path
     │   ├── Video codec        #cmFlag=-c:v #cmType=enum #cmValues=libx264,libx265 #cmDefault=libx264
     │   ├── CRF quality        #cmFlag=-crf #cmType=number #cmDefault=23
     │   └── Overwrite output   #cmFlag=-y   #cmType=boolean
@@ -98,7 +121,7 @@ Option notes:
 | `#cmDefault` | initial value | empty / `false` |
 | `#cmRequired` | `true` marks the option required | `false` |
 | `#cmOrder` | numeric ordering of emitted segments | `100` |
-| `#cmQuote` | `none`, `single`, `double` | `none` |
+| `#cmQuote` | `none`, `single`, `double` (flag segments only) | `none` |
 | `#cmSep` | `space` or `=` (`--flag=value`) | `space` |
 
 ### Flags and placeholders together
@@ -113,6 +136,8 @@ Both mechanisms coexist:
 3. A placeholder with no backing option becomes an **inferred** text field in
    the palette.
 4. `\{{name}}` emits a literal `{{name}}`.
+5. Inline substitution is verbatim: quoting inside the base string is yours.
+   `#cmQuote` only applies to emitted flag segments.
 
 Values are rendered left to right: the substituted base first, then flag
 segments ordered by `#cmOrder` (ties broken by title).

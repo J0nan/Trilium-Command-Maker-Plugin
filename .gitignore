@@ -5,12 +5,16 @@
 
 # Node
 node_modules/
+node-compile-cache/
 npm-debug.log*
 yarn-error.log*
 
 # Local test / coverage output
 coverage/
 *.log
+
+# Agent/planning artifacts kept locally only
+odd/
 
 # Editors and OS
 .vscode/
