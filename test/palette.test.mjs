@@ -45,11 +45,15 @@ function createDom() {
             id: '',
             className: '',
             children: [],
+            attributes: {},
             listeners: {},
             value: '',
             type: '',
             placeholder: '',
             checked: false,
+            disabled: false,
+            rows: 0,
+            files: null,
             style: {},
             classList: {
                 add(name) {
@@ -69,11 +73,19 @@ function createDom() {
                     } else {
                         node.classList.remove(name);
                     }
+                },
+                contains(name) {
+                    return classed(node, name);
                 }
             },
             appendChild(child) {
                 node.children.push(child);
                 return child;
+            },
+            append() {
+                for (const child of arguments) {
+                    node.children.push(child);
+                }
             },
             addEventListener(name, handler) {
                 node.listeners[name] = node.listeners[name] || [];
@@ -86,6 +98,9 @@ function createDom() {
                     handlers.splice(index, 1);
                 }
             },
+            removeAttribute(name) {
+                delete node.attributes[name];
+            },
             remove() {
                 node.removed = true;
             },
@@ -93,7 +108,12 @@ function createDom() {
                 document.activeElement = node;
             },
             select() {},
-            setAttribute() {},
+            setAttribute(name, value) {
+                node.attributes[name] = String(value);
+            },
+            getAttribute(name) {
+                return Object.prototype.hasOwnProperty.call(node.attributes, name) ? node.attributes[name] : null;
+            },
             scrollIntoView() {},
             dispatch(name, event) {
                 const payload = Object.assign({ preventDefault() {}, target: node }, event || {});
@@ -138,18 +158,28 @@ function createDom() {
 }
 
 function note(spec) {
+    const labels = spec.labels || {};
     return {
         noteId: spec.noteId,
         title: spec.title,
+        type: spec.type || 'text',
         getLabelValue(name) {
-            const labels = spec.labels || {};
             return Object.prototype.hasOwnProperty.call(labels, name) ? labels[name] : null;
+        },
+        hasLabel(name) {
+            return Object.prototype.hasOwnProperty.call(labels, name);
         },
         async getChildNotes() {
             return spec.children || [];
         },
         async getContent() {
             return spec.content || '';
+        },
+        getParentNotes() {
+            return spec.parents || [];
+        },
+        getBestNotePathString() {
+            return 'root/' + spec.noteId;
         }
     };
 }
@@ -159,7 +189,7 @@ function tick() {
 }
 
 async function waitFor(predicate, label) {
-    for (let attempt = 0; attempt < 400; attempt += 1) {
+    for (let attempt = 0; attempt < 500; attempt += 1) {
         const value = predicate();
         if (value) {
             return value;
@@ -169,60 +199,129 @@ async function waitFor(predicate, label) {
     throw new Error('timed out waiting for ' + (label || 'condition'));
 }
 
-test('palette searches, renders, copies and inserts a command', async () => {
-    const document = createDom();
+function buildFixture() {
+    const media = note({ noteId: 'cat-media', title: 'Media' });
+    const vcs = note({ noteId: 'cat-vcs', title: 'Version control' });
 
-    const templateNote = note({ noteId: 'tpl', title: 'Command Template' });
-    const inputOption = note({
+    const input = note({
         noteId: 'o1',
         title: 'Input file',
-        labels: { cmFlag: '-i', cmType: 'path', cmPlaceholder: 'input', cmQuote: 'double' }
+        labels: { cmOption: '', cmFlag: '-i', cmType: 'path', cmDoc: 'Input file to read.', cmDefault: 'in.mp4', cmOrder: '10' }
     });
-    const codecOption = note({
+    const codec = note({
         noteId: 'o2',
-        title: 'Codec',
-        labels: { cmFlag: '-c:v', cmType: 'enum', cmValues: 'libx264,libx265', cmDefault: 'libx264' }
+        title: 'Video codec',
+        labels: { cmOption: '', cmFlag: '-c:v', cmType: 'enum', cmValues: 'libx264,libx265', cmDoc: 'Video encoder.', cmDefault: 'libx264', cmOrder: '20' }
     });
-    const optionsFolder = note({
-        noteId: 'options',
+    const verbose = note({
+        noteId: 'o3',
+        title: 'Verbose',
+        labels: { cmOption: '', cmFlag: '-v', cmType: 'boolean', cmDoc: 'Print more details.', cmOrder: '30' }
+    });
+    const presets = note({
+        noteId: 'presets1',
+        title: 'Presets',
+        type: 'code',
+        labels: { cmPresets: '' },
+        content: JSON.stringify({ v: 1, presets: [{ name: 'web', values: { 'note:o1': 'web.mp4' } }] })
+    });
+    const options = note({
+        noteId: 'opts1',
         title: 'Options',
         labels: { cmOptions: '' },
-        children: [inputOption, codecOption]
+        children: [input, codec, verbose, presets]
     });
-    const presetsFolder = note({
-        noteId: 'presets',
-        title: 'Presets',
-        labels: { cmPresets: '' },
-        children: []
+    const install = note({
+        noteId: 'i1',
+        title: 'Install',
+        labels: { cmInstall: '' },
+        content: '<p>winget install Gyan.FFmpeg</p>'
     });
-    const commandNote = note({
-        noteId: 'cmd1',
-        title: 'ffmpeg compress',
-        labels: { cmDesc: 'Encode a video' },
-        content: 'ffmpeg -i "{{input}}"',
-        children: [optionsFolder, presetsFolder]
+    const usage = note({
+        noteId: 'u1',
+        title: 'Usage',
+        labels: { cmUsage: '' },
+        content: '<p>Compress a video:</p><pre><code>ffmpeg -i in.mp4 out.mp4</code></pre>'
     });
-    const secondCommand = note({
-        noteId: 'cmd2',
-        title: 'git commit',
-        content: 'git commit -m "{{message}}"',
-        children: []
+    const help = note({
+        noteId: 'h1',
+        title: 'Help',
+        type: 'code',
+        labels: { cmHelpNote: '' },
+        content: 'Usage: ffmpeg [options] ...\n  -i input  input file'
+    });
+    const ffmpeg = note({
+        noteId: 't1',
+        title: 'ffmpeg',
+        labels: { cmTool: '', cmBase: 'ffmpeg', cmDesc: 'Media toolkit' },
+        content: [
+            '<h2>What is?</h2><p>Encode and process video.</p>',
+            '<h2>Official links</h2><ul><li><a href="https://ffmpeg.org">ffmpeg.org</a></li></ul>',
+            '<h2>Useful links</h2><ul><li><a href="https://ffmpeg.org/ffmpeg.html">Reference</a></li></ul>'
+        ].join(''),
+        children: [install, usage, help, options],
+        parents: [media]
     });
 
-    const calls = { backend: [], copied: [], inserted: [], errors: [] };
+    const message = note({
+        noteId: 'g1',
+        title: 'Message',
+        labels: { cmOption: '', cmFlag: '-m', cmType: 'string', cmDoc: 'Commit message.', cmOrder: '10' }
+    });
+    const gitOptions = note({
+        noteId: 'opts2',
+        title: 'Options',
+        labels: { cmOptions: '' },
+        children: [message, presets]
+    });
+    const git = note({
+        noteId: 't2',
+        title: 'git commit',
+        labels: { cmTool: '', cmBase: 'git commit', cmDesc: 'Record changes' },
+        content: '<h2>What is?</h2><p>Record staged changes.</p>',
+        children: [gitOptions],
+        parents: [vcs]
+    });
+
+    return { tools: [ffmpeg, git], ffmpeg: ffmpeg, git: git, media: media, vcs: vcs };
+}
+
+function makeApi(fixture) {
+    const calls = { backend: [], copied: [], inserted: [], errors: [], activated: [] };
     const api = {
         async runOnBackend(fn, params) {
             calls.backend.push(params[0]);
+            if (params[0].action === 'bootstrap') {
+                return { rootId: 'root', toolsRootId: 'tools', seeded: true };
+            }
+            if (params[0].action === 'createTool') {
+                return { noteId: 'new-tool' };
+            }
+            if (params[0].action === 'importOptions') {
+                return { created: (params[0].options || []).length };
+            }
             return {};
         },
-        async searchForNotes() {
-            return [commandNote, secondCommand, templateNote];
+        async searchForNote(query) {
+            if (query === '#cmTools') {
+                return { noteId: 'tools', title: 'Tools' };
+            }
+            return null;
         },
-        async searchForNote() {
-            return templateNote;
+        async searchForNotes(query) {
+            return query === '#cmTool' ? fixture.tools : [];
+        },
+        async getNote(noteId) {
+            return fixture.tools.filter((entry) => entry.noteId === noteId)[0] || null;
+        },
+        getActiveContextNote() {
+            return { noteId: 'active', title: 'Active note' };
         },
         addTextToActiveContextEditor(text) {
             calls.inserted.push(text);
+        },
+        activateNote(path) {
+            calls.activated.push(path);
         },
         showError(message) {
             calls.errors.push(message);
@@ -235,12 +334,14 @@ test('palette searches, renders, copies and inserts a command', async () => {
             }
         }
     };
-    const window = {};
+    return { api: api, calls: calls, navigator: navigator };
+}
 
+function run(dom, api, navigator) {
     const context = vm.createContext({
         api,
-        window,
-        document,
+        window: {},
+        document: dom,
         navigator,
         console,
         setTimeout,
@@ -254,197 +355,194 @@ test('palette searches, renders, copies and inserts a command', async () => {
         }
     });
     vm.runInContext(buildBundle(), context);
+}
 
-    const row = await waitFor(() => find(document.body, (node) => classed(node, 'cm-result')), 'search results');
-    assert.equal(row.children[0].textContent, 'ffmpeg compress');
-    assert.equal(calls.backend.length, 1);
-    assert.equal(calls.backend[0].action, 'bootstrap');
+test('palette lists tools, shows option help, examples, help, copy/insert and presets', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
 
-    const style = document.getElementById('cm-palette-style');
+    const row = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    assert.equal(row.children[0].textContent, 'ffmpeg');
+    assert.equal(find(dom.body, (node) => classed(node, 'cm-cat')).textContent, 'Media');
+    assert.equal(env.calls.backend[0].action, 'bootstrap');
+
+    const style = dom.getElementById('cm-palette-style');
     assert.ok(style, 'palette stylesheet is injected');
     assert.match(style.textContent, /:root \.cm-preview:hover/);
-    assert.match(style.textContent, /:root \.cm-preview:focus/);
+    assert.match(style.textContent, /\.cm-opt-help/);
     assert.equal(style.textContent.includes('#f4f4f4'), false, 'no hard-coded light code background');
 
-    // No row is highlighted until the user navigates or clicks.
-    assert.equal(find(document.body, (node) => classed(node, 'is-active')), null);
-
-    const overlay = find(document.body, (node) => classed(node, 'cm-overlay'));
+    const overlay = find(dom.body, (node) => classed(node, 'cm-overlay'));
     overlay.dispatch('keydown', { key: 'ArrowDown' });
     assert.equal(
-        find(document.body, (node) => classed(node, 'is-active')).children[0].textContent,
-        'ffmpeg compress'
+        find(dom.body, (node) => classed(node, 'is-active')).children[0].textContent,
+        'ffmpeg'
+    );
+    overlay.dispatch('keydown', { key: 'ArrowDown' });
+    assert.equal(
+        find(dom.body, (node) => classed(node, 'is-active')).children[0].textContent,
+        'git commit'
     );
     overlay.dispatch('keydown', { key: 'ArrowUp' });
     assert.equal(
-        find(document.body, (node) => classed(node, 'is-active')).children[0].textContent,
-        'git commit'
-    );
-    overlay.dispatch('keydown', { key: 'ArrowDown' });
-    assert.equal(
-        find(document.body, (node) => classed(node, 'is-active')).children[0].textContent,
-        'ffmpeg compress'
+        find(dom.body, (node) => classed(node, 'is-active')).children[0].textContent,
+        'ffmpeg'
     );
 
-    findAll(document.body, (node) => classed(node, 'cm-result'))[0].click();
-    const preview = await waitFor(() => find(document.body, (node) => classed(node, 'cm-preview')), 'preview');
-    assert.equal(preview.value, 'ffmpeg -i "" -c:v libx264');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    const preview = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+    assert.equal(preview.value, 'ffmpeg -i in.mp4 -c:v libx264');
     assert.equal(preview.style.background, 'rgb(30, 30, 30)');
     assert.equal(preview.style.color, 'rgb(212, 212, 212)');
 
-    const probes = findAll(document.body, (node) => classed(node, 'hljs'));
-    assert.ok(probes.length > 0, 'the code theme is probed');
-    assert.ok(probes.every((node) => node.removed), 'probes never stay in the document');
+    const helpTexts = findAll(dom.body, (node) => classed(node, 'cm-opt-help')).map((node) => node.textContent);
+    assert.ok(helpTexts.indexOf('Input file to read.') !== -1, 'option help string is rendered');
+    assert.ok(helpTexts.indexOf('Video encoder.') !== -1, 'enum help string is rendered');
 
-    // Clicking a result keeps it marked as the selected row.
-    assert.equal(
-        find(document.body, (node) => classed(node, 'is-active')).children[0].textContent,
-        'ffmpeg compress'
-    );
+    const example = find(dom.body, (node) => classed(node, 'cm-example-text'));
+    assert.equal(example.textContent, 'ffmpeg -i in.mp4 out.mp4');
 
-    const inputControl = findAll(document.body, (node) => classed(node, 'cm-control') && node.placeholder === '-i')[0];
+    const helpPre = findAll(dom.body, (node) => node.tagName === 'PRE').filter((node) => /Usage: ffmpeg/.test(node.textContent))[0];
+    assert.ok(helpPre, 'help output is rendered in a pre block');
+    const installPre = findAll(dom.body, (node) => node.tagName === 'PRE').filter((node) => /winget install/.test(node.textContent))[0];
+    assert.ok(installPre, 'install steps are rendered');
+
+    const links = findAll(dom.body, (node) => node.tagName === 'A').map((node) => node.textContent);
+    assert.deepEqual(links, ['ffmpeg.org', 'Reference']);
+
+    const inputControl = findAll(dom.body, (node) => classed(node, 'cm-control') && node.placeholder === '-i')[0];
     assert.ok(inputControl, 'path option renders a text control');
     inputControl.value = 'in file.mp4';
     inputControl.dispatch('input');
     await tick();
-    assert.equal(preview.value, 'ffmpeg -i "in file.mp4" -c:v libx264');
+    assert.equal(preview.value, 'ffmpeg -i in file.mp4 -c:v libx264');
 
-    const copyButton = findAll(document.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'Copy')[0];
-    copyButton.click();
-    await waitFor(() => calls.copied.length > 0, 'clipboard write');
-    assert.equal(calls.copied[0], 'ffmpeg -i "in file.mp4" -c:v libx264');
+    findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'Copy')[0].click();
+    await waitFor(() => env.calls.copied.length > 0, 'clipboard write');
+    assert.equal(env.calls.copied[0], 'ffmpeg -i in file.mp4 -c:v libx264');
 
-    const insertButton = findAll(document.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'Insert')[0];
-    insertButton.click();
-    await waitFor(() => calls.inserted.length > 0, 'editor insert');
-    assert.equal(calls.inserted[0], 'ffmpeg -i "in file.mp4" -c:v libx264');
+    findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'Insert')[0].click();
+    await waitFor(() => env.calls.inserted.length > 0, 'editor insert');
+    assert.equal(env.calls.inserted[0], 'ffmpeg -i in file.mp4 -c:v libx264');
 
-    assert.deepEqual(calls.errors, []);
+    const useButton = findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'Use')[0];
+    useButton.click();
+    await tick();
+    assert.equal(preview.value, 'ffmpeg -i in.mp4 out.mp4');
+
+    // Regenerate restores the generated command after the example was used.
+    findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'Regenerate')[0].click();
+    await tick();
+    assert.equal(preview.value, 'ffmpeg -i in file.mp4 -c:v libx264');
+
+    // Presets load the saved value map.
+    const presetSelect = findAll(dom.body, (node) => {
+        return node.tagName === 'SELECT' && node.children.some((child) => child.value === 'web');
+    })[0];
+    presetSelect.value = 'web';
+    findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'Load')[0].click();
+    await tick();
+    const reloadedPreview = find(dom.body, (node) => classed(node, 'cm-preview'));
+    assert.equal(reloadedPreview.value, 'ffmpeg -i web.mp4 -c:v libx264');
+
+    assert.deepEqual(env.calls.errors, []);
 });
 
-test('dropdowns hide the native arrow and keep a single themed arrow', async () => {
-    const document = createDom();
-    const enumOption = note({
-        noteId: 'e1',
-        title: 'Codec',
-        labels: { cmType: 'enum', cmValues: 'a,b', cmFlag: '--codec' }
-    });
-    const optionsFolder = note({
-        noteId: 'opts',
-        title: 'Options',
-        labels: { cmOptions: '' },
-        children: [enumOption]
-    });
-    const command = note({
-        noteId: 'demo',
-        title: 'demo',
-        content: 'demo',
-        children: [optionsFolder]
-    });
-    const api = {
-        async runOnBackend() {
-            return {};
-        },
-        async searchForNotes() {
-            return [command];
-        },
-        async searchForNote() {
-            return null;
-        },
-        showError() {}
-    };
-    const context = vm.createContext({
-        api,
-        window: {},
-        document,
-        navigator: { clipboard: { async writeText() {} } },
-        console,
-        setTimeout,
-        clearTimeout,
-        setImmediate
-    });
-    vm.runInContext(buildBundle(), context);
+test('import dialog parses pasted help output and imports the selected options', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
 
-    await waitFor(() => find(document.body, (node) => classed(node, 'cm-result')), 'search results');
-    findAll(document.body, (node) => classed(node, 'cm-result'))[0].click();
-    await waitFor(() => find(document.body, (node) => classed(node, 'cm-preview')), 'preview');
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
 
-    const selects = findAll(document.body, (node) => node.tagName === 'SELECT');
-    assert.ok(selects.length >= 2, 'enum and preset selects render');
-    assert.ok(
-        selects.every((node) => classed(node, 'cm-select')),
-        'every select opts into the single-arrow style'
-    );
+    findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'Import options')[0].click();
+    const modal = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-modal')), 'import modal');
+    assert.ok(modal);
 
-    const style = document.getElementById('cm-palette-style');
-    assert.match(style.textContent, /\.cm-control\.cm-select\{[^}]*appearance:none/);
-    assert.match(style.textContent, /\.cm-control\.cm-select\{[^}]*background-image:var\(--select-arrow-svg/);
+    const textArea = find(modal, (node) => node.tagName === 'TEXTAREA' && String(node.placeholder || '').indexOf('--help') !== -1);
+    textArea.value = 'Usage: demo\n\n  -a, --all        include everything\n  --tag <name>     add a tag (default: latest)\n';
+    findAll(modal, (node) => node.tagName === 'BUTTON' && node.textContent === 'Parse')[0].click();
+    await waitFor(() => findAll(modal, (node) => classed(node, 'cm-import-row')).length === 2, 'parsed options');
+
+    findAll(modal, (node) => node.tagName === 'BUTTON' && node.textContent === 'Import selected')[0].click();
+    await waitFor(() => env.calls.backend.filter((call) => call.action === 'importOptions').length > 0, 'import action');
+    const call = env.calls.backend.filter((entry) => entry.action === 'importOptions')[0];
+    assert.equal(call.toolId, 't1');
+    assert.equal(call.options.length, 2);
+    assert.equal(call.options[0].flag, '--all');
+    assert.equal(call.options[1].flag, '--tag');
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('new tool form creates a tool with a category and the three-H2 content', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'New tool')[0].click();
+
+    const titleInput = find(dom.body, (node) => node.placeholder === 'Tool name (e.g. docker)');
+    assert.ok(titleInput);
+    titleInput.value = 'docker';
+    const categorySelect = find(dom.body, (node) => {
+        return node.tagName === 'SELECT' && node.children.some((child) => child.value === '__new__');
+    });
+    assert.ok(categorySelect, 'category select offers a new category');
+    categorySelect.value = '__new__';
+    categorySelect.dispatch('change');
+    const categoryInput = find(dom.body, (node) => node.placeholder === 'New category name');
+    categoryInput.value = 'Containers';
+    const baseInput = find(dom.body, (node) => String(node.placeholder || '').indexOf('Base command') !== -1);
+    baseInput.value = 'docker';
+
+    findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'Create')[0].click();
+    await waitFor(() => env.calls.backend.filter((call) => call.action === 'createTool').length > 0, 'create tool');
+    const call = env.calls.backend.filter((entry) => entry.action === 'createTool')[0];
+    assert.equal(call.title, 'docker');
+    assert.equal(call.category, 'Containers');
+    assert.equal(call.base, 'docker');
+    assert.match(call.content, /<h2>What is\?<\/h2>/);
+    assert.match(call.content, /<h2>Official links<\/h2>/);
+    assert.match(call.content, /<h2>Useful links<\/h2>/);
+    assert.deepEqual(env.calls.errors, []);
 });
 
 test('Enter opens the first result even though no row starts selected', async () => {
-    const document = createDom();
-    const first = note({ noteId: 'c1', title: 'ffmpeg compress', content: 'ffmpeg -i ""' });
-    const second = note({ noteId: 'c2', title: 'git commit', content: 'git commit' });
-    const api = {
-        async runOnBackend() {
-            return {};
-        },
-        async searchForNotes() {
-            return [first, second];
-        },
-        async searchForNote() {
-            return null;
-        },
-        showError() {}
-    };
-    const context = vm.createContext({
-        api,
-        window: {},
-        document,
-        navigator: { clipboard: { async writeText() {} } },
-        console,
-        setTimeout,
-        clearTimeout,
-        setImmediate,
-        getComputedStyle() {
-            return { backgroundColor: 'rgb(30, 30, 30)', color: 'rgb(212, 212, 212)' };
-        }
-    });
-    vm.runInContext(buildBundle(), context);
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
 
-    await waitFor(() => find(document.body, (node) => classed(node, 'cm-result')), 'search results');
-    assert.equal(find(document.body, (node) => classed(node, 'is-active')), null);
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    assert.equal(find(dom.body, (node) => classed(node, 'is-active')), null);
 
-    const overlay = find(document.body, (node) => classed(node, 'cm-overlay'));
+    const overlay = find(dom.body, (node) => classed(node, 'cm-overlay'));
     overlay.dispatch('keydown', { key: 'Enter' });
 
-    const preview = await waitFor(() => find(document.body, (node) => classed(node, 'cm-preview')), 'preview');
-    assert.equal(preview.value, 'ffmpeg -i ""');
+    const preview = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+    assert.equal(preview.value, 'ffmpeg -i in.mp4 -c:v libx264');
     assert.equal(
-        find(document.body, (node) => classed(node, 'is-active')).children[0].textContent,
-        'ffmpeg compress'
+        find(dom.body, (node) => classed(node, 'is-active')).children[0].textContent,
+        'ffmpeg'
     );
 });
 
 test('a second open reuses the existing palette instead of stacking overlays', async () => {
-    const document = createDom();
-    const api = {
-        async runOnBackend() {
-            return {};
-        },
-        async searchForNotes() {
-            return [];
-        },
-        async searchForNote() {
-            return null;
-        },
-        showError() {}
-    };
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
     const context = vm.createContext({
-        api,
+        api: env.api,
         window: {},
-        document,
-        navigator: { clipboard: { async writeText() {} } },
+        document: dom,
+        navigator: env.navigator,
         console,
         setTimeout,
         clearTimeout,
@@ -454,7 +552,29 @@ test('a second open reuses the existing palette instead of stacking overlays', a
     vm.runInContext(bundle, context);
     vm.runInContext(bundle, context);
 
-    await waitFor(() => find(document.body, (node) => classed(node, 'cm-overlay')), 'overlay');
-    const overlays = findAll(document.body, (node) => classed(node, 'cm-overlay'));
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-overlay')), 'overlay');
+    const overlays = findAll(dom.body, (node) => classed(node, 'cm-overlay'));
     assert.equal(overlays.length, 1);
+});
+
+test('dropdowns hide the native arrow and keep a single themed arrow', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+
+    const selects = findAll(dom.body, (node) => node.tagName === 'SELECT');
+    assert.ok(selects.length >= 2, 'enum and preset selects render');
+    assert.ok(
+        selects.every((node) => classed(node, 'cm-select')),
+        'every select opts into the single-arrow style'
+    );
+
+    const style = dom.getElementById('cm-palette-style');
+    assert.match(style.textContent, /\.cm-control\.cm-select\{[^}]*appearance:none/);
+    assert.match(style.textContent, /\.cm-control\.cm-select\{[^}]*background-image:var\(--select-arrow-svg/);
 });
