@@ -98,7 +98,10 @@ const CSS = [
     '.cm-button{padding:6px 12px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--button-background-color,#fff);color:inherit;cursor:pointer;font:inherit;}',
     '.cm-button:hover{background:var(--accented-background-color,#eef2ff);}',
     '.cm-button:disabled{opacity:.5;cursor:default;}',
-    '.cm-danger{color:#b91c1c;}',
+    '.cm-danger{color:#b91c1c;border-color:#fca5a5;}',
+    '.cm-danger:hover{background:#fee2e2;}',
+    '.cm-danger-armed{background:#dc2626;border-color:#b91c1c;color:#fff;}',
+    '.cm-danger-armed:hover{background:#b91c1c;color:#fff;}',
     '.cm-presets,.cm-examples,.cm-fold-block{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--main-border-color,#ddd);padding-top:10px;margin-top:12px;}',
     '.cm-row{display:flex;align-items:center;gap:8px;}',
     '.cm-field{display:flex;flex-direction:column;gap:4px;}',
@@ -799,7 +802,40 @@ function openPalette(controller) {
         state.presetSelect = select;
         row.appendChild(select);
         row.appendChild(button('Load', loadPreset));
-        row.appendChild(button('Delete', deletePreset, 'cm-danger'));
+
+        const deleteButton = el('button', 'cm-button cm-danger', 'Delete');
+        deleteButton.type = 'button';
+        let deleteArmed = false;
+        let deleteTimer = null;
+        function disarmDelete() {
+            deleteArmed = false;
+            deleteButton.textContent = 'Delete';
+            deleteButton.classList.remove('cm-danger-armed');
+            if (deleteTimer) {
+                clearTimeout(deleteTimer);
+                deleteTimer = null;
+            }
+        }
+        deleteButton.addEventListener('click', function (event) {
+            event.preventDefault();
+            const name = state.presetSelect ? state.presetSelect.value : '';
+            if (!name) {
+                notify(new Error('Pick a preset first.'));
+                return;
+            }
+            if (!deleteArmed) {
+                deleteArmed = true;
+                deleteButton.textContent = 'Confirm delete';
+                deleteButton.classList.add('cm-danger-armed');
+                setStatus('Press Delete again to remove "' + name + '".');
+                deleteTimer = setTimeout(disarmDelete, 5000);
+                return;
+            }
+            disarmDelete();
+            Promise.resolve().then(deletePreset).catch(notify);
+        });
+        select.addEventListener('change', disarmDelete);
+        row.appendChild(deleteButton);
         block.appendChild(row);
 
         const saveRow = el('div', 'cm-row');

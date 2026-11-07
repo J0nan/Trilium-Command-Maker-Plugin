@@ -385,6 +385,7 @@ test('palette lists tools, shows option help, examples, help, copy/insert and pr
     assert.match(style.textContent, /\.cm-modal-body\{[^}]*user-select:text/);
     assert.match(style.textContent, /\.cm-install\{[^}]*user-select:text/);
     assert.match(style.textContent, /\.cm-field \.cm-control\{[^}]*width:100%/);
+    assert.match(style.textContent, /\.cm-danger-armed\{[^}]*background:#dc2626/);
     assert.match(style.textContent, /\.cm-install pre\{[^}]*box-shadow:var\(--code-block-box-shadow/);
     assert.match(style.textContent, /@media \(hover:none\)\{\.cm-code-copy\{opacity:1;\}\}/);
     assert.equal(style.textContent.includes('#f4f4f4'), false, 'no hard-coded light code background');
@@ -973,4 +974,43 @@ test('modals render on the overlay, not inside the panel that shrinks on first o
         'the modal host is not inside the panel that can shrink to its content'
     );
     assert.ok(find(host, (node) => classed(node, 'cm-modal')), 'the modal renders inside the overlay host');
+});
+
+test('deleting a preset needs a second click and arms the red button', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+
+    const presets = find(dom.body, (node) => classed(node, 'cm-presets'));
+    const select = find(presets, (node) => node.tagName === 'SELECT');
+    select.value = 'web';
+    const deleteButton = find(presets, (node) => node.tagName === 'BUTTON' && node.textContent === 'Delete');
+    assert.ok(deleteButton, 'the preset delete button is present');
+
+    deleteButton.click();
+    assert.equal(deleteButton.textContent, 'Confirm delete');
+    assert.ok(classed(deleteButton, 'cm-danger-armed'), 'the armed button uses the solid red style');
+    assert.equal(
+        env.calls.backend.filter((entry) => entry.action === 'deletePreset').length,
+        0,
+        'the first click only arms the delete'
+    );
+
+    select.dispatch('change');
+    assert.equal(deleteButton.textContent, 'Delete', 'changing the preset disarms the delete');
+    assert.equal(classed(deleteButton, 'cm-danger-armed'), false);
+
+    deleteButton.click();
+    assert.equal(deleteButton.textContent, 'Confirm delete');
+    deleteButton.click();
+
+    const call = await waitFor(() => {
+        return env.calls.backend.filter((entry) => entry.action === 'deletePreset')[0];
+    }, 'delete preset backend call');
+    assert.equal(call.name, 'web');
 });
