@@ -461,48 +461,6 @@ function newToolNotes() {
 function seedTools() {
     return [
         {
-            category: 'Media',
-            title: 'ffmpeg',
-            base: 'ffmpeg',
-            description: 'Convert, inspect and process audio and video files.',
-            content: [
-                '<h2>What is?</h2>',
-                '<p>ffmpeg is a complete, cross-platform command-line toolkit for converting, recording and streaming audio and video.</p>',
-                '<h2>Official links</h2>',
-                '<ul><li><a href="https://ffmpeg.org/documentation.html">Official documentation</a></li></ul>',
-                '<h2>Useful links</h2>',
-                '<ul><li><a href="https://ffmpeg.org/ffmpeg.html">ffmpeg command reference</a></li></ul>'
-            ].join('\n'),
-            install: '<p><strong>Windows:</strong> <code>winget install Gyan.FFmpeg</code></p><p><strong>macOS:</strong> <code>brew install ffmpeg</code></p><p><strong>Debian/Ubuntu:</strong> <code>sudo apt install ffmpeg</code></p>',
-            usage: [
-                '<p>Compress a video to H.264:</p>',
-                '<pre><code>ffmpeg -i input.mp4 -c:v libx264 -crf 23 output.mp4</code></pre>',
-                '<p>Extract the audio track:</p>',
-                '<pre><code>ffmpeg -i input.mp4 -vn -c:a aac audio.m4a</code></pre>',
-                '<p>Scale to 720p:</p>',
-                '<pre><code>ffmpeg -i input.mp4 -vf scale=1280:-2 output.mp4</code></pre>'
-            ].join('\n'),
-            help: [
-                'Usage: ffmpeg [options] [[infile options] -i infile]... {[outfile options] outfile}...',
-                '',
-                'Main options:',
-                '  -i URL            input file url',
-                '  -y                overwrite output files without asking',
-                '  -c:v CODEC        select the video encoder',
-                '  -c:a CODEC        select the audio encoder',
-                '  -crf N            constant rate factor (quality), lower is better',
-                '  -vf FILTERGRAPH   apply a video filter'
-            ].join('\n'),
-            options: [
-                { label: 'Input file', flag: '-i', type: 'path', doc: 'Input file the command reads from.', order: 10, required: true },
-                { label: 'Video codec', flag: '-c:v', type: 'enum', values: ['libx264', 'libx265', 'libvpx-vp9'], defaultValue: 'libx264', doc: 'Video encoder to use.', order: 20 },
-                { label: 'CRF quality', flag: '-crf', type: 'number', defaultValue: '23', doc: 'Constant Rate Factor; lower values keep more quality.', order: 30 },
-                { label: 'Audio codec', flag: '-c:a', type: 'enum', values: ['aac', 'libopus', 'copy'], doc: 'Audio encoder to use.', order: 40 },
-                { label: 'Video filter', flag: '-vf', type: 'string', doc: 'Video filter graph, for example scale=1280:-2.', order: 50 },
-                { label: 'Overwrite output', flag: '-y', type: 'boolean', doc: 'Overwrite output files without asking.', order: 60 }
-            ]
-        },
-        {
             category: 'Version control',
             title: 'git commit',
             base: 'git commit',

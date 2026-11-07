@@ -163,7 +163,7 @@ test('beRun survives serialisation and bootstrap seeds the model tools', () => {
     assert.match(toolsRoot.getContent(), /tool/i, 'the Tools root explains itself');
     assert.deepEqual(
         toolsRoot.getChildNotes().map((child) => child.title),
-        ['Media', 'Version control', 'Network'],
+        ['Version control', 'Network'],
         'one category folder per seeded category'
     );
 
@@ -214,15 +214,15 @@ test('beRun survives serialisation and bootstrap seeds the model tools', () => {
         );
     }
 
-    const ffmpeg = findByTitle(findByTitle(toolsRoot, 'Media'), 'ffmpeg');
-    const codec = labelledChildren(findByTitle(ffmpeg, 'Options'), labels.option)
-        .find((option) => option.getLabelValue(labels.flag) === '-c:v');
-    assert.equal(codec.title, 'Video codec');
-    assert.equal(codec.getLabelValue(labels.type), 'enum');
-    assert.equal(codec.getLabelValue(labels.enumValues), 'libx264,libx265,libvpx-vp9');
-    assert.equal(codec.getLabelValue(labels.defaultValue), 'libx264');
-    assert.equal(codec.getLabelValue(labels.doc), 'Video encoder to use.');
-    assert.equal(codec.getLabelValue(labels.order), '20');
+    const curl = findByTitle(findByTitle(toolsRoot, 'Network'), 'curl');
+    const url = labelledChildren(findByTitle(curl, 'Options'), labels.option)
+        .find((option) => option.title === 'URL');
+    assert.ok(url, 'the seeded curl has a URL option');
+    assert.equal(url.getLabelValue(labels.flag), null, 'the URL is positional');
+    assert.equal(url.getLabelValue(labels.required), 'true');
+    assert.equal(url.getLabelValue(labels.order), '100');
+    assert.equal(url.getLabelValue(labels.placeholder), 'url');
+    assert.equal(url.getLabelValue(labels.quote), 'double');
 
     // A second bootstrap with seed: true must not duplicate anything.
     const again = boot(api, beRun, { seed: true, seedTools: Model.seedTools() });
@@ -236,11 +236,11 @@ test('beRun survives serialisation and bootstrap seeds the model tools', () => {
 test('bootstrap backfills icons on existing tools without overwriting a custom icon', () => {
     const { api, beRun, result } = seedApi();
     const toolsRoot = api.getNote(result.toolsRootId);
-    const ffmpeg = findByTitle(findByTitle(toolsRoot, 'Media'), 'ffmpeg');
-    const install = findByTitle(ffmpeg, 'Install');
-    const usage = findByTitle(ffmpeg, 'Usage');
-    const help = findByTitle(ffmpeg, 'Help');
-    const options = findByTitle(ffmpeg, 'Options');
+    const curl = findByTitle(findByTitle(toolsRoot, 'Network'), 'curl');
+    const install = findByTitle(curl, 'Install');
+    const usage = findByTitle(curl, 'Usage');
+    const help = findByTitle(curl, 'Help');
+    const options = findByTitle(curl, 'Options');
 
     install.removeLabel(labels.icon);
     usage.removeLabel(labels.icon);

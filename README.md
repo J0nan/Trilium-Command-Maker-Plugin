@@ -34,8 +34,8 @@ The installer is idempotent. It creates:
 
 It also registers a launcher (`Command Maker`, `Ctrl+Shift+Space`) through
 `api.createOrUpdateLauncher`, so no attribute editing and no `#widget` label are
-required. The first time the palette opens it seeds three documented examples:
-`ffmpeg` (Media), `git commit` (Version control) and `curl` (Network).
+required. The first time the palette opens it seeds two documented examples:
+`git commit` (Version control) and `curl` (Network).
 
 ### Changing the keyboard shortcut
 
@@ -74,13 +74,13 @@ Add the label `#cmPlugin`, then either create a launcher pointing at it
 
 ```
 Tools/                              #cmTools  (move it anywhere, the label follows)
-├── Media/                          #cmCategory
-│   └── ffmpeg/                     #cmTool
+├── Network/                        #cmCategory
+│   └── curl/                       #cmTool
 │       ├── Install                 #cmInstall   text
 │       ├── Usage                   #cmUsage     text (examples in code blocks)
 │       ├── Help                    #cmHelpNote  code (text/x-sh)
 │       └── Options/                #cmOptions
-│           ├── Input file          #cmOption #cmFlag=-i #cmDoc=...
+│           ├── URL                 #cmOption #cmPlaceholder=url #cmRequired=true
 │           └── Presets             #cmPresets  JSON
 └── Version control/
     └── git commit/                 #cmTool

@@ -210,9 +210,9 @@ test('newToolNotes starts Install, Usage and Help with usable content', () => {
 
 test('seedTools provides three documented examples with help strings', () => {
     const tools = Model.seedTools();
-    assert.equal(tools.length, 3);
-    assert.deepEqual(tools.map((tool) => tool.title), ['ffmpeg', 'git commit', 'curl']);
-    assert.deepEqual(tools.map((tool) => tool.category), ['Media', 'Version control', 'Network']);
+    assert.equal(tools.length, 2);
+    assert.deepEqual(tools.map((tool) => tool.title), ['git commit', 'curl']);
+    assert.deepEqual(tools.map((tool) => tool.category), ['Version control', 'Network']);
     tools.forEach((tool) => {
         assert.ok(tool.base, tool.title + ' has a base command');
         assert.ok(tool.options.length >= 5, tool.title + ' exposes its options');
