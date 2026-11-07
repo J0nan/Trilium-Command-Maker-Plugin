@@ -698,10 +698,14 @@ function openPalette(controller) {
             const row = el('div', 'cm-example');
             row.appendChild(el('code', 'cm-example-text', example));
             row.appendChild(button('Use', function () {
+                state.values = Model.valuesFromExample(state.definition, example);
+                state.edited = false;
+                renderDetail();
                 if (state.previewEl) {
                     state.previewEl.value = example;
                     state.edited = true;
                 }
+                setStatus('Example loaded into the form.');
             }));
             row.appendChild(button('Copy', function () {
                 return copyTextToClipboard(example);

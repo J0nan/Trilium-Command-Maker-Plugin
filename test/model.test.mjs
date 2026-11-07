@@ -222,3 +222,65 @@ test('seedTools provides three documented examples with help strings', () => {
         });
     });
 });
+
+function exampleDefinition() {
+    return Model.buildTool({
+        noteId: 't1',
+        title: 'ffmpeg',
+        labels: { cmBase: 'ffmpeg' },
+        optionNotes: [
+            { noteId: 'o1', title: 'Input', labels: { cmFlag: '-i', cmType: 'path' } },
+            { noteId: 'o2', title: 'Codec', labels: { cmFlag: '-c:v', cmType: 'enum', cmValues: 'libx264,libx265', cmDefault: 'libx264' } },
+            { noteId: 'o3', title: 'CRF', labels: { cmFlag: '-crf', cmType: 'number', cmDefault: '23' } },
+            { noteId: 'o4', title: 'Overwrite', labels: { cmFlag: '-y', cmType: 'boolean' } }
+        ]
+    });
+}
+
+test('valuesFromExample maps flags, values, booleans and clears omitted options', () => {
+    const values = Model.valuesFromExample(exampleDefinition(), 'ffmpeg -i in.mp4 -c:v libx265 -crf 18 -y out.mp4');
+    assert.equal(values['note:o1'], 'in.mp4');
+    assert.equal(values['note:o2'], 'libx265');
+    assert.equal(values['note:o3'], '18');
+    assert.equal(values['note:o4'], true);
+    assert.equal(values[Model.EXTRA_KEY], '');
+
+    const minimal = Model.valuesFromExample(exampleDefinition(), 'ffmpeg -i in.mp4');
+    assert.equal(minimal['note:o1'], 'in.mp4');
+    assert.equal(minimal['note:o2'], '', 'an omitted enum is cleared, not defaulted');
+    assert.equal(minimal['note:o3'], '', 'an omitted number is cleared, not defaulted');
+    assert.equal(minimal['note:o4'], false, 'an omitted boolean is false');
+});
+
+test('valuesFromExample handles quoted values and --flag=value forms', () => {
+    const definition = Model.buildTool({
+        noteId: 't1',
+        title: 'git commit',
+        labels: { cmBase: 'git commit' },
+        optionNotes: [
+            { noteId: 'm1', title: 'Message', labels: { cmFlag: '-m', cmType: 'string' } },
+            { noteId: 'm2', title: 'Amend', labels: { cmFlag: '--amend', cmType: 'boolean' } }
+        ]
+    });
+    const values = Model.valuesFromExample(definition, 'git commit -m "fix: handle input" --amend');
+    assert.equal(values['note:m1'], 'fix: handle input');
+    assert.equal(values['note:m2'], true);
+
+    const longDefinition = Model.buildTool({
+        noteId: 't1',
+        title: 'git commit',
+        labels: { cmBase: 'git commit' },
+        optionNotes: [
+            { noteId: 'm3', title: 'Message', labels: { cmFlag: '--message', cmType: 'string' } }
+        ]
+    });
+    const equals = Model.valuesFromExample(longDefinition, 'git commit --message=quick');
+    assert.equal(equals['note:m3'], 'quick');
+});
+
+test('tokenizeCommand keeps quoted values together and strips the quotes', () => {
+    assert.deepEqual(
+        Model.tokenizeCommand('curl -H "Content-Type: application/json" -d \'{"a":1}\' https://example.com'),
+        ['curl', '-H', 'Content-Type: application/json', '-d', '{"a":1}', 'https://example.com']
+    );
+});

@@ -122,8 +122,9 @@ terminal for `Usage`, help for `Help`, and a cog for `Options`. You can change a
 icon; the plugin only fills in one that is missing.
 
 The palette reads all three: examples can be used or copied, the help output and
-install steps are shown in collapsible sections, and an example can be loaded
-straight into the command preview.
+install steps are shown in collapsible sections, and loading an example fills the
+option controls from its flags while the preview shows the example verbatim until
+you regenerate from the form.
 
 ### Option notes
 
@@ -167,7 +168,8 @@ The command is:
 ### Presets
 
 A preset saves the current value map. Presets are stored in one JSON note inside
-the tool's `Options` folder, so they never clutter the tool note.
+the tool's `Options` folder, so they never clutter the tool note. Loading a preset
+fills every option control and regenerates the command.
 
 ## Importing options
 

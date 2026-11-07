@@ -263,6 +263,113 @@ function buildTool(note) {
     };
 }
 
+/** Split a shell-ish command into tokens, keeping quoted values together. */
+function tokenizeCommand(command) {
+    const tokens = [];
+    let current = '';
+    let quote = '';
+    let escaped = false;
+    const text = String(command == null ? '' : command);
+    for (let index = 0; index < text.length; index += 1) {
+        const char = text.charAt(index);
+        if (escaped) {
+            current += char;
+            escaped = false;
+            continue;
+        }
+        if (char === '\\') {
+            escaped = true;
+            continue;
+        }
+        if (quote !== '') {
+            if (char === quote) {
+                quote = '';
+            } else {
+                current += char;
+            }
+            continue;
+        }
+        if (char === '"' || char === "'") {
+            quote = char;
+            continue;
+        }
+        if (/\s/.test(char)) {
+            if (current !== '') {
+                tokens.push(current);
+                current = '';
+            }
+            continue;
+        }
+        current += char;
+    }
+    if (current !== '') {
+        tokens.push(current);
+    }
+    return tokens;
+}
+
+/**
+ * Turn a rendered example back into a value map for the palette form.
+ * Only known flags are matched; positionals and subcommands stay in the
+ * example preview so the form shows exactly what the example sets.
+ */
+function valuesFromExample(definition, command) {
+    const safe = definition || {};
+    const options = Array.isArray(safe.options) ? safe.options : [];
+    const inferred = Array.isArray(safe.inferred) ? safe.inferred : [];
+    const values = {};
+    for (const option of options) {
+        values[Render.valueKey(option)] = option.type === 'boolean' ? false : '';
+    }
+    for (const option of inferred) {
+        values[Render.valueKey(option)] = '';
+    }
+    values[Render.EXTRA_KEY] = '';
+
+    const tokens = tokenizeCommand(command);
+    const byFlag = {};
+    for (const option of options) {
+        if (option.flag) {
+            byFlag[option.flag] = option;
+        }
+    }
+
+    for (let index = 0; index < tokens.length; index += 1) {
+        const token = tokens[index];
+        if (token === '' || token.charAt(0) !== '-' || token.length < 2) {
+            continue;
+        }
+        let flag = token;
+        let inlineValue = null;
+        const equals = token.indexOf('=');
+        if (token.slice(0, 2) === '--' && equals > 2) {
+            flag = token.slice(0, equals);
+            inlineValue = token.slice(equals + 1);
+        }
+        const option = byFlag[flag];
+        if (!option) {
+            continue;
+        }
+        const key = Render.valueKey(option);
+        if (option.type === 'boolean') {
+            values[key] = true;
+            continue;
+        }
+        if (inlineValue !== null) {
+            values[key] = inlineValue;
+            continue;
+        }
+        const next = tokens[index + 1];
+        const nextIsKnownFlag = next !== undefined && next.charAt(0) === '-' && next.length > 1 && byFlag[next];
+        if (next !== undefined && !nextIsKnownFlag) {
+            values[key] = next;
+            index += 1;
+        }
+    }
+
+    return values;
+}
+
 function defaultValueMap(definition) {
     const values = {};
     const safeDefinition = definition || {};
@@ -475,6 +582,8 @@ module.exports = {
     sortOptions,
     buildTool,
     defaultValueMap,
+    valuesFromExample,
+    tokenizeCommand,
     matches,
     toolTemplate,
     newToolNotes,

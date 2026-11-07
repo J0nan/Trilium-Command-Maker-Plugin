@@ -430,14 +430,24 @@ test('palette lists tools, shows option help, examples, help, copy/insert and pr
     const useButton = findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'Use')[0];
     useButton.click();
     await tick();
-    assert.equal(preview.value, 'ffmpeg -i in.mp4 out.mp4');
+    const examplePreview = find(dom.body, (node) => classed(node, 'cm-preview'));
+    assert.equal(examplePreview.value, 'ffmpeg -i in.mp4 out.mp4', 'the example is shown verbatim');
 
-    // Regenerate restores the generated command after the example was used.
+    const exampleInput = findAll(dom.body, (node) => classed(node, 'cm-control') && node.placeholder === '-i')[0];
+    assert.equal(exampleInput.value, 'in.mp4', 'the example updates the option control');
+    const exampleCodec = findAll(dom.body, (node) => {
+        return node.tagName === 'SELECT' && node.children.some((child) => child.value === 'libx264');
+    })[0];
+    assert.equal(exampleCodec.value, '', 'an option omitted by the example is cleared');
+    const exampleBoolean = findAll(dom.body, (node) => node.tagName === 'INPUT' && node.type === 'checkbox')[0];
+    assert.equal(exampleBoolean.checked, false, 'an omitted boolean is unchecked');
+
+    // Regenerate rebuilds from the form values the example set.
     findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'Regenerate')[0].click();
     await tick();
-    assert.equal(preview.value, 'ffmpeg -i in file.mp4 -c:v libx264');
+    assert.equal(find(dom.body, (node) => classed(node, 'cm-preview')).value, 'ffmpeg -i in.mp4');
 
-    // Presets load the saved value map.
+    // Presets load the saved value map into the controls and the preview.
     const presetSelect = findAll(dom.body, (node) => {
         return node.tagName === 'SELECT' && node.children.some((child) => child.value === 'web');
     })[0];
@@ -446,6 +456,8 @@ test('palette lists tools, shows option help, examples, help, copy/insert and pr
     await tick();
     const reloadedPreview = find(dom.body, (node) => classed(node, 'cm-preview'));
     assert.equal(reloadedPreview.value, 'ffmpeg -i web.mp4 -c:v libx264');
+    const reloadedInput = findAll(dom.body, (node) => classed(node, 'cm-control') && node.placeholder === '-i')[0];
+    assert.equal(reloadedInput.value, 'web.mp4', 'the preset updates the option control');
 
     assert.deepEqual(env.calls.errors, []);
 });
