@@ -2699,7 +2699,8 @@ function openPalette(controller) {
         importText: '',
         importParsed: null,
         importRows: [],
-        importNoteTitle: ''
+        importNoteTitle: '',
+        importStatus: ''
     };
 
     const overlay = el('div', 'cm-overlay');
@@ -3048,6 +3049,13 @@ function openPalette(controller) {
             return;
         }
         state.presetSelect.textContent = '';
+        if (state.loaded && state.loaded.presetsInvalid) {
+            const broken = document.createElement('option');
+            broken.value = '';
+            broken.textContent = 'Presets note needs fixing';
+            state.presetSelect.appendChild(broken);
+            return;
+        }
         if (!state.presets.length) {
             const empty = document.createElement('option');
             empty.value = '';
@@ -3689,12 +3697,15 @@ function openPalette(controller) {
                     closeModal();
                     const created = result && typeof result.created === 'number' ? result.created : 'the selected';
                     const skipped = result && result.skipped ? ' Skipped ' + result.skipped + ' duplicate(s).' : '';
-                    setStatus('Imported ' + created + ' option(s).' + skipped);
+                    state.importStatus = 'Imported ' + created + ' option(s).' + skipped;
                     return controller.refresh();
                 })
                 .then(runSearch)
                 .then(function () {
                     return selectItem(state.current, { preserveValues: true });
+                })
+                .then(function () {
+                    setStatus(state.importStatus || '');
                 })
                 .catch(notify);
         });
@@ -3798,12 +3809,14 @@ function openPalette(controller) {
                 })
                 .then(function () {
                     closeModal();
-                    setStatus('Option added.');
                     return controller.refresh();
                 })
                 .then(runSearch)
                 .then(function () {
                     return selectItem(state.current, { preserveValues: true });
+                })
+                .then(function () {
+                    setStatus('Option added.');
                 })
                 .catch(notify);
         });
