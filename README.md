@@ -12,7 +12,9 @@ Ctrl+Shift+Space  →  search a tool  →  read help  →  fill options  →  co
 
 Current version: **1.0.0**. The palette footer shows `v1.0.0`; click it to check
 the repository's latest tag (falling back to `package.json` on `main`). The
-settings note stores `#cmVersion`, and the installer log prints the version.
+settings note stores `#cmVersion`, and the installer log prints the version. If
+the repository is private or the request is blocked, the palette says so and the
+**Repository** link opens the source.
 
 ## Install
 

@@ -90,7 +90,7 @@ const CSS = [
     '.cm-foot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 12px;border-top:1px solid var(--main-border-color,#ddd);}',
     '.cm-inline{display:flex;flex-wrap:wrap;gap:6px;align-items:center;width:100%;}',
     '.cm-inline .cm-control{flex:1;min-width:120px;}',
-    '.cm-status{margin-left:auto;font-size:12px;opacity:.75;}',
+    '.cm-status{margin-left:auto;font-size:12px;opacity:.75;max-width:420px;overflow-wrap:anywhere;}',
     '.cm-status.is-error{color:#b91c1c;opacity:1;}',
     '.cm-version{font-size:12px;opacity:.7;border:0;background:transparent;color:inherit;cursor:pointer;padding:2px 6px;font:inherit;}',
     '.cm-version:hover{opacity:1;text-decoration:underline;}',
@@ -306,7 +306,7 @@ function openPalette(controller) {
         try {
             const info = await controller.checkLatestVersion();
             if (info.error) {
-                setStatus('v' + info.current + ' — ' + info.error, true);
+                setStatus('v' + info.current + ' — ' + info.error + ' See the Repository link.', true);
                 return;
             }
             if (info.latest && info.latest === info.current) {
