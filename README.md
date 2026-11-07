@@ -18,11 +18,23 @@ link opens the source.
 
 ## Install
 
-1. Create a note in Trilium. Set its type to **Code** and its language to
+Get the two files from the **Releases** page — do not copy them out of the
+repository, they are build artifacts:
+
+- [`install.js`](https://github.com/J0nan/Trilium-Command-Maker-Plugin/releases/latest/download/install.js) —
+  the installer (recommended).
+- [`command-maker.js`](https://github.com/J0nan/Trilium-Command-Maker-Plugin/releases/latest/download/command-maker.js) —
+  the plugin runtime, only needed for the manual install.
+
+Browse all versions on the
+[Releases page](https://github.com/J0nan/Trilium-Command-Maker-Plugin/releases).
+
+1. Download `install.js` from the latest release.
+2. Create a note in Trilium. Set its type to **Code** and its language to
    **JavaScript (Trilium backend)**.
-2. Paste the whole content of [`dist/install.js`](dist/install.js) into it.
-3. Press the **Execute** button on the note (or right-click → Execute script).
-4. Press `Ctrl+Shift+Space`.
+3. Paste the whole content of `install.js` into it.
+4. Press the **Execute** button on the note (or right-click → Execute script).
+5. Press `Ctrl+Shift+Space`.
 
 The installer is idempotent. It creates:
 
@@ -64,7 +76,9 @@ So to pin a shortcut that survives reinstalls, add `#cmShortcut=ctrl+alt+k` to t
 
 ### Manual install (no installer script)
 
-Create a **JS frontend** code note and paste [`dist/command-maker.js`](dist/command-maker.js).
+Download `command-maker.js` from the
+[latest release](https://github.com/J0nan/Trilium-Command-Maker-Plugin/releases/latest/download/command-maker.js),
+create a **JS frontend** code note, and paste its whole content.
 Add the label `#cmPlugin`, then either create a launcher pointing at it
 (Global menu → Configure launchbar → script launcher) or give it an
 `#executeButton`. On first open the plugin creates the settings note and the
@@ -280,7 +294,8 @@ be removed if one slips through.
   because `api.runOnBackend` sends the function source, and inner helpers travel
   with it while outer helpers would not.
 - The frontend note MIME is `application/javascript;env=frontend`.
-- `dist/` is committed because it is the artifact users import.
+- `dist/` is committed so release builds are reproducible; users should download
+  the assets from the Releases page instead of copying files from the repository.
 
 ## Releasing
 
