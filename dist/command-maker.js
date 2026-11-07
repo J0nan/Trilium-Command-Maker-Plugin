@@ -2612,6 +2612,7 @@ const CSS = [
     '.cm-base-row{display:flex;gap:6px;align-items:center;margin:0 0 4px;}',
     '.cm-base-label{flex:0 0 110px;opacity:.75;}',
     '.cm-option{display:flex;align-items:flex-start;gap:12px;padding:6px 8px;border-radius:6px;}',
+    '.cm-option.cm-option-bool{cursor:pointer;}',
     '.cm-option-group{display:flex;flex-direction:column;gap:2px;margin-bottom:8px;}',
     '.cm-option-group-title{font-size:11px;text-transform:uppercase;letter-spacing:.06em;opacity:.65;margin:4px 0 2px;}',
     '.cm-option:hover{background:var(--hover-item-background-color,#00000010);}',
@@ -3125,7 +3126,18 @@ function openPalette(controller) {
             main.appendChild(el('div', 'cm-opt-help', option.help));
         }
         row.appendChild(main);
-        row.appendChild(optionControl(option));
+        const control = optionControl(option);
+        row.appendChild(control);
+        if (option.type === 'boolean') {
+            row.classList.add('cm-option-bool');
+            row.addEventListener('click', function (event) {
+                if (event.target === control) {
+                    return;
+                }
+                control.checked = !control.checked;
+                setValue(Render.valueKey(option), control.checked);
+            });
+        }
         row.__cmSearch = [
             option.title,
             option.flag,

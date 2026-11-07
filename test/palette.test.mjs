@@ -493,6 +493,39 @@ test('palette lists tools, shows option help, examples, help, copy/insert and pr
     assert.deepEqual(env.calls.errors, []);
 });
 
+test('clicking a boolean option row toggles its checkbox', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+
+    const row = find(dom.body, (node) => {
+        return classed(node, 'cm-option') && find(node, (child) => {
+            return classed(child, 'cm-opt-title') && child.textContent === 'Verbose';
+        });
+    });
+    assert.ok(row, 'boolean row is rendered');
+    const checkbox = find(row, (node) => node.tagName === 'INPUT' && node.type === 'checkbox');
+    assert.ok(checkbox, 'boolean row has a checkbox');
+    assert.equal(checkbox.checked, false);
+
+    row.click();
+    assert.equal(checkbox.checked, true, 'clicking the row checks the box');
+    assert.match(find(dom.body, (node) => classed(node, 'cm-preview')).value, / -v$/);
+
+    row.click();
+    assert.equal(checkbox.checked, false, 'clicking the row again unchecks it');
+    assert.equal(
+        find(dom.body, (node) => classed(node, 'cm-preview')).value.includes(' -v'),
+        false
+    );
+    assert.deepEqual(env.calls.errors, []);
+});
+
 test('import dialog parses pasted help output and imports the selected options', async () => {
     const dom = createDom();
     const fixture = buildFixture();

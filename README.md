@@ -156,6 +156,8 @@ Required options are grouped under a **Required** heading before the
 `#cmRequired=true`; the **Add option** modal and the import preview can set it
 for you.
 
+Clicking anywhere on a boolean option row toggles its checkbox.
+
 The option note's content is a good place for a longer explanation; the palette
 shows `#cmDoc` inline and keeps the full note one click away.
 
