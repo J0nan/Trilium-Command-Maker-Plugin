@@ -217,10 +217,20 @@ test('seedTools provides three documented examples with help strings', () => {
         assert.ok(tool.base, tool.title + ' has a base command');
         assert.ok(tool.options.length >= 5, tool.title + ' exposes its options');
         tool.options.forEach((option) => {
-            assert.ok(option.flag, tool.title + ' option has a flag');
+            assert.ok(option.label, tool.title + ' option has a label');
             assert.ok(option.doc, tool.title + ' option has a help string');
         });
     });
+    const curl = tools.filter(function (tool) {
+        return tool.title === 'curl';
+    })[0];
+    const url = curl.options.filter(function (option) {
+        return option.label === 'URL';
+    })[0];
+    assert.ok(url, 'curl has a URL option');
+    assert.equal(url.flag, '', 'the URL is positional');
+    assert.equal(url.required, true, 'the URL is required');
+    assert.equal(url.order, 100, 'the URL is appended last');
     const required = tools.reduce(function (total, tool) {
         return total + tool.options.filter(function (option) {
             return option.required;
@@ -282,6 +292,35 @@ test('valuesFromExample handles quoted values and --flag=value forms', () => {
     });
     const equals = Model.valuesFromExample(longDefinition, 'git commit --message=quick');
     assert.equal(equals['note:m3'], 'quick');
+});
+
+test('valuesFromExample fills a positional option from the example', () => {
+    const definition = Model.buildTool({
+        noteId: 'curl',
+        title: 'curl',
+        labels: { cmBase: 'curl' },
+        optionNotes: [
+            { noteId: 'method', title: 'Request method', labels: { cmFlag: '-X', cmType: 'string' } },
+            { noteId: 'url', title: 'URL', labels: { cmType: 'string', cmPlaceholder: 'url' } }
+        ]
+    });
+    const values = Model.valuesFromExample(definition, 'curl -X POST https://api.example.com');
+    assert.equal(values['note:method'], 'POST');
+    assert.equal(values['note:url'], 'https://api.example.com');
+    assert.equal(values['note:url'] !== 'curl', true, 'the base command is not treated as a positional');
+});
+
+test('valuesFromExample does not guess positional values past an unknown flag', () => {
+    const definition = Model.buildTool({
+        noteId: 'curl',
+        title: 'curl',
+        labels: { cmBase: 'curl' },
+        optionNotes: [
+            { noteId: 'url', title: 'URL', labels: { cmType: 'string', cmPlaceholder: 'url' } }
+        ]
+    });
+    const values = Model.valuesFromExample(definition, 'curl --unknown value https://api.example.com');
+    assert.equal(values['note:url'], '');
 });
 
 test('tokenizeCommand keeps quoted values together and strips the quotes', () => {

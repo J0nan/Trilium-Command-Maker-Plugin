@@ -1716,8 +1716,8 @@ function tokenizeCommand(command) {
 
 /**
  * Turn a rendered example back into a value map for the palette form.
- * Only known flags are matched; positionals and subcommands stay in the
- * example preview so the form shows exactly what the example sets.
+ * Known flags are matched, and unconsumed tokens fill positional options in
+ * order. Subcommands and placeholders stay in the example preview.
  */
 function valuesFromExample(definition, command) {
     const safe = definition || {};
@@ -1732,7 +1732,22 @@ function valuesFromExample(definition, command) {
     }
     values[Render.EXTRA_KEY] = '';
 
-    const tokens = tokenizeCommand(command);
+    let tokens = tokenizeCommand(command);
+    const base = String(safe.base == null ? '' : safe.base);
+    const canMapPositionals = base.indexOf('{{') === -1;
+    if (canMapPositionals) {
+        const baseTokens = tokenizeCommand(base);
+        let matches = baseTokens.length > 0 && baseTokens.length <= tokens.length;
+        for (let index = 0; matches && index < baseTokens.length; index += 1) {
+            if (tokens[index] !== baseTokens[index]) {
+                matches = false;
+            }
+        }
+        if (matches) {
+            tokens = tokens.slice(baseTokens.length);
+        }
+    }
+
     const byFlag = {};
     for (const option of options) {
         if (option.flag) {
@@ -1740,9 +1755,15 @@ function valuesFromExample(definition, command) {
         }
     }
 
+    const positionals = [];
+    let unknownFlag = false;
     for (let index = 0; index < tokens.length; index += 1) {
         const token = tokens[index];
-        if (token === '' || token.charAt(0) !== '-' || token.length < 2) {
+        if (token === '') {
+            continue;
+        }
+        if (token.charAt(0) !== '-' || token.length < 2) {
+            positionals.push(token);
             continue;
         }
         let flag = token;
@@ -1754,6 +1775,7 @@ function valuesFromExample(definition, command) {
         }
         const option = byFlag[flag];
         if (!option) {
+            unknownFlag = true;
             continue;
         }
         const key = Render.valueKey(option);
@@ -1770,6 +1792,15 @@ function valuesFromExample(definition, command) {
         if (next !== undefined && !nextIsKnownFlag) {
             values[key] = next;
             index += 1;
+        }
+    }
+
+    if (!unknownFlag && canMapPositionals && positionals.length) {
+        const positionalOptions = options.filter(function (option) {
+            return !option.flag && option.mode !== 'inline';
+        });
+        for (let index = 0; index < positionalOptions.length && index < positionals.length; index += 1) {
+            values[Render.valueKey(positionalOptions[index])] = positionals[index];
         }
     }
 
@@ -1970,7 +2001,8 @@ function seedTools() {
                 { label: 'Silent', flag: '-s', type: 'boolean', doc: 'Do not show progress or error messages.', order: 60 },
                 { label: 'Compressed', flag: '--compressed', type: 'boolean', doc: 'Ask the server for a compressed response and decompress it.', order: 70 },
                 { label: 'User', flag: '-u', type: 'string', doc: 'Server credentials as user:password.', order: 80 },
-                { label: 'Insecure', flag: '-k', type: 'boolean', doc: 'Allow insecure TLS connections (skip certificate checks).', order: 90 }
+                { label: 'Insecure', flag: '-k', type: 'boolean', doc: 'Allow insecure TLS connections (skip certificate checks).', order: 90 },
+                { label: 'URL', flag: '', type: 'string', placeholder: 'url', quote: 'double', doc: 'URL to request. Positional; appended last.', order: 100, required: true }
             ]
         }
     ];
