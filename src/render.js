@@ -23,6 +23,9 @@
 const PLACEHOLDER_RE = /\\?\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
 const PLACEHOLDER_SOURCE_RE = /\\?\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
 
+/** Value-map key for the free-text arguments inserted right after the base. */
+const EXTRA_KEY = 'cm:extra';
+
 const QUOTERS = {
     none(value) {
         return value;
@@ -211,14 +214,22 @@ function renderCommand(definition, values) {
         }
     }
 
-    const parts = [substituted.trim()].concat(segments).filter(function (part) {
-        return part !== '';
-    });
+    const parts = [substituted.trim()];
+    const extra = valueMap[EXTRA_KEY];
+    if (!isEmpty(extra)) {
+        parts.push(String(extra).trim());
+    }
+    for (const segment of segments) {
+        if (segment) {
+            parts.push(segment);
+        }
+    }
 
-    return { command: parts.join(' '), warnings: warnings };
+    return { command: parts.filter(function (part) { return part !== ''; }).join(' '), warnings: warnings };
 }
 
 module.exports = {
+    EXTRA_KEY,
     slugify,
     quote,
     isEmpty,

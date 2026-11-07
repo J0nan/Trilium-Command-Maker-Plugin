@@ -126,6 +126,17 @@ test('an unresolved placeholder warns and leaves no gap', () => {
     assert.equal(result.warnings[0].code, 'missing-placeholder');
 });
 
+test('extra arguments are inserted after the base and before flags', () => {
+    const def = definition('docker', [option({ placeholder: 'detach', flag: '-d', type: 'boolean' })]);
+    const result = Render.renderCommand(def, { [Render.EXTRA_KEY]: 'run alpine', 'note:n1': true });
+    assert.equal(result.command, 'docker run alpine -d');
+});
+
+test('empty extra arguments do not add a gap', () => {
+    const def = definition('docker', [option({ placeholder: 'detach', flag: '-d', type: 'boolean' })]);
+    assert.equal(Render.renderCommand(def, { [Render.EXTRA_KEY]: '   ' }).command, 'docker');
+});
+
 test('a non-numeric placeholder value warns but still renders', () => {
     const def = definition('sleep {{count}}', [
         option({ placeholder: 'count', flag: '--count', type: 'number' })
