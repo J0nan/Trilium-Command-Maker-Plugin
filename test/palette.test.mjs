@@ -384,6 +384,7 @@ test('palette lists tools, shows option help, examples, help, copy/insert and pr
     assert.match(style.textContent, /\.cm-detail\{[^}]*user-select:text/);
     assert.match(style.textContent, /\.cm-modal-body\{[^}]*user-select:text/);
     assert.match(style.textContent, /\.cm-install\{[^}]*user-select:text/);
+    assert.match(style.textContent, /\.cm-field \.cm-control\{[^}]*width:100%/);
     assert.match(style.textContent, /\.cm-install pre\{[^}]*box-shadow:var\(--code-block-box-shadow/);
     assert.match(style.textContent, /@media \(hover:none\)\{\.cm-code-copy\{opacity:1;\}\}/);
     assert.equal(style.textContent.includes('#f4f4f4'), false, 'no hard-coded light code background');
@@ -694,6 +695,9 @@ test('palette can add a single option with a help string', async () => {
 
     findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'Add option')[0].click();
     const modal = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-modal')), 'add option modal');
+    const fields = findAll(modal, (node) => classed(node, 'cm-field'));
+    assert.ok(fields.length >= 7, 'every add-option field stacks its label above a full-width control');
+    assert.ok(fields.every((entry) => entry.children.length === 2), 'each field holds a label and a control');
 
     find(modal, (node) => node.placeholder === 'Option label, e.g. Output file').value = 'Output file';
     find(modal, (node) => String(node.placeholder || '').indexOf('Flag, e.g.') === 0).value = '-o';

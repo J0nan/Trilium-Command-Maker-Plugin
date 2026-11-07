@@ -3084,6 +3084,9 @@ const CSS = [
     '.cm-danger{color:#b91c1c;}',
     '.cm-presets,.cm-examples,.cm-fold-block{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--main-border-color,#ddd);padding-top:10px;margin-top:12px;}',
     '.cm-row{display:flex;align-items:center;gap:8px;}',
+    '.cm-field{display:flex;flex-direction:column;gap:4px;}',
+    '.cm-field-label{font-size:12px;opacity:.75;}',
+    '.cm-field .cm-control{width:100%;}',
     '.cm-empty{opacity:.6;padding:8px;}',
     '.cm-foot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 12px;border-top:1px solid var(--main-border-color,#ddd);}',
     '.cm-inline{display:flex;flex-wrap:wrap;gap:6px;align-items:center;width:100%;}',
@@ -4737,11 +4740,11 @@ function openPalette(controller) {
         }
 
         function field(labelText, control) {
-            const row = el('label', 'cm-row');
-            row.appendChild(el('span', 'cm-base-label', labelText));
+            const wrapper = el('label', 'cm-field');
+            wrapper.appendChild(el('span', 'cm-field-label', labelText));
             control.className = 'cm-control' + (control.tagName === 'SELECT' ? ' cm-select' : '');
-            row.appendChild(control);
-            return row;
+            wrapper.appendChild(control);
+            return wrapper;
         }
 
         const labelInput = document.createElement('input');
