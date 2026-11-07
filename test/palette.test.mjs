@@ -417,14 +417,19 @@ test('palette lists tools, shows option help, examples, help, copy/insert and pr
     assert.ok(optionsIndex >= 0, 'the options heading is rendered');
     assert.ok(presetIndex < optionsIndex, 'the preset selector comes before the options');
 
-    const requiredStar = find(dom.body, (node) => classed(node, 'cm-required-star'));
-    assert.ok(requiredStar, 'a required option shows an asterisk');
-    assert.equal(requiredStar.textContent, '*');
-    assert.match(
-        find(dom.body, (node) => classed(node, 'cm-required-legend')).textContent,
-        /marked \*/,
-        'the legend explains the asterisk'
+    const optionGroups = findAll(dom.body, (node) => classed(node, 'cm-option-group'));
+    assert.equal(optionGroups.length, 2, 'required and optional groups render');
+    assert.equal(find(optionGroups[0], (node) => classed(node, 'cm-option-group-title')).textContent, 'Required');
+    assert.ok(
+        find(optionGroups[0], (node) => classed(node, 'cm-opt-title') && node.textContent === 'Input file'),
+        'the required option is in the Required group'
     );
+    assert.equal(find(optionGroups[1], (node) => classed(node, 'cm-option-group-title')).textContent, 'Optional');
+    assert.ok(
+        find(optionGroups[1], (node) => classed(node, 'cm-opt-title') && node.textContent === 'Video codec'),
+        'an optional option is in the Optional group'
+    );
+    assert.equal(find(dom.body, (node) => classed(node, 'cm-required-star')), null, 'no asterisk marker');
     assert.equal(find(dom.body, (node) => classed(node, 'cm-required-badge')), null, 'no badge');
 
     const example = find(dom.body, (node) => classed(node, 'cm-example-text'));

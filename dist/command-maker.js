@@ -2611,10 +2611,9 @@ const CSS = [
     '.cm-link:hover{text-decoration:underline;}',
     '.cm-base-row{display:flex;gap:6px;align-items:center;margin:0 0 4px;}',
     '.cm-base-label{flex:0 0 110px;opacity:.75;}',
-    '.cm-options{display:flex;flex-direction:column;gap:4px;}',
     '.cm-option{display:flex;align-items:flex-start;gap:12px;padding:6px 8px;border-radius:6px;}',
-    '.cm-required-star{color:#b91c1c;font-weight:700;margin-left:2px;}',
-    '.cm-required-legend{font-size:12px;opacity:.7;margin:2px 0 6px;}',
+    '.cm-option-group{display:flex;flex-direction:column;gap:2px;margin-bottom:8px;}',
+    '.cm-option-group-title{font-size:11px;text-transform:uppercase;letter-spacing:.06em;opacity:.65;margin:4px 0 2px;}',
     '.cm-option:hover{background:var(--hover-item-background-color,#00000010);}',
     '.cm-opt-main{flex:1;min-width:0;}',
     '.cm-opt-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}',
@@ -2761,6 +2760,7 @@ function openPalette(controller) {
         values: {},
         edited: false,
         optionRows: [],
+        optionGroups: [],
         previewEl: null,
         warningsEl: null,
         presetSelect: null,
@@ -3114,11 +3114,6 @@ function openPalette(controller) {
         const main = el('div', 'cm-opt-main');
         const headRow = el('div', 'cm-opt-head');
         headRow.appendChild(el('span', 'cm-opt-title', option.title));
-        if (option.required) {
-            const star = el('span', 'cm-required-star', '*');
-            star.title = 'Required';
-            headRow.appendChild(star);
-        }
         if (option.flag) {
             headRow.appendChild(el('code', 'cm-opt-flag', option.flag));
         }
@@ -3389,6 +3384,7 @@ function openPalette(controller) {
         state.presetSelect = null;
         state.presetName = null;
         state.optionRows = [];
+        state.optionGroups = [];
 
         if (!state.definition) {
             detail.appendChild(el('div', 'cm-empty', 'Pick a tool from the list.'));
@@ -3422,12 +3418,6 @@ function openPalette(controller) {
         detail.appendChild(presetBlock());
 
         detail.appendChild(el('div', 'cm-section', 'Options (' + definition.options.length + ')'));
-        const requiredCount = definition.options.filter(function (option) {
-            return option.required;
-        }).length;
-        if (requiredCount > 0) {
-            detail.appendChild(el('div', 'cm-required-legend', 'Fields marked * are required.'));
-        }
         const filter = document.createElement('input');
         filter.type = 'search';
         filter.className = 'cm-control cm-filter';
@@ -3438,24 +3428,46 @@ function openPalette(controller) {
                 const match = needle === '' || String(row.__cmSearch || '').indexOf(needle) !== -1;
                 row.style.display = match ? '' : 'none';
             });
+            state.optionGroups.forEach(function (group) {
+                const visible = group.rows.some(function (row) {
+                    return row.style.display !== 'none';
+                });
+                group.node.style.display = visible ? '' : 'none';
+            });
         });
         detail.appendChild(filter);
 
         const form = el('div', 'cm-form');
-        const optionsBlock = el('div', 'cm-options');
-        if (!definition.options.length && !definition.inferred.length) {
-            optionsBlock.appendChild(el('div', 'cm-empty', 'This tool has no options yet. Use "Import options" or add option notes under Options.'));
-        }
-        definition.options.forEach(function (option) {
-            optionsBlock.appendChild(optionRow(option, false));
+        const requiredOptions = definition.options
+            .filter(function (option) {
+                return option.required;
+            })
+            .concat(definition.inferred);
+        const optionalOptions = definition.options.filter(function (option) {
+            return !option.required;
         });
-        if (definition.inferred.length) {
-            optionsBlock.appendChild(el('div', 'cm-section', 'Placeholders without an option'));
-            definition.inferred.forEach(function (option) {
-                optionsBlock.appendChild(optionRow(option, true));
+
+        function optionGroup(title, options) {
+            if (!options.length) {
+                return;
+            }
+            const group = el('div', 'cm-option-group');
+            group.appendChild(el('div', 'cm-option-group-title', title));
+            const rows = [];
+            options.forEach(function (option) {
+                const row = optionRow(option, Boolean(option.inferred));
+                rows.push(row);
+                group.appendChild(row);
             });
+            form.appendChild(group);
+            state.optionGroups.push({ node: group, rows: rows });
         }
-        form.appendChild(optionsBlock);
+
+        if (!requiredOptions.length && !optionalOptions.length) {
+            form.appendChild(el('div', 'cm-empty', 'This tool has no options yet. Use "Import options" or add option notes under Options.'));
+        }
+        optionGroup('Required', requiredOptions);
+        optionGroup('Optional', optionalOptions);
         detail.appendChild(form);
 
         detail.appendChild(el('div', 'cm-section', 'Extra arguments'));
@@ -3978,7 +3990,7 @@ function openPalette(controller) {
         bodyNode.appendChild(field('Values', valuesInput));
         bodyNode.appendChild(field('Order', orderInput));
         bodyNode.appendChild(requiredRow);
-        bodyNode.appendChild(el('div', 'cm-note', 'Required options get a red * in the palette and warn until they have a value.'));
+        bodyNode.appendChild(el('div', 'cm-note', 'Required options are grouped first under Required in the palette.'));
 
         const actionsNode = el('div', 'cm-inline');
         actionsNode.appendChild(add);
