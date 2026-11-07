@@ -182,7 +182,7 @@ function beRun(params) {
                 parentNoteId: parentForRoot(),
                 title: 'Command Maker',
                 type: 'text',
-                content: 'Commands live in this subtree. Press Ctrl+Shift+K to open the palette.'
+                content: 'Commands live in this subtree. Press Ctrl+Shift+Space to open the palette.'
             }).note;
             root.setLabel(labels.root, '');
         }

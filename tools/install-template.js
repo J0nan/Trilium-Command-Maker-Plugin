@@ -5,9 +5,10 @@
 //    "JavaScript (Trilium backend)".
 // 2. Paste this whole file into the note.
 // 3. Press the Execute button (or right-click the note -> Execute script).
-// 4. Press Ctrl+Shift+K.
+// 4. Press Ctrl+Shift+Space.
 //
-// The installer is idempotent: running it again updates the plugin note.
+// The installer is idempotent: running it again updates the plugin note and
+// keeps the shortcut you configured (see resolveShortcut below).
 // ---------------------------------------------------------------------------
 
 var BUNDLE = __BUNDLE__;
@@ -15,7 +16,8 @@ var BUNDLE = __BUNDLE__;
 var ROOT_LABEL = 'cmRoot';
 var PLUGIN_LABEL = 'cmPlugin';
 var LAUNCHER_ID = 'commandmaker';
-var SHORTCUT = 'ctrl+shift+k';
+var SHORTCUT_LABEL = 'cmShortcut';
+var DEFAULT_SHORTCUT = 'ctrl+shift+space';
 var FRONTEND_MIME = 'application/javascript;env=frontend';
 
 function findChild(parent, label) {
@@ -36,6 +38,31 @@ function findChild(parent, label) {
     return null;
 }
 
+function resolveShortcut(rootNote) {
+    // 1. explicit override on the Command Maker root note.
+    //    An empty value means "no shortcut" (the launcher button still works).
+    var configured = rootNote.getLabelValue(SHORTCUT_LABEL);
+    if (configured !== null && configured !== undefined) {
+        return String(configured);
+    }
+
+    // 2. whatever the user set on the launcher itself (Configure launchbar).
+    try {
+        var launcher = api.getNote('al_' + LAUNCHER_ID);
+        if (launcher) {
+            var current = launcher.getLabelValue('keyboardShortcut');
+            if (current !== null && current !== undefined && String(current).trim() !== '') {
+                return String(current);
+            }
+        }
+    } catch (error) {
+        // best effort: a missing launcher falls through to the default
+    }
+
+    // 3. default for a fresh install.
+    return DEFAULT_SHORTCUT;
+}
+
 var root = api.getNoteWithLabel(ROOT_LABEL);
 if (!root) {
     var parentId = null;
@@ -51,10 +78,12 @@ if (!root) {
         parentNoteId: parentId,
         title: 'Command Maker',
         type: 'text',
-        content: 'Press Ctrl+Shift+K to open the command palette.'
+        content: 'Press Ctrl+Shift+Space to open the command palette.'
     }).note;
     root.setLabel(ROOT_LABEL, '');
 }
+
+var shortcut = resolveShortcut(root);
 
 var scriptNote = findChild(root, PLUGIN_LABEL);
 if (scriptNote) {
@@ -77,8 +106,8 @@ api.createOrUpdateLauncher({
     targetNoteId: root.noteId,
     title: 'Command Maker',
     icon: 'bx-terminal',
-    keyboardShortcut: SHORTCUT,
+    keyboardShortcut: shortcut,
     isVisible: true
 });
 
-api.log('Command Maker installed. Press ' + SHORTCUT + ' to open the palette.');
+api.log('Command Maker installed. Shortcut: ' + (shortcut ? shortcut : 'none') + '.');
