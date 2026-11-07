@@ -92,6 +92,10 @@ const CSS = [
     '.cm-inline .cm-control{flex:1;min-width:120px;}',
     '.cm-status{margin-left:auto;font-size:12px;opacity:.75;}',
     '.cm-status.is-error{color:#b91c1c;opacity:1;}',
+    '.cm-version{font-size:12px;opacity:.7;border:0;background:transparent;color:inherit;cursor:pointer;padding:2px 6px;font:inherit;}',
+    '.cm-version:hover{opacity:1;text-decoration:underline;}',
+    '.cm-version-link{font-size:11px;opacity:.6;color:inherit;text-decoration:none;padding:2px 4px;}',
+    '.cm-version-link:hover{opacity:1;text-decoration:underline;}',
     '.cm-badge{font-size:11px;padding:1px 6px;border-radius:999px;background:var(--accented-background-color,#eef2ff);opacity:.8;}',
     '.cm-example{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:6px;}',
     '.cm-example:hover{background:var(--hover-item-background-color,#00000010);}',
@@ -248,11 +252,22 @@ function openPalette(controller) {
     const toolsButton = el('button', 'cm-button', 'Tools folder');
     toolsButton.type = 'button';
     const statusEl = el('span', 'cm-status', '');
+    const versionButton = el('button', 'cm-version', 'v' + controller.version());
+    versionButton.type = 'button';
+    versionButton.title = 'Check for updates';
+    const repoLink = document.createElement('a');
+    repoLink.className = 'cm-version-link';
+    repoLink.textContent = 'Repository';
+    repoLink.href = controller.repository();
+    repoLink.target = '_blank';
+    repoLink.rel = 'noreferrer';
     footer.appendChild(newToolButton);
     footer.appendChild(importButton);
     footer.appendChild(addOptionButton);
     footer.appendChild(toolsButton);
     footer.appendChild(statusEl);
+    footer.appendChild(versionButton);
+    footer.appendChild(repoLink);
 
     const modalHost = el('div', '');
 
@@ -279,6 +294,32 @@ function openPalette(controller) {
             }
         } catch (ignored) {
             // showing the message in the footer is enough
+        }
+    }
+
+    async function checkForUpdates() {
+        if (typeof controller.checkLatestVersion !== 'function') {
+            setStatus('Update check is unavailable.', true);
+            return;
+        }
+        setStatus('Checking for updates…');
+        try {
+            const info = await controller.checkLatestVersion();
+            if (info.error) {
+                setStatus('v' + info.current + ' — ' + info.error, true);
+                return;
+            }
+            if (info.latest && info.latest === info.current) {
+                setStatus('v' + info.current + ' is the latest version.');
+            } else if (info.outdated) {
+                setStatus('v' + info.current + ' installed · latest is v' + info.latest + '.');
+            } else if (info.latest) {
+                setStatus('v' + info.current + ' is newer than the latest published tag (v' + info.latest + ').');
+            } else {
+                setStatus('v' + info.current + ' — no published version found.');
+            }
+        } catch (error) {
+            notify(error);
         }
     }
 
@@ -1400,8 +1441,6 @@ function openPalette(controller) {
         const openFolder = el('button', 'cm-button', 'Open Tools folder');
         openFolder.type = 'button';
         openFolder.disabled = true;
-        const importLegacy = el('button', 'cm-button', 'Import legacy commands');
-        importLegacy.type = 'button';
 
         const idRow = el('div', 'cm-row');
         const idInput = document.createElement('input');
@@ -1452,21 +1491,6 @@ function openPalette(controller) {
                 .catch(notify);
         });
 
-        importLegacy.addEventListener('click', function () {
-            Promise.resolve()
-                .then(function () {
-                    return controller.importLegacy();
-                })
-                .then(function (result) {
-                    closeModal();
-                    setStatus(result && result.created
-                        ? 'Imported ' + result.created + ' legacy command(s).'
-                        : 'No legacy commands to import.');
-                })
-                .then(runSearch)
-                .catch(notify);
-        });
-
         useId.addEventListener('click', function () {
             const noteId = idInput.value.trim();
             if (!noteId) {
@@ -1488,7 +1512,6 @@ function openPalette(controller) {
         const actionsNode = el('div', 'cm-inline');
         actionsNode.appendChild(active);
         actionsNode.appendChild(openFolder);
-        actionsNode.appendChild(importLegacy);
         const closeButton2 = el('button', 'cm-button', 'Close');
         closeButton2.type = 'button';
         closeButton2.addEventListener('click', closeModal);
@@ -1500,6 +1523,10 @@ function openPalette(controller) {
 
     searchInput.addEventListener('input', onSearchInput);
     closeButton.addEventListener('click', close);
+    versionButton.addEventListener('click', function (event) {
+        event.preventDefault();
+        Promise.resolve().then(checkForUpdates).catch(notify);
+    });
     newToolButton.addEventListener('click', toggleNewTool);
     importButton.addEventListener('click', openImport);
     addOptionButton.addEventListener('click', openAddOption);

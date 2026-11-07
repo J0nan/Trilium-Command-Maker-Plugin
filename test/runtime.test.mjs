@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import Runtime from '../src/runtime.js';
+import Version from '../src/version.js';
 
 function makeNote(spec) {
     const labels = spec.labels || {};
@@ -126,9 +127,11 @@ function makeTool() {
 
 test('refresh indexes tool title, category, base, option help and What is? text', async () => {
     const built = makeTool();
-    installApi(built.tool, {});
+    const calls = installApi(built.tool, {});
     await Runtime.refresh();
 
+    assert.equal(calls[0].action, 'bootstrap');
+    assert.equal(calls[0].version, Version.VERSION, 'bootstrap records the installed version');
     assert.equal(Runtime.search('ffmpeg').length, 1, 'base is indexed');
     assert.equal(Runtime.search('media').length, 1, 'category is indexed');
     assert.equal(Runtime.search('input').length, 1, 'option title is indexed');

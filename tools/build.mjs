@@ -5,10 +5,11 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sourceDir = path.join(root, 'src');
 const distDir = path.join(root, 'dist');
+const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 
 // Dependency order does not matter: modules are registered first and executed
 // lazily on first require.
-const MODULES = ['render', 'parse', 'sections', 'model', 'backend', 'ui', 'runtime'];
+const MODULES = ['render', 'parse', 'sections', 'model', 'version', 'backend', 'ui', 'runtime'];
 const REQUIRE_RE = /require\(\s*['"]\.\/([\w-]+)(?:\.js)?['"]\s*\)/g;
 
 function inlineRequires(code) {
@@ -33,6 +34,12 @@ function assertKnownRequires(code, origin) {
 }
 
 function buildBundle() {
+    const versionSource = read('version');
+    const expected = "const VERSION = '" + pkg.version + "';";
+    if (versionSource.indexOf(expected) === -1) {
+        throw new Error('src/version.js must declare ' + expected + ' to match package.json');
+    }
+
     const definitions = MODULES.map(function (name) {
         const code = read(name);
         assertKnownRequires(code, name);
@@ -68,15 +75,20 @@ function buildBundle() {
     ].join('\n');
 }
 
-function buildInstaller(bundle) {
+function buildInstaller(bundle, version) {
     const templatePath = path.join(root, 'tools', 'install-template.js');
     const template = fs.readFileSync(templatePath, 'utf8');
     if (template.indexOf('__BUNDLE__') === -1) {
         throw new Error('install-template.js is missing the __BUNDLE__ placeholder');
     }
-    return template.replace('__BUNDLE__', function () {
-        return JSON.stringify(bundle);
-    });
+    if (template.indexOf('__VERSION__') === -1) {
+        throw new Error('install-template.js is missing the __VERSION__ placeholder');
+    }
+    return template
+        .replace('__BUNDLE__', function () {
+            return JSON.stringify(bundle);
+        })
+        .replace('__VERSION__', version || pkg.version);
 }
 
 function main() {

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 
 import { buildBundle } from '../tools/build.mjs';
+import Version from '../src/version.js';
 
 function classed(node, name) {
     return String(node.className || '').split(/\s+/).indexOf(name) !== -1;
@@ -337,8 +338,8 @@ function makeApi(fixture) {
     return { api: api, calls: calls, navigator: navigator };
 }
 
-function run(dom, api, navigator) {
-    const context = vm.createContext({
+function run(dom, api, navigator, extra) {
+    const context = vm.createContext(Object.assign({
         api,
         window: {},
         document: dom,
@@ -353,7 +354,7 @@ function run(dom, api, navigator) {
             }
             return { backgroundColor: 'rgba(0, 0, 0, 0)', color: 'rgb(200, 200, 200)' };
         }
-    });
+    }, extra || {}));
     vm.runInContext(buildBundle(), context);
 }
 
@@ -373,6 +374,10 @@ test('palette lists tools, shows option help, examples, help, copy/insert and pr
     assert.match(style.textContent, /:root \.cm-preview:hover/);
     assert.match(style.textContent, /\.cm-opt-help/);
     assert.equal(style.textContent.includes('#f4f4f4'), false, 'no hard-coded light code background');
+
+    const versionButton = find(dom.body, (node) => classed(node, 'cm-version'));
+    assert.ok(versionButton, 'the palette footer shows the version');
+    assert.equal(versionButton.textContent, 'v' + Version.VERSION);
 
     const overlay = find(dom.body, (node) => classed(node, 'cm-overlay'));
     overlay.dispatch('keydown', { key: 'ArrowDown' });
@@ -415,7 +420,7 @@ test('palette lists tools, shows option help, examples, help, copy/insert and pr
     const installPre = findAll(dom.body, (node) => node.tagName === 'PRE').filter((node) => /winget install/.test(node.textContent))[0];
     assert.ok(installPre, 'install steps are rendered');
 
-    const links = findAll(dom.body, (node) => node.tagName === 'A').map((node) => node.textContent);
+    const links = findAll(dom.body, (node) => node.tagName === 'A' && classed(node, 'cm-link')).map((node) => node.textContent);
     assert.deepEqual(links, ['ffmpeg.org', 'Reference']);
 
     const inputControl = findAll(dom.body, (node) => classed(node, 'cm-control') && node.placeholder === '-i')[0];
@@ -644,6 +649,36 @@ test('importing options preserves the values already entered', async () => {
         const again = findAll(dom.body, (node) => classed(node, 'cm-control') && node.placeholder === '-i')[0];
         return again && again.value === 'kept.mp4';
     }, 'preserved option value');
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('the version button checks the latest published tag', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    const fetchCalls = [];
+    const fakeFetch = async function (url) {
+        fetchCalls.push(url);
+        return {
+            ok: true,
+            async json() {
+                return [{ name: 'v1.2.0' }, { name: 'v9.9.9' }, { name: 'v1.10.0' }];
+            },
+            async text() {
+                return '';
+            }
+        };
+    };
+    run(dom, env.api, env.navigator, { fetch: fakeFetch });
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-version')), 'version button');
+    find(dom.body, (node) => classed(node, 'cm-version')).click();
+    await waitFor(() => {
+        const status = find(dom.body, (node) => classed(node, 'cm-status'));
+        return status && /latest is v9\.9\.9/.test(status.textContent);
+    }, 'update status');
+
+    assert.equal(fetchCalls[0], Version.LATEST_TAG_API);
     assert.deepEqual(env.calls.errors, []);
 });
 

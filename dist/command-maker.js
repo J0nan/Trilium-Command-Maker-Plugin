@@ -1459,14 +1459,9 @@ const LABELS = {
     // bookkeeping
     seeded: 'cmSeeded',
     managed: 'cmManaged',
-    migrated: 'cmMigrated',
+    version: 'cmVersion',
     // note presentation
     icon: 'iconClass',
-    // legacy command/template labels, only used by the legacy importer
-    legacyCommand: 'cmCommand',
-    legacyTemplate: 'cmTemplate',
-    legacyOptionTemplate: 'cmOptionTemplate',
-    legacyPreset: 'cmPreset'
 };
 
 const LABEL_NAMES = Object.keys(LABELS).map(function (key) {
@@ -2001,6 +1996,26 @@ module.exports = {
     seedTools
 };
 });
+__def("version", function (module, exports, __require) {
+'use strict';
+
+/**
+ * Single source of truth for the installed plugin version and where to look for
+ * a newer one. `tools/build.mjs` fails the build when VERSION and package.json
+ * disagree.
+ */
+const VERSION = '1.0.0';
+const REPOSITORY = 'https://github.com/J0nan/Trilium-Command-Maker-Plugin';
+const LATEST_TAG_API = REPOSITORY + '/api/v1/repos/J0nan/Trilium-command-maker/tags?limit=50';
+const LATEST_RAW = REPOSITORY + '/raw/branch/main/package.json';
+
+module.exports = {
+    VERSION,
+    REPOSITORY,
+    LATEST_TAG_API,
+    LATEST_RAW
+};
+});
 __def("backend", function (module, exports, __require) {
 'use strict';
 
@@ -2016,7 +2031,7 @@ __def("backend", function (module, exports, __require) {
  *
  * Actions: bootstrap | createCategory | createTool | addOption |
  * importOptions | deleteOption | setToolBase | setToolsRoot | savePreset |
- * deletePreset | importLegacy
+ * deletePreset
  */
 
 function beRun(params) {
@@ -2042,17 +2057,6 @@ function beRun(params) {
         }
         const value = note.getLabelValue(name);
         return value !== null && value !== undefined;
-    }
-
-    function isTruthy(value) {
-        if (value === true) {
-            return true;
-        }
-        if (value === undefined || value === null) {
-            return false;
-        }
-        const normalised = String(value).trim().toLowerCase();
-        return normalised === 'true' || normalised === '1' || normalised === 'yes' || normalised === 'on';
     }
 
     function requireNote(noteId, message) {
@@ -2302,65 +2306,6 @@ function beRun(params) {
         return note;
     }
 
-    /** Legacy option notes are stored under a cmOptions-labelled child folder. */
-    function legacyOptionSpecs(commandNote) {
-        const folder = findChildWithLabel(commandNote, labels.options);
-        if (!folder) {
-            return [];
-        }
-        const children = folder.getChildNotes();
-        const specs = [];
-        for (let index = 0; index < children.length; index += 1) {
-            const child = children[index];
-            if (hasLabel(child, labels.legacyOptionTemplate)) {
-                continue;
-            }
-            const spec = { label: child.title };
-            const flag = child.getLabelValue(labels.flag);
-            const type = child.getLabelValue(labels.type);
-            const values = child.getLabelValue(labels.enumValues);
-            const defaultValue = child.getLabelValue(labels.defaultValue);
-            const required = child.getLabelValue(labels.required);
-            const order = child.getLabelValue(labels.order);
-            const quote = child.getLabelValue(labels.quote);
-            const separator = child.getLabelValue(labels.separator);
-            const placeholder = child.getLabelValue(labels.placeholder);
-            const mode = child.getLabelValue(labels.mode);
-            if (nonEmpty(flag)) {
-                spec.flag = String(flag);
-            }
-            if (nonEmpty(type)) {
-                spec.type = String(type);
-            }
-            if (nonEmpty(values)) {
-                spec.values = String(values);
-            }
-            if (nonEmpty(defaultValue)) {
-                spec.default = String(defaultValue);
-            }
-            if (isTruthy(required)) {
-                spec.required = true;
-            }
-            if (nonEmpty(order)) {
-                spec.order = String(order);
-            }
-            if (nonEmpty(quote)) {
-                spec.quote = String(quote);
-            }
-            if (nonEmpty(separator)) {
-                spec.separator = String(separator);
-            }
-            if (nonEmpty(placeholder)) {
-                spec.placeholder = String(placeholder);
-            }
-            if (nonEmpty(mode)) {
-                spec.mode = String(mode);
-            }
-            specs.push(spec);
-        }
-        return specs;
-    }
-
     function parentForRoot() {
         if (options.parentId) {
             return options.parentId;
@@ -2401,6 +2346,10 @@ function beRun(params) {
                 content: 'Command Maker settings. The plugin finds this note through its label.'
             }).note;
             root.setLabel(labels.root, '');
+        }
+
+        if (nonEmpty(options.version) && root.getLabelValue(labels.version) !== String(options.version)) {
+            root.setLabel(labels.version, String(options.version));
         }
 
         let toolsRoot = api.getNoteWithLabel(labels.tools);
@@ -2572,48 +2521,6 @@ function beRun(params) {
         return { ok: true };
     }
 
-    function importLegacy() {
-        const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
-        const settings = api.getNoteWithLabel(labels.root);
-        if (settings && hasLabel(settings, labels.migrated)) {
-            return { created: 0, skipped: true };
-        }
-        const fallbacks = options.newToolNotes || {};
-        const categoryName = nonEmpty(options.categoryName) ? String(options.categoryName) : 'Imported';
-        const candidates = api.getNotesWithLabel(labels.legacyCommand);
-        let created = 0;
-        for (let index = 0; index < candidates.length; index += 1) {
-            const note = candidates[index];
-            if (hasLabel(note, labels.legacyTemplate) || hasLabel(note, labels.legacyOptionTemplate)) {
-                continue;
-            }
-            let base = note.getLabelValue(labels.base);
-            if (!nonEmpty(base)) {
-                base = note.getContent();
-            }
-            createToolNote(
-                toolsRoot,
-                {
-                    category: categoryName,
-                    title: note.title,
-                    base: base,
-                    description: note.getLabelValue(labels.description),
-                    content: toolHtmlContent(),
-                    install: fallbacks.install,
-                    usage: fallbacks.usage,
-                    help: fallbacks.help,
-                    options: legacyOptionSpecs(note)
-                },
-                fallbacks
-            );
-            created += 1;
-        }
-        if (settings) {
-            settings.setLabel(labels.migrated, '');
-        }
-        return { created: created };
-    }
-
     switch (options.action) {
         case 'bootstrap':
             return bootstrap();
@@ -2635,8 +2542,6 @@ function beRun(params) {
             return savePreset();
         case 'deletePreset':
             return deletePreset();
-        case 'importLegacy':
-            return importLegacy();
         default:
             throw new Error('Unknown action: ' + options.action);
     }
@@ -2740,6 +2645,10 @@ const CSS = [
     '.cm-inline .cm-control{flex:1;min-width:120px;}',
     '.cm-status{margin-left:auto;font-size:12px;opacity:.75;}',
     '.cm-status.is-error{color:#b91c1c;opacity:1;}',
+    '.cm-version{font-size:12px;opacity:.7;border:0;background:transparent;color:inherit;cursor:pointer;padding:2px 6px;font:inherit;}',
+    '.cm-version:hover{opacity:1;text-decoration:underline;}',
+    '.cm-version-link{font-size:11px;opacity:.6;color:inherit;text-decoration:none;padding:2px 4px;}',
+    '.cm-version-link:hover{opacity:1;text-decoration:underline;}',
     '.cm-badge{font-size:11px;padding:1px 6px;border-radius:999px;background:var(--accented-background-color,#eef2ff);opacity:.8;}',
     '.cm-example{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:6px;}',
     '.cm-example:hover{background:var(--hover-item-background-color,#00000010);}',
@@ -2896,11 +2805,22 @@ function openPalette(controller) {
     const toolsButton = el('button', 'cm-button', 'Tools folder');
     toolsButton.type = 'button';
     const statusEl = el('span', 'cm-status', '');
+    const versionButton = el('button', 'cm-version', 'v' + controller.version());
+    versionButton.type = 'button';
+    versionButton.title = 'Check for updates';
+    const repoLink = document.createElement('a');
+    repoLink.className = 'cm-version-link';
+    repoLink.textContent = 'Repository';
+    repoLink.href = controller.repository();
+    repoLink.target = '_blank';
+    repoLink.rel = 'noreferrer';
     footer.appendChild(newToolButton);
     footer.appendChild(importButton);
     footer.appendChild(addOptionButton);
     footer.appendChild(toolsButton);
     footer.appendChild(statusEl);
+    footer.appendChild(versionButton);
+    footer.appendChild(repoLink);
 
     const modalHost = el('div', '');
 
@@ -2927,6 +2847,32 @@ function openPalette(controller) {
             }
         } catch (ignored) {
             // showing the message in the footer is enough
+        }
+    }
+
+    async function checkForUpdates() {
+        if (typeof controller.checkLatestVersion !== 'function') {
+            setStatus('Update check is unavailable.', true);
+            return;
+        }
+        setStatus('Checking for updates…');
+        try {
+            const info = await controller.checkLatestVersion();
+            if (info.error) {
+                setStatus('v' + info.current + ' — ' + info.error, true);
+                return;
+            }
+            if (info.latest && info.latest === info.current) {
+                setStatus('v' + info.current + ' is the latest version.');
+            } else if (info.outdated) {
+                setStatus('v' + info.current + ' installed · latest is v' + info.latest + '.');
+            } else if (info.latest) {
+                setStatus('v' + info.current + ' is newer than the latest published tag (v' + info.latest + ').');
+            } else {
+                setStatus('v' + info.current + ' — no published version found.');
+            }
+        } catch (error) {
+            notify(error);
         }
     }
 
@@ -4048,8 +3994,6 @@ function openPalette(controller) {
         const openFolder = el('button', 'cm-button', 'Open Tools folder');
         openFolder.type = 'button';
         openFolder.disabled = true;
-        const importLegacy = el('button', 'cm-button', 'Import legacy commands');
-        importLegacy.type = 'button';
 
         const idRow = el('div', 'cm-row');
         const idInput = document.createElement('input');
@@ -4100,21 +4044,6 @@ function openPalette(controller) {
                 .catch(notify);
         });
 
-        importLegacy.addEventListener('click', function () {
-            Promise.resolve()
-                .then(function () {
-                    return controller.importLegacy();
-                })
-                .then(function (result) {
-                    closeModal();
-                    setStatus(result && result.created
-                        ? 'Imported ' + result.created + ' legacy command(s).'
-                        : 'No legacy commands to import.');
-                })
-                .then(runSearch)
-                .catch(notify);
-        });
-
         useId.addEventListener('click', function () {
             const noteId = idInput.value.trim();
             if (!noteId) {
@@ -4136,7 +4065,6 @@ function openPalette(controller) {
         const actionsNode = el('div', 'cm-inline');
         actionsNode.appendChild(active);
         actionsNode.appendChild(openFolder);
-        actionsNode.appendChild(importLegacy);
         const closeButton2 = el('button', 'cm-button', 'Close');
         closeButton2.type = 'button';
         closeButton2.addEventListener('click', closeModal);
@@ -4148,6 +4076,10 @@ function openPalette(controller) {
 
     searchInput.addEventListener('input', onSearchInput);
     closeButton.addEventListener('click', close);
+    versionButton.addEventListener('click', function (event) {
+        event.preventDefault();
+        Promise.resolve().then(checkForUpdates).catch(notify);
+    });
     newToolButton.addEventListener('click', toggleNewTool);
     importButton.addEventListener('click', openImport);
     addOptionButton.addEventListener('click', openAddOption);
@@ -4208,6 +4140,7 @@ const Model = __require("model");
 const Backend = __require("backend");
 const Sections = __require("sections");
 const Parse = __require("parse");
+const Version = __require("version");
 const UI = __require("ui");
 
 let index = [];
@@ -4291,6 +4224,7 @@ function ensureBootstrap() {
             action: 'bootstrap',
             labels: Model.LABELS,
             icons: Model.ICONS,
+            version: Version.VERSION,
             seed: true,
             seedTools: Model.seedTools(),
             newToolNotes: Model.newToolNotes()
@@ -4367,9 +4301,6 @@ async function refresh() {
     const nextById = new Map();
 
     for (const note of notes) {
-        if (hasLabel(note, Model.LABELS.legacyTemplate)) {
-            continue;
-        }
         const labels = readLabels(note);
         let category = '';
         try {
@@ -4566,7 +4497,7 @@ async function copyText(text) {
             return true;
         }
     } catch (error) {
-        // fall through to the legacy path
+        // fall through to the execCommand fallback
     }
     try {
         const area = document.createElement('textarea');
@@ -4619,6 +4550,84 @@ async function setToolsRootAction(noteId) {
     return { noteId: noteId };
 }
 
+function versionParts(value) {
+    return String(value == null ? '' : value)
+        .replace(/^v/i, '')
+        .split('.')
+        .map(function (part) {
+            return parseInt(part, 10) || 0;
+        });
+}
+
+function compareVersions(left, right) {
+    const a = versionParts(left);
+    const b = versionParts(right);
+    for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+        const delta = (a[index] || 0) - (b[index] || 0);
+        if (delta !== 0) {
+            return delta;
+        }
+    }
+    return 0;
+}
+
+/**
+ * Best-effort update check: the highest tag, else the package.json version on the
+ * default branch. A private or unreachable repository becomes a readable error.
+ */
+async function checkLatestVersion() {
+    const result = { current: Version.VERSION, latest: '', outdated: false, error: '' };
+    if (typeof fetch !== 'function') {
+        result.error = 'This environment cannot check for updates.';
+        return result;
+    }
+
+    async function read(url, kind) {
+        const response = await fetch(url, {
+            headers: { Accept: kind === 'json' ? 'application/json' : 'text/plain' }
+        });
+        if (!response || !response.ok) {
+            throw new Error('HTTP ' + (response ? response.status : 'unknown'));
+        }
+        return kind === 'json' ? response.json() : response.text();
+    }
+
+    try {
+        const tags = await read(Version.LATEST_TAG_API, 'json');
+        if (Array.isArray(tags) && tags.length) {
+            const names = tags
+                .map(function (tag) {
+                    return tag && tag.name ? String(tag.name).replace(/^v/i, '') : '';
+                })
+                .filter(function (name) {
+                    return name !== '';
+                });
+            if (names.length) {
+                names.sort(compareVersions);
+                result.latest = names[names.length - 1];
+                result.outdated = compareVersions(result.latest, result.current) > 0;
+                return result;
+            }
+        }
+    } catch (error) {
+        // fall through to the default branch package.json
+    }
+
+    try {
+        const text = String(await read(Version.LATEST_RAW, 'text') || '');
+        const match = /"version"\s*:\s*"([^"]+)"/.exec(text);
+        if (match) {
+            result.latest = match[1];
+            result.outdated = compareVersions(result.latest, result.current) > 0;
+            return result;
+        }
+        result.error = 'No published version found.';
+    } catch (error) {
+        result.error = 'Could not check for updates: ' + (error && error.message ? error.message : error);
+    }
+    return result;
+}
+
 function controller() {
     return {
         refresh: refresh,
@@ -4626,6 +4635,13 @@ function controller() {
         load: load,
         copy: copyText,
         insert: insertText,
+        version() {
+            return Version.VERSION;
+        },
+        repository() {
+            return Version.REPOSITORY;
+        },
+        checkLatestVersion: checkLatestVersion,
 
         categories() {
             const seen = [];
@@ -4677,16 +4693,6 @@ function controller() {
 
         deletePreset(toolId, name) {
             return backendAction('deletePreset', { toolId: toolId, name: name });
-        },
-
-        async importLegacy() {
-            const created = await backendAction('importLegacy', {
-                toolsRootId: toolsRootId(),
-                categoryName: 'Imported',
-                newToolNotes: Model.newToolNotes()
-            });
-            await refresh();
-            return created;
         },
 
         async currentToolsRoot() {

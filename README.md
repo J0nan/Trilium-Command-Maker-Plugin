@@ -10,6 +10,10 @@ Built for TriliumNext ≥ 0.101 (launcher API, frontend scripts).
 Ctrl+Shift+Space  →  search a tool  →  read help  →  fill options  →  command  →  copy / insert
 ```
 
+Current version: **1.0.0**. The palette footer shows `v1.0.0`; click it to check
+the repository's latest tag (falling back to `package.json` on `main`). The
+settings note stores `#cmVersion`, and the installer log prints the version.
+
 ## Install
 
 1. Create a note in Trilium. Set its type to **Code** and its language to
@@ -194,13 +198,6 @@ option with a checkbox. For a single option, use **Add option** in the palette
 footer; it writes the same option note with the label, flag and help string you
 type.
 
-## Legacy commands
-
-Older versions stored commands as `#cmCommand` notes with an `Options` folder.
-Those notes are left untouched. Use **Tools folder → Import legacy commands** to
-copy them into `Tools/Imported` as tool entries. The import runs once per settings
-note (`#cmMigrated` on the settings note, which survives reinstalls).
-
 ## Design notes
 
 - `src/model.js`, `src/render.js`, `src/parse.js` and `src/sections.js` are pure and
@@ -219,7 +216,8 @@ npm test          # unit tests for model, parser, sections, renderer, backend, U
 npm run check     # both
 ```
 
-No dependencies, no network access, Node 20+.
+No dependencies, Node 20+. Network access is only used when you click the version
+in the palette to check for updates.
 
 ## Limitations
 

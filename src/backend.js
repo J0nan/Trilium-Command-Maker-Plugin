@@ -12,7 +12,7 @@
  *
  * Actions: bootstrap | createCategory | createTool | addOption |
  * importOptions | deleteOption | setToolBase | setToolsRoot | savePreset |
- * deletePreset | importLegacy
+ * deletePreset
  */
 
 function beRun(params) {
@@ -38,17 +38,6 @@ function beRun(params) {
         }
         const value = note.getLabelValue(name);
         return value !== null && value !== undefined;
-    }
-
-    function isTruthy(value) {
-        if (value === true) {
-            return true;
-        }
-        if (value === undefined || value === null) {
-            return false;
-        }
-        const normalised = String(value).trim().toLowerCase();
-        return normalised === 'true' || normalised === '1' || normalised === 'yes' || normalised === 'on';
     }
 
     function requireNote(noteId, message) {
@@ -298,65 +287,6 @@ function beRun(params) {
         return note;
     }
 
-    /** Legacy option notes are stored under a cmOptions-labelled child folder. */
-    function legacyOptionSpecs(commandNote) {
-        const folder = findChildWithLabel(commandNote, labels.options);
-        if (!folder) {
-            return [];
-        }
-        const children = folder.getChildNotes();
-        const specs = [];
-        for (let index = 0; index < children.length; index += 1) {
-            const child = children[index];
-            if (hasLabel(child, labels.legacyOptionTemplate)) {
-                continue;
-            }
-            const spec = { label: child.title };
-            const flag = child.getLabelValue(labels.flag);
-            const type = child.getLabelValue(labels.type);
-            const values = child.getLabelValue(labels.enumValues);
-            const defaultValue = child.getLabelValue(labels.defaultValue);
-            const required = child.getLabelValue(labels.required);
-            const order = child.getLabelValue(labels.order);
-            const quote = child.getLabelValue(labels.quote);
-            const separator = child.getLabelValue(labels.separator);
-            const placeholder = child.getLabelValue(labels.placeholder);
-            const mode = child.getLabelValue(labels.mode);
-            if (nonEmpty(flag)) {
-                spec.flag = String(flag);
-            }
-            if (nonEmpty(type)) {
-                spec.type = String(type);
-            }
-            if (nonEmpty(values)) {
-                spec.values = String(values);
-            }
-            if (nonEmpty(defaultValue)) {
-                spec.default = String(defaultValue);
-            }
-            if (isTruthy(required)) {
-                spec.required = true;
-            }
-            if (nonEmpty(order)) {
-                spec.order = String(order);
-            }
-            if (nonEmpty(quote)) {
-                spec.quote = String(quote);
-            }
-            if (nonEmpty(separator)) {
-                spec.separator = String(separator);
-            }
-            if (nonEmpty(placeholder)) {
-                spec.placeholder = String(placeholder);
-            }
-            if (nonEmpty(mode)) {
-                spec.mode = String(mode);
-            }
-            specs.push(spec);
-        }
-        return specs;
-    }
-
     function parentForRoot() {
         if (options.parentId) {
             return options.parentId;
@@ -397,6 +327,10 @@ function beRun(params) {
                 content: 'Command Maker settings. The plugin finds this note through its label.'
             }).note;
             root.setLabel(labels.root, '');
+        }
+
+        if (nonEmpty(options.version) && root.getLabelValue(labels.version) !== String(options.version)) {
+            root.setLabel(labels.version, String(options.version));
         }
 
         let toolsRoot = api.getNoteWithLabel(labels.tools);
@@ -568,48 +502,6 @@ function beRun(params) {
         return { ok: true };
     }
 
-    function importLegacy() {
-        const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
-        const settings = api.getNoteWithLabel(labels.root);
-        if (settings && hasLabel(settings, labels.migrated)) {
-            return { created: 0, skipped: true };
-        }
-        const fallbacks = options.newToolNotes || {};
-        const categoryName = nonEmpty(options.categoryName) ? String(options.categoryName) : 'Imported';
-        const candidates = api.getNotesWithLabel(labels.legacyCommand);
-        let created = 0;
-        for (let index = 0; index < candidates.length; index += 1) {
-            const note = candidates[index];
-            if (hasLabel(note, labels.legacyTemplate) || hasLabel(note, labels.legacyOptionTemplate)) {
-                continue;
-            }
-            let base = note.getLabelValue(labels.base);
-            if (!nonEmpty(base)) {
-                base = note.getContent();
-            }
-            createToolNote(
-                toolsRoot,
-                {
-                    category: categoryName,
-                    title: note.title,
-                    base: base,
-                    description: note.getLabelValue(labels.description),
-                    content: toolHtmlContent(),
-                    install: fallbacks.install,
-                    usage: fallbacks.usage,
-                    help: fallbacks.help,
-                    options: legacyOptionSpecs(note)
-                },
-                fallbacks
-            );
-            created += 1;
-        }
-        if (settings) {
-            settings.setLabel(labels.migrated, '');
-        }
-        return { created: created };
-    }
-
     switch (options.action) {
         case 'bootstrap':
             return bootstrap();
@@ -631,8 +523,6 @@ function beRun(params) {
             return savePreset();
         case 'deletePreset':
             return deletePreset();
-        case 'importLegacy':
-            return importLegacy();
         default:
             throw new Error('Unknown action: ' + options.action);
     }

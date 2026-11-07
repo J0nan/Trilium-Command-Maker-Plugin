@@ -4,6 +4,7 @@ import vm from 'node:vm';
 
 import Backend from '../src/backend.js';
 import Model from '../src/model.js';
+import Version from '../src/version.js';
 
 let sequence = 0;
 
@@ -131,7 +132,8 @@ function seedApi() {
         seed: true,
         seedTools: Model.seedTools(),
         newToolNotes: Model.newToolNotes(),
-        icons: Model.ICONS
+        icons: Model.ICONS,
+        version: Version.VERSION
     });
     return { api, beRun, result };
 }
@@ -146,6 +148,7 @@ test('beRun survives serialisation and bootstrap seeds the model tools', () => {
     const root = api.getNote(seeded.rootId);
     assert.equal(root.title, 'Command Maker');
     assert.ok(root.hasLabel(labels.root));
+    assert.equal(root.getLabelValue(labels.version), Version.VERSION);
     const today = api.getTodayNote();
     assert.ok(
         today.getChildNotes().some((child) => child.noteId === root.noteId),
@@ -295,6 +298,18 @@ test('bootstrap honours parentId and always ensures the Tools root', () => {
     const toolsRoot = api.getNote(boot1.toolsRootId);
     assert.ok(toolsRoot.hasLabel(labels.tools));
     assert.equal(toolsRoot.getLabelValue(labels.seeded), null);
+});
+
+test('bootstrap keeps the settings note version current', () => {
+    const { api, beRun, result } = seedApi();
+    const root = api.getNote(result.rootId);
+    root.setLabel(labels.version, '0.0.1');
+
+    beRun({ action: 'bootstrap', labels, version: Version.VERSION });
+    assert.equal(root.getLabelValue(labels.version), Version.VERSION);
+
+    beRun({ action: 'bootstrap', labels });
+    assert.equal(root.getLabelValue(labels.version), Version.VERSION, 'no version param leaves it alone');
 });
 
 test('createCategory is idempotent and validates the Tools root', () => {
@@ -619,128 +634,6 @@ test('setToolsRoot moves the Tools label and clears the old root', () => {
     assert.equal(api.getNote(toolsRootId).hasLabel(labels.tools), false, 'the old root is cleared');
 
     assert.throws(() => beRun({ action: 'setToolsRoot', labels, noteId: 'nope' }), /Note not found/);
-});
-
-test('importLegacy converts legacy command notes exactly once', () => {
-    const api = createApi();
-    const beRun = serialise(Backend.beRun, api);
-    const root = boot(api, beRun);
-    const today = api.getTodayNote();
-
-    const command = api.createNewNote({
-        parentNoteId: today.noteId,
-        title: 'docker run',
-        type: 'code',
-        content: 'docker run --rm {{image}}'
-    }).note;
-    command.setLabel(labels.legacyCommand, '');
-    command.setLabel(labels.base, 'docker run --rm');
-    command.setLabel(labels.description, 'Run a container.');
-    const folder = api.createNewNote({
-        parentNoteId: command.noteId,
-        title: 'Options',
-        type: 'text',
-        content: ''
-    }).note;
-    folder.setLabel(labels.options, '');
-    const template = api.createNewNote({
-        parentNoteId: folder.noteId,
-        title: 'Option Template',
-        type: 'text',
-        content: ''
-    }).note;
-    template.setLabel(labels.legacyOptionTemplate, '');
-    const remove = api.createNewNote({
-        parentNoteId: folder.noteId,
-        title: 'Remove after exit',
-        type: 'text',
-        content: ''
-    }).note;
-    remove.setLabel(labels.flag, '--rm');
-    remove.setLabel(labels.type, 'boolean');
-    remove.setLabel(labels.order, '10');
-    remove.setLabel(labels.required, 'true');
-    const image = api.createNewNote({
-        parentNoteId: folder.noteId,
-        title: 'Image',
-        type: 'text',
-        content: ''
-    }).note;
-    image.setLabel(labels.flag, '{{image}}');
-    image.setLabel(labels.type, 'enum');
-    image.setLabel(labels.enumValues, 'nginx,alpine');
-    image.setLabel(labels.defaultValue, 'nginx');
-    image.setLabel(labels.quote, 'single');
-    image.setLabel(labels.separator, '=');
-    image.setLabel(labels.placeholder, 'image');
-
-    // A second command without cmBase falls back to its content as the base.
-    const compose = api.createNewNote({
-        parentNoteId: today.noteId,
-        title: 'docker compose',
-        type: 'code',
-        content: 'docker compose up'
-    }).note;
-    compose.setLabel(labels.legacyCommand, '');
-
-    // Template notes carrying cmCommand must never be imported.
-    const legacyTemplate = api.createNewNote({
-        parentNoteId: today.noteId,
-        title: 'Legacy Template',
-        type: 'code',
-        content: 'command goes here'
-    }).note;
-    legacyTemplate.setLabel(labels.legacyCommand, '');
-    legacyTemplate.setLabel(labels.legacyTemplate, '');
-
-    const imported = beRun({
-        action: 'importLegacy',
-        labels,
-        toolsRootId: root.toolsRootId,
-        newToolNotes: Model.newToolNotes()
-    });
-    assert.equal(imported.created, 2, 'both legacy commands were converted');
-    assert.equal(imported.skipped, undefined);
-
-    const toolsRoot = api.getNote(root.toolsRootId);
-    const category = findByTitle(toolsRoot, 'Imported');
-    assert.ok(category.hasLabel(labels.category));
-    assert.deepEqual(category.getChildNotes().map((child) => child.title), ['docker run', 'docker compose']);
-
-    const tool = findByTitle(category, 'docker run');
-    assert.ok(tool.hasLabel(labels.tool));
-    assert.equal(tool.getLabelValue(labels.base), 'docker run --rm');
-    assert.equal(tool.getLabelValue(labels.description), 'Run a container.');
-    const h2s = tool.getContent().match(/<h2>([^<]*)<\/h2>/g) || [];
-    assert.deepEqual(h2s, ['<h2>What is?</h2>', '<h2>Official links</h2>', '<h2>Useful links</h2>']);
-    assert.equal(findByTitle(tool, 'Install').getContent(), Model.newToolNotes().install);
-    assert.equal(findByTitle(tool, 'Usage').getContent(), Model.newToolNotes().usage);
-    assert.equal(findByTitle(tool, 'Help').mime, 'text/x-sh');
-
-    const optionsFolder = findByTitle(tool, 'Options');
-    const converted = labelledChildren(optionsFolder, labels.option);
-    assert.equal(converted.length, 2, 'the legacy option template was skipped');
-    const removeNote = converted.find((child) => child.title === 'Remove after exit');
-    assert.equal(removeNote.getLabelValue(labels.flag), '--rm');
-    assert.equal(removeNote.getLabelValue(labels.type), 'boolean');
-    assert.equal(removeNote.getLabelValue(labels.order), '10');
-    assert.equal(removeNote.getLabelValue(labels.required), 'true');
-    const imageNote = converted.find((child) => child.title === 'Image');
-    assert.equal(imageNote.getLabelValue(labels.enumValues), 'nginx,alpine');
-    assert.equal(imageNote.getLabelValue(labels.defaultValue), 'nginx');
-    assert.equal(imageNote.getLabelValue(labels.quote), 'single');
-    assert.equal(imageNote.getLabelValue(labels.separator), '=');
-    assert.equal(imageNote.getLabelValue(labels.placeholder), 'image');
-
-    const composeTool = findByTitle(category, 'docker compose');
-    assert.equal(composeTool.getLabelValue(labels.base), 'docker compose up', 'base falls back to content');
-
-    assert.equal(api.getNote(root.rootId).getLabelValue(labels.migrated), '');
-
-    const second = beRun({ action: 'importLegacy', labels, toolsRootId: root.toolsRootId });
-    assert.equal(second.created, 0);
-    assert.equal(second.skipped, true);
-    assert.equal(api.getNotesWithLabel(labels.tool).length, 2, 'nothing was imported twice');
 });
 
 test('unknown actions throw', () => {

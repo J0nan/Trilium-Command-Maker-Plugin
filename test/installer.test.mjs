@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 
 import { buildBundle, buildInstaller } from '../tools/build.mjs';
+import Version from '../src/version.js';
 
 const INSTALLER = buildInstaller(buildBundle());
 const LAUNCHER_NOTE_ID = 'al_commandmaker';
@@ -146,6 +147,7 @@ test('a fresh install creates the settings note and the Tools folder', () => {
 
     const roots = Array.from(api.notes.values()).filter((note) => note.hasLabel('cmRoot'));
     assert.equal(roots.length, 1, 'one settings note');
+    assert.equal(roots[0].getLabelValue('cmVersion'), Version.VERSION, 'the settings note records the version');
     const tools = Array.from(api.notes.values()).filter((note) => note.hasLabel('cmTools'));
     assert.equal(tools.length, 1, 'one Tools folder');
     assert.equal(tools[0].title, 'Tools');

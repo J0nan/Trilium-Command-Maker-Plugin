@@ -48,14 +48,9 @@ const LABELS = {
     // bookkeeping
     seeded: 'cmSeeded',
     managed: 'cmManaged',
-    migrated: 'cmMigrated',
+    version: 'cmVersion',
     // note presentation
     icon: 'iconClass',
-    // legacy command/template labels, only used by the legacy importer
-    legacyCommand: 'cmCommand',
-    legacyTemplate: 'cmTemplate',
-    legacyOptionTemplate: 'cmOptionTemplate',
-    legacyPreset: 'cmPreset'
 };
 
 const LABEL_NAMES = Object.keys(LABELS).map(function (key) {

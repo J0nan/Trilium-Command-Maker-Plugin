@@ -20,6 +20,7 @@ const Model = require('./model');
 const Backend = require('./backend');
 const Sections = require('./sections');
 const Parse = require('./parse');
+const Version = require('./version');
 const UI = require('./ui');
 
 let index = [];
@@ -103,6 +104,7 @@ function ensureBootstrap() {
             action: 'bootstrap',
             labels: Model.LABELS,
             icons: Model.ICONS,
+            version: Version.VERSION,
             seed: true,
             seedTools: Model.seedTools(),
             newToolNotes: Model.newToolNotes()
@@ -179,9 +181,6 @@ async function refresh() {
     const nextById = new Map();
 
     for (const note of notes) {
-        if (hasLabel(note, Model.LABELS.legacyTemplate)) {
-            continue;
-        }
         const labels = readLabels(note);
         let category = '';
         try {
@@ -378,7 +377,7 @@ async function copyText(text) {
             return true;
         }
     } catch (error) {
-        // fall through to the legacy path
+        // fall through to the execCommand fallback
     }
     try {
         const area = document.createElement('textarea');
@@ -431,6 +430,84 @@ async function setToolsRootAction(noteId) {
     return { noteId: noteId };
 }
 
+function versionParts(value) {
+    return String(value == null ? '' : value)
+        .replace(/^v/i, '')
+        .split('.')
+        .map(function (part) {
+            return parseInt(part, 10) || 0;
+        });
+}
+
+function compareVersions(left, right) {
+    const a = versionParts(left);
+    const b = versionParts(right);
+    for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+        const delta = (a[index] || 0) - (b[index] || 0);
+        if (delta !== 0) {
+            return delta;
+        }
+    }
+    return 0;
+}
+
+/**
+ * Best-effort update check: the highest tag, else the package.json version on the
+ * default branch. A private or unreachable repository becomes a readable error.
+ */
+async function checkLatestVersion() {
+    const result = { current: Version.VERSION, latest: '', outdated: false, error: '' };
+    if (typeof fetch !== 'function') {
+        result.error = 'This environment cannot check for updates.';
+        return result;
+    }
+
+    async function read(url, kind) {
+        const response = await fetch(url, {
+            headers: { Accept: kind === 'json' ? 'application/json' : 'text/plain' }
+        });
+        if (!response || !response.ok) {
+            throw new Error('HTTP ' + (response ? response.status : 'unknown'));
+        }
+        return kind === 'json' ? response.json() : response.text();
+    }
+
+    try {
+        const tags = await read(Version.LATEST_TAG_API, 'json');
+        if (Array.isArray(tags) && tags.length) {
+            const names = tags
+                .map(function (tag) {
+                    return tag && tag.name ? String(tag.name).replace(/^v/i, '') : '';
+                })
+                .filter(function (name) {
+                    return name !== '';
+                });
+            if (names.length) {
+                names.sort(compareVersions);
+                result.latest = names[names.length - 1];
+                result.outdated = compareVersions(result.latest, result.current) > 0;
+                return result;
+            }
+        }
+    } catch (error) {
+        // fall through to the default branch package.json
+    }
+
+    try {
+        const text = String(await read(Version.LATEST_RAW, 'text') || '');
+        const match = /"version"\s*:\s*"([^"]+)"/.exec(text);
+        if (match) {
+            result.latest = match[1];
+            result.outdated = compareVersions(result.latest, result.current) > 0;
+            return result;
+        }
+        result.error = 'No published version found.';
+    } catch (error) {
+        result.error = 'Could not check for updates: ' + (error && error.message ? error.message : error);
+    }
+    return result;
+}
+
 function controller() {
     return {
         refresh: refresh,
@@ -438,6 +515,13 @@ function controller() {
         load: load,
         copy: copyText,
         insert: insertText,
+        version() {
+            return Version.VERSION;
+        },
+        repository() {
+            return Version.REPOSITORY;
+        },
+        checkLatestVersion: checkLatestVersion,
 
         categories() {
             const seen = [];
@@ -489,16 +573,6 @@ function controller() {
 
         deletePreset(toolId, name) {
             return backendAction('deletePreset', { toolId: toolId, name: name });
-        },
-
-        async importLegacy() {
-            const created = await backendAction('importLegacy', {
-                toolsRootId: toolsRootId(),
-                categoryName: 'Imported',
-                newToolNotes: Model.newToolNotes()
-            });
-            await refresh();
-            return created;
         },
 
         async currentToolsRoot() {
