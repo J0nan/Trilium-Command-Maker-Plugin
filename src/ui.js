@@ -13,6 +13,8 @@
  *   insert(text): void
  *   categories(): string[]
  *   createTool(spec): Promise<{ noteId }>
+ *   importTool(tool): Promise<{ noteId }>
+ *   exportTool(noteId): Promise<{ kind, version, tool }>
  *   importOptions(toolId, options): Promise<{ created }>
  *   savePreset(toolId, name, values): Promise<void>
  *   deletePreset(toolId, name): Promise<void>
@@ -27,6 +29,8 @@
 const Model = require('./model');
 const Render = require('./render');
 const Parse = require('./parse');
+const ToolFile = require('./toolfile');
+const Prompt = require('./prompt');
 
 const STYLE_ID = 'cm-palette-style';
 
@@ -101,12 +105,12 @@ const CSS = [
     '.cm-example-text{flex:1;min-width:0;font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;overflow-wrap:anywhere;}',
     '.cm-fold summary{cursor:pointer;font-size:12px;text-transform:uppercase;letter-spacing:.06em;opacity:.7;}',
     '.cm-pre{margin:8px 0 0;padding:10px;border-radius:8px;background:var(--input-background-color,#fafafa);border:1px solid var(--main-border-color,#ddd);font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;white-space:pre-wrap;overflow-x:auto;}',
-    '.cm-modal{position:absolute;inset:0;display:flex;justify-content:center;align-items:flex-start;padding:6vh 16px;background:rgba(0,0,0,.45);border-radius:10px;z-index:2;}',
-    '.cm-modal-panel{display:flex;flex-direction:column;width:min(760px,100%);max-height:80vh;border-radius:10px;overflow:hidden;background:var(--main-background-color,#fff);color:inherit;box-shadow:0 20px 48px rgba(0,0,0,.4);}',
-    '.cm-modal-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--main-border-color,#ddd);}',
+    '.cm-modal{position:absolute;inset:0;display:flex;justify-content:center;align-items:flex-start;padding:4vh 16px;background:rgba(0,0,0,.45);z-index:2;}',
+    '.cm-modal-panel{display:flex;flex-direction:column;width:min(760px,100%);max-height:100%;border-radius:10px;overflow:hidden;background:var(--main-background-color,#fff);color:inherit;box-shadow:0 20px 48px rgba(0,0,0,.4);}',
+    '.cm-modal-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--main-border-color,#ddd);flex:0 0 auto;}',
     '.cm-modal-title{flex:1;font-weight:600;}',
-    '.cm-modal-body{overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;}',
-    '.cm-modal-actions{display:flex;flex-wrap:wrap;gap:8px;padding:10px 12px;border-top:1px solid var(--main-border-color,#ddd);}',
+    '.cm-modal-body{overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;min-height:0;flex:1 1 auto;}',
+    '.cm-modal-actions{display:flex;flex-wrap:wrap;gap:8px;padding:10px 12px;border-top:1px solid var(--main-border-color,#ddd);flex:0 0 auto;}',
     '.cm-tabs{display:flex;gap:6px;flex-wrap:wrap;}',
     '.cm-tab{padding:4px 10px;border-radius:999px;border:1px solid var(--main-border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font:inherit;font-size:12px;}',
     '.cm-tab.is-active{background:var(--accented-background-color,#eef2ff);border-color:var(--link-color,#4f8cff);}',
@@ -220,7 +224,8 @@ function openPalette(controller) {
         importParsed: null,
         importRows: [],
         importNoteTitle: '',
-        importStatus: ''
+        importStatus: '',
+        importToolParsed: null
     };
 
     const overlay = el('div', 'cm-overlay');
@@ -246,6 +251,10 @@ function openPalette(controller) {
     const footer = el('div', 'cm-foot');
     const newToolButton = el('button', 'cm-button', 'New tool');
     newToolButton.type = 'button';
+    const importToolButton = el('button', 'cm-button', 'Import tool');
+    importToolButton.type = 'button';
+    const exportToolButton = el('button', 'cm-button', 'Export tool');
+    exportToolButton.type = 'button';
     const importButton = el('button', 'cm-button', 'Import options');
     importButton.type = 'button';
     const addOptionButton = el('button', 'cm-button', 'Add option');
@@ -263,20 +272,24 @@ function openPalette(controller) {
     repoLink.target = '_blank';
     repoLink.rel = 'noreferrer';
     footer.appendChild(newToolButton);
+    footer.appendChild(importToolButton);
     footer.appendChild(importButton);
     footer.appendChild(addOptionButton);
+    footer.appendChild(exportToolButton);
     footer.appendChild(toolsButton);
     footer.appendChild(statusEl);
     footer.appendChild(versionButton);
     footer.appendChild(repoLink);
 
-    const modalHost = el('div', '');
+    const modalHost = el('div', 'cm-modal-host');
 
     panel.appendChild(head);
     panel.appendChild(body);
     panel.appendChild(footer);
-    panel.appendChild(modalHost);
     overlay.appendChild(panel);
+    // The modal lives on the overlay, not inside the panel: the panel shrinks to
+    // its content when no tool is selected, which used to clip the modal.
+    overlay.appendChild(modalHost);
     document.body.appendChild(overlay);
 
     let searchTimer = null;
@@ -295,6 +308,18 @@ function openPalette(controller) {
             }
         } catch (ignored) {
             // showing the message in the footer is enough
+        }
+    }
+
+    /** Trilium toast for confirmations, since the footer is hidden behind a modal. */
+    function notifyMessage(message) {
+        setStatus(message);
+        try {
+            if (typeof api !== 'undefined' && typeof api.showMessage === 'function') {
+                api.showMessage(message);
+            }
+        } catch (ignored) {
+            // the footer status is the fallback
         }
     }
 
@@ -350,6 +375,7 @@ function openPalette(controller) {
         state.modalKind = '';
         state.importParsed = null;
         state.importRows = [];
+        state.importToolParsed = null;
     }
 
     function close() {
@@ -1107,6 +1133,25 @@ function openPalette(controller) {
         });
     }
 
+    /** Save text as a local file. Throws when the runtime has no Blob/URL support. */
+    function downloadText(filename, value) {
+        if (typeof Blob === 'undefined' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
+            throw new Error('This environment cannot download files. Copy the text instead.');
+        }
+        const blob = new Blob([value], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(function () {
+            URL.revokeObjectURL(url);
+        }, 0);
+    }
+
     function modalShell(title, bodyNode, actionsNode) {
         closeModal();
         const modal = el('div', 'cm-modal');
@@ -1354,6 +1399,290 @@ function openPalette(controller) {
         setSource('paste');
     }
 
+    function openImportTool() {
+        const sourceRow = el('div', 'cm-tabs');
+        const tabPaste = el('button', 'cm-tab is-active', 'Paste text');
+        const tabNote = el('button', 'cm-tab', 'Active note');
+        const tabFile = el('button', 'cm-tab', 'File');
+        [tabPaste, tabNote, tabFile].forEach(function (tab) {
+            tab.type = 'button';
+        });
+        sourceRow.appendChild(tabPaste);
+        sourceRow.appendChild(tabNote);
+        sourceRow.appendChild(tabFile);
+
+        const hint = el('div', 'cm-note', 'Paste a tool file (JSON) exported from another tool, or one generated with "Copy AI prompt". Nothing is written until you import.');
+
+        const textArea = document.createElement('textarea');
+        textArea.className = 'cm-control cm-preview';
+        textArea.rows = 12;
+        textArea.placeholder = 'Tool file JSON, or the output of the tool\'s --help command…';
+
+        const notePreview = el('div', 'cm-note', '');
+        const readNoteButton = el('button', 'cm-button', 'Read active note');
+        readNoteButton.type = 'button';
+        readNoteButton.style.display = 'none';
+
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.className = 'cm-control';
+        fileInput.accept = '.json,.txt,.text';
+        fileInput.style.display = 'none';
+
+        const promptButton = el('button', 'cm-button', 'Copy AI prompt');
+        promptButton.type = 'button';
+        promptButton.title = 'Copy a prompt for any AI model, including the pasted --help output';
+        const parseButton = el('button', 'cm-button', 'Parse');
+        parseButton.type = 'button';
+        const importSelected = el('button', 'cm-button', 'Import tool');
+        importSelected.type = 'button';
+        importSelected.disabled = true;
+        const closeButton2 = el('button', 'cm-button', 'Close');
+        closeButton2.type = 'button';
+        closeButton2.addEventListener('click', closeModal);
+
+        const warnings = el('div', 'cm-warnings', '');
+        const previewList = el('div', 'cm-import-list', '');
+
+        let source = 'paste';
+        let sourceText = '';
+
+        function setSource(next) {
+            source = next;
+            tabPaste.classList.toggle('is-active', next === 'paste');
+            tabNote.classList.toggle('is-active', next === 'note');
+            tabFile.classList.toggle('is-active', next === 'file');
+            textArea.style.display = next === 'paste' ? '' : 'none';
+            readNoteButton.style.display = next === 'note' ? '' : 'none';
+            notePreview.style.display = next === 'note' && notePreview.textContent ? '' : 'none';
+            fileInput.style.display = next === 'file' ? '' : 'none';
+        }
+
+        tabPaste.addEventListener('click', function () { setSource('paste'); });
+        tabNote.addEventListener('click', function () { setSource('note'); });
+        tabFile.addEventListener('click', function () { setSource('file'); });
+
+        readNoteButton.addEventListener('click', function () {
+            Promise.resolve()
+                .then(function () {
+                    return controller.activeNoteText();
+                })
+                .then(function (note) {
+                    sourceText = note.text;
+                    notePreview.textContent = 'Read "' + note.title + '" (' + note.text.length + ' characters).';
+                    notePreview.style.display = '';
+                    setStatus('Note read.');
+                })
+                .catch(notify);
+        });
+
+        fileInput.addEventListener('change', function () {
+            const file = fileInput.files && fileInput.files[0];
+            if (!file) {
+                return;
+            }
+            Promise.resolve()
+                .then(function () {
+                    return readFileText(file);
+                })
+                .then(function (value) {
+                    sourceText = value;
+                    notePreview.textContent = 'Read "' + (file.name || 'file') + '" (' + value.length + ' characters).';
+                    notePreview.style.display = '';
+                    setStatus('File read.');
+                })
+                .catch(notify);
+        });
+
+        function collectText() {
+            return source === 'paste' ? textArea.value : sourceText;
+        }
+
+        function renderToolPreview() {
+            warnings.textContent = '';
+            previewList.textContent = '';
+            importSelected.disabled = true;
+            const parsed = state.importToolParsed;
+            if (!parsed) {
+                return;
+            }
+            (parsed.warnings || []).forEach(function (warning) {
+                warnings.appendChild(el('div', 'cm-warning', warning.message || warning.code));
+            });
+            const tool = parsed.tool;
+            if (!tool) {
+                return;
+            }
+            [
+                ['Title', tool.title],
+                ['Category', tool.category || 'Uncategorized'],
+                ['Base command', tool.base || Model.deriveBase(tool.title)]
+            ].forEach(function (line) {
+                previewList.appendChild(el('div', 'cm-import-flag', line[0] + ': ' + line[1]));
+            });
+            if (tool.description) {
+                previewList.appendChild(el('div', 'cm-note', tool.description));
+            }
+            if (!tool.options.length) {
+                previewList.appendChild(el('div', 'cm-empty', 'This tool file has no options.'));
+            }
+            tool.options.forEach(function (option) {
+                const row = el('div', 'cm-import-row');
+                const main = el('div', 'cm-import-main');
+                const flag = option.flag || '(positional)';
+                main.appendChild(el('div', 'cm-import-flag', flag + '  (' + option.type + ')  ' + option.label));
+                if (option.help) {
+                    main.appendChild(el('div', 'cm-import-help', option.help));
+                }
+                row.appendChild(main);
+                previewList.appendChild(row);
+            });
+            importSelected.disabled = false;
+        }
+
+        promptButton.addEventListener('click', function () {
+            Promise.resolve()
+                .then(function () {
+                    const pasted = collectText();
+                    const looksJson = /^\s*[{[]/.test(String(pasted || ''));
+                    return copyTextToClipboard(Prompt.buildToolPrompt({
+                        helpText: looksJson ? '' : pasted
+                    }));
+                })
+                .then(function () {
+                    notifyMessage('AI prompt copied to the clipboard.');
+                })
+                .catch(notify);
+        });
+
+        parseButton.addEventListener('click', function () {
+            const text = collectText();
+            if (!String(text || '').trim()) {
+                notify(new Error('Nothing to parse. Paste a tool file, read the active note or choose a file.'));
+                return;
+            }
+            try {
+                state.importToolParsed = ToolFile.parseToolFile(text);
+                renderToolPreview();
+                const tool = state.importToolParsed.tool;
+                setStatus(tool ? 'Parsed tool "' + tool.title + '".' : 'The tool file could not be parsed.');
+            } catch (error) {
+                notify(error);
+            }
+        });
+
+        importSelected.addEventListener('click', function () {
+            const parsed = state.importToolParsed;
+            if (!parsed || !parsed.tool) {
+                notify(new Error('Parse a tool file first.'));
+                return;
+            }
+            let created = null;
+            Promise.resolve()
+                .then(function () {
+                    return controller.importTool(parsed.tool);
+                })
+                .then(function (result) {
+                    created = result;
+                    closeModal();
+                    state.importStatus = 'Imported tool "' + parsed.tool.title + '".';
+                    return controller.refresh();
+                })
+                .then(runSearch)
+                .then(function () {
+                    const item = created
+                        ? state.items.filter(function (entry) { return entry.noteId === created.noteId; })[0]
+                        : null;
+                    return item ? selectItem(item) : undefined;
+                })
+                .then(function () {
+                    setStatus(state.importStatus || '');
+                })
+                .catch(notify);
+        });
+
+        const bodyNode = el('div', '');
+        bodyNode.appendChild(sourceRow);
+        bodyNode.appendChild(hint);
+        bodyNode.appendChild(textArea);
+        bodyNode.appendChild(readNoteButton);
+        bodyNode.appendChild(notePreview);
+        bodyNode.appendChild(fileInput);
+        bodyNode.appendChild(warnings);
+        bodyNode.appendChild(previewList);
+
+        const actionsNode = el('div', 'cm-inline');
+        actionsNode.appendChild(promptButton);
+        actionsNode.appendChild(parseButton);
+        actionsNode.appendChild(importSelected);
+        actionsNode.appendChild(closeButton2);
+
+        modalShell('Import a tool', bodyNode, actionsNode);
+        state.modalKind = 'tool';
+        setSource('paste');
+    }
+
+    function openExportTool() {
+        if (!state.current) {
+            notify(new Error('Select a tool first.'));
+            return;
+        }
+        Promise.resolve()
+            .then(function () {
+                return controller.exportTool(state.current.noteId);
+            })
+            .then(function (file) {
+                const json = JSON.stringify(file, null, 2);
+                const filename = (Render.slugify(file.tool.title) || 'tool') + '.tool.json';
+
+                const bodyNode = el('div', '');
+                bodyNode.appendChild(el('div', 'cm-note', 'This plain-JSON file can be imported here, kept as a backup, or shared.'));
+                const area = document.createElement('textarea');
+                area.className = 'cm-control cm-preview';
+                area.rows = 18;
+                area.readOnly = true;
+                area.value = json;
+                bodyNode.appendChild(area);
+                bodyNode.appendChild(el('div', 'cm-note', 'Suggested file name: ' + filename));
+
+                const copyButton = el('button', 'cm-button', 'Copy JSON');
+                copyButton.type = 'button';
+                copyButton.addEventListener('click', function () {
+                    copyTextToClipboard(json)
+                        .then(function () {
+                            setStatus('Tool file copied.');
+                        })
+                        .catch(notify);
+                });
+
+                const downloadButton = el('button', 'cm-button', 'Download .json');
+                downloadButton.type = 'button';
+                downloadButton.addEventListener('click', function () {
+                    Promise.resolve()
+                        .then(function () {
+                            downloadText(filename, json);
+                        })
+                        .then(function () {
+                            setStatus('Downloaded ' + filename + '.');
+                        })
+                        .catch(notify);
+                });
+
+                const closeButton2 = el('button', 'cm-button', 'Close');
+                closeButton2.type = 'button';
+                closeButton2.addEventListener('click', closeModal);
+
+                const actionsNode = el('div', 'cm-inline');
+                actionsNode.appendChild(copyButton);
+                actionsNode.appendChild(downloadButton);
+                actionsNode.appendChild(closeButton2);
+
+                modalShell('Export "' + file.tool.title + '"', bodyNode, actionsNode);
+                state.modalKind = 'export';
+            })
+            .catch(notify);
+    }
+
     function openAddOption() {
         if (!state.current) {
             notify(new Error('Select a tool first.'));
@@ -1567,6 +1896,8 @@ function openPalette(controller) {
         Promise.resolve().then(checkForUpdates).catch(notify);
     });
     newToolButton.addEventListener('click', toggleNewTool);
+    importToolButton.addEventListener('click', openImportTool);
+    exportToolButton.addEventListener('click', openExportTool);
     importButton.addEventListener('click', openImport);
     addOptionButton.addEventListener('click', openAddOption);
     toolsButton.addEventListener('click', openToolsFolder);

@@ -636,6 +636,60 @@ test('setToolsRoot moves the Tools label and clears the old root', () => {
     assert.throws(() => beRun({ action: 'setToolsRoot', labels, noteId: 'nope' }), /Note not found/);
 });
 
+test('importTool creates a tool note with its category, children and options', () => {
+    const { api, beRun, result } = seedApi();
+    const created = beRun({
+        action: 'importTool',
+        labels,
+        toolsRootId: result.toolsRootId,
+        newToolNotes: Model.newToolNotes(),
+        tool: {
+            title: 'ripgrep',
+            category: 'Search',
+            base: 'rg',
+            description: 'Search text recursively.',
+            content: '<h2>What is?</h2><p>Fast search.</p><h2>Official links</h2><ul></ul><h2>Useful links</h2><ul></ul>',
+            install: '<p>cargo install ripgrep</p>',
+            usage: '<pre><code>rg pattern</code></pre>',
+            help: 'Usage: rg [OPTIONS] PATTERN\n  -i, --ignore-case  case insensitive',
+            options: [
+                { label: 'Ignore case', flag: '-i', help: 'Case insensitive.', type: 'boolean' },
+                { label: 'Pattern', flag: '', help: 'Regex to search for.', type: 'string', required: true, placeholder: 'pattern', order: 20 }
+            ]
+        }
+    });
+
+    assert.ok(created.noteId);
+    const toolsRoot = api.getNote(result.toolsRootId);
+    const category = toolsRoot.getChildNotes().filter((child) => {
+        return child.title === 'Search' && child.hasLabel(labels.category);
+    })[0];
+    assert.ok(category, 'the imported tool creates its category');
+    assert.ok(category.getChildNotes().some((child) => child.noteId === created.noteId));
+
+    const tool = api.getNote(created.noteId);
+    assert.equal(tool.title, 'ripgrep');
+    assert.ok(tool.hasLabel(labels.tool));
+    assert.equal(tool.getLabelValue(labels.base), 'rg');
+    assert.equal(tool.getLabelValue(labels.description), 'Search text recursively.');
+    assert.match(tool.getContent(), /Fast search/);
+
+    const install = findByTitle(tool, 'Install');
+    const usage = findByTitle(tool, 'Usage');
+    const help = findByTitle(tool, 'Help');
+    assert.match(install.getContent(), /cargo install ripgrep/);
+    assert.match(usage.getContent(), /rg pattern/);
+    assert.match(help.getContent(), /ignore-case/);
+
+    const options = labelledChildren(findByTitle(tool, 'Options'), labels.option);
+    assert.equal(options.length, 2);
+    assert.equal(options[0].getLabelValue(labels.flag), '-i');
+    assert.equal(options[0].getLabelValue(labels.type), 'boolean');
+    assert.equal(options[1].getLabelValue(labels.flag), null, 'positional options have no flag label');
+    assert.equal(options[1].getLabelValue(labels.required), 'true');
+    assert.equal(options[1].getLabelValue(labels.placeholder), 'pattern');
+});
+
 test('unknown actions throw', () => {
     const api = createApi();
     const beRun = serialise(Backend.beRun, api);

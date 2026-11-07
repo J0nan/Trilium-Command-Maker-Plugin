@@ -202,10 +202,71 @@ option with a checkbox. For a single option, use **Add option** in the palette
 footer; it writes the same option note with the label, flag and help string you
 type.
 
+## Importing and exporting whole tools
+
+The footer has **Import tool** and **Export tool** next to the option actions.
+Both work on one portable JSON file per tool:
+
+```json
+{
+  "kind": "command-maker-tool",
+  "version": 1,
+  "tool": {
+    "title": "ripgrep",
+    "category": "Search",
+    "base": "rg",
+    "description": "Search text recursively.",
+    "content": "<h2>What is?</h2>…<h2>Official links</h2>…<h2>Useful links</h2>…",
+    "install": "<p>cargo install ripgrep</p>",
+    "usage": "<pre><code>rg pattern</code></pre>",
+    "help": "Usage: rg [OPTIONS] PATTERN",
+    "options": [
+      {
+        "label": "Ignore case",
+        "flag": "-i",
+        "help": "Case insensitive.",
+        "type": "boolean",
+        "values": [],
+        "default": "",
+        "required": false,
+        "mode": "flag",
+        "placeholder": "ignore_case",
+        "order": 10,
+        "quote": "none",
+        "sep": " "
+      }
+    ]
+  }
+}
+```
+
+- **Export tool** reads the selected tool, its three standard children and every
+  option, and shows the JSON. **Copy JSON** copies it; **Download .json** saves it
+  as `<tool>.tool.json`.
+- **Import tool** accepts the same JSON from a paste, the active note or a file.
+  It previews the title, category, base and options, then creates a new tool note
+  under that category. Existing tools are never modified or overwritten.
+
+### Generating the file with an AI model
+
+**Import tool → Copy AI prompt** copies a self-contained prompt. It explains the
+file shape, the option types and the HTML sections the tool note expects. If the
+paste box already contains `--help` output, the prompt includes it too.
+
+1. Run `<tool> --help` and copy the output.
+2. Open **Import tool**, paste the help output and press **Copy AI prompt**.
+3. Give the prompt to any AI model and paste its JSON answer back into the
+   import box.
+4. Press **Parse**, review the preview, then **Import tool**.
+
+The model is told to return only the JSON object, so markdown fences can simply
+be removed if one slips through.
+
 ## Design notes
 
-- `src/model.js`, `src/render.js`, `src/parse.js` and `src/sections.js` are pure and
-  unit tested. `src/ui.js` is plain DOM — no JSX compile step, no Preact coupling.
+- `src/model.js`, `src/render.js`, `src/parse.js`, `src/sections.js`,
+  `src/toolfile.js` and `src/prompt.js` are pure and unit tested. `src/ui.js` is
+  plain DOM — no JSX compile step, no Preact coupling.
 - `src/backend.js` exposes a single serialisable entry point (`beRun(params)`)
   because `api.runOnBackend` sends the function source, and inner helpers travel
   with it while outer helpers would not.

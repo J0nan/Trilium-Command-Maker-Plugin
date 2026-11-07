@@ -20,6 +20,7 @@ const Model = require('./model');
 const Backend = require('./backend');
 const Sections = require('./sections');
 const Parse = require('./parse');
+const ToolFile = require('./toolfile');
 const Version = require('./version');
 const UI = require('./ui');
 
@@ -370,6 +371,54 @@ async function load(noteId) {
     };
 }
 
+async function readRawContent(note) {
+    if (!note) {
+        return '';
+    }
+    try {
+        return String(await note.getContent() || '');
+    } catch (error) {
+        return '';
+    }
+}
+
+/**
+ * Read one tool into the portable file the palette writes to disk.
+ * Raw note contents are kept so an export/import round trip loses nothing.
+ */
+async function exportTool(noteId) {
+    const entry = entriesById.get(noteId);
+    if (!entry) {
+        throw new Error('Tool not found. Reopen the palette.');
+    }
+    const note = entry.note;
+    const labels = entry.labels;
+
+    const installNote = await childWithLabel(note, Model.LABELS.install) || await childByTitle(note, 'Install');
+    const usageNote = await childWithLabel(note, Model.LABELS.usage) || await childByTitle(note, 'Usage');
+    const helpNote = await childWithLabel(note, Model.LABELS.helpNote) || await childByTitle(note, 'Help');
+
+    const definition = Model.buildTool({
+        noteId: note.noteId,
+        title: note.title,
+        category: entry.category,
+        labels: labels,
+        optionNotes: entry.optionSnapshots
+    });
+
+    return ToolFile.buildToolFile({
+        title: note.title,
+        category: entry.category,
+        base: definition.base,
+        description: definition.description,
+        content: await readRawContent(note),
+        install: await readRawContent(installNote),
+        usage: await readRawContent(usageNote),
+        help: await readRawContent(helpNote),
+        options: definition.options
+    });
+}
+
 async function copyText(text) {
     try {
         if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
@@ -566,6 +615,20 @@ function controller() {
 
         addOption(toolId, option) {
             return backendAction('addOption', { toolId: toolId, option: option });
+        },
+
+        exportTool(noteId) {
+            return exportTool(noteId);
+        },
+
+        async importTool(tool) {
+            const created = await backendAction('importTool', {
+                toolsRootId: toolsRootId(),
+                tool: tool,
+                newToolNotes: Model.newToolNotes()
+            });
+            await refresh();
+            return created;
         },
 
         importOptions(toolId, options) {

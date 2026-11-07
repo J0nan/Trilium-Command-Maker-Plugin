@@ -288,7 +288,7 @@ function buildFixture() {
 }
 
 function makeApi(fixture) {
-    const calls = { backend: [], copied: [], inserted: [], errors: [], activated: [] };
+    const calls = { backend: [], copied: [], inserted: [], errors: [], activated: [], messages: [] };
     const api = {
         async runOnBackend(fn, params) {
             calls.backend.push(params[0]);
@@ -326,6 +326,9 @@ function makeApi(fixture) {
         },
         showError(message) {
             calls.errors.push(message);
+        },
+        showMessage(message) {
+            calls.messages.push(message);
         }
     };
     const navigator = {
@@ -797,4 +800,132 @@ test('dropdowns hide the native arrow and keep a single themed arrow', async () 
     const style = dom.getElementById('cm-palette-style');
     assert.match(style.textContent, /\.cm-control\.cm-select\{[^}]*appearance:none/);
     assert.match(style.textContent, /\.cm-control\.cm-select\{[^}]*background-image:var\(--select-arrow-svg/);
+});
+function buttonWithText(root, text) {
+    return find(root, (node) => node.tagName === 'BUTTON' && node.textContent === text);
+}
+
+const portableTool = {
+    kind: 'command-maker-tool',
+    version: 1,
+    tool: {
+        title: 'ripgrep',
+        category: 'Search',
+        base: 'rg',
+        description: 'Search text recursively.',
+        content: '<h2>What is?</h2><p>Fast search.</p><h2>Official links</h2><ul></ul><h2>Useful links</h2><ul></ul>',
+        install: '<p>cargo install ripgrep</p>',
+        usage: '<pre><code>rg pattern</code></pre>',
+        help: 'Usage: rg [OPTIONS] PATTERN\n  -i, --ignore-case  case insensitive',
+        options: [
+            { label: 'Ignore case', flag: '-i', help: 'Case insensitive.', type: 'boolean', order: 10 },
+            { label: 'Pattern', flag: '', help: 'Regex to search for.', type: 'string', required: true, placeholder: 'pattern', order: 20 }
+        ]
+    }
+};
+
+test('Import tool parses a tool file, copies the AI prompt and imports the tool', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    buttonWithText(dom.body, 'Import tool').click();
+    const modal = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-modal')), 'import tool modal');
+
+    const area = find(modal, (node) => node.tagName === 'TEXTAREA');
+    assert.ok(area, 'the import tool modal has a text area');
+
+    area.value = 'Usage: rg [OPTIONS] PATTERN\n  -i, --ignore-case  case insensitive';
+    buttonWithText(modal, 'Copy AI prompt').click();
+    await waitFor(() => env.calls.copied.length > 0, 'AI prompt copy');
+    assert.match(env.calls.copied[0], /command-maker-tool/);
+    assert.match(env.calls.copied[0], /Usage: rg \[OPTIONS\] PATTERN/);
+    assert.match(env.calls.copied[0], /--ignore-case/);
+    await waitFor(() => env.calls.messages.length > 0, 'Trilium confirmation message');
+    assert.match(env.calls.messages[0], /AI prompt copied/i);
+
+    area.value = JSON.stringify(portableTool);
+    buttonWithText(modal, 'Parse').click();
+    await waitFor(() => {
+        const status = find(dom.body, (node) => classed(node, 'cm-status'));
+        return status && /Parsed tool "ripgrep"/.test(status.textContent);
+    }, 'parse status');
+    assert.ok(buttonWithText(modal, 'Import tool').disabled === false, 'the import action is enabled');
+
+    buttonWithText(modal, 'Import tool').click();
+    const call = await waitFor(() => {
+        return env.calls.backend.filter((entry) => entry.action === 'importTool')[0];
+    }, 'importTool backend call');
+    assert.equal(call.tool.title, 'ripgrep');
+    assert.equal(call.tool.options.length, 2);
+    assert.equal(call.tool.options[1].flag, '', 'the positional option survives the import');
+});
+
+test('Export tool shows the portable JSON and copies it', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+
+    buttonWithText(dom.body, 'Export tool').click();
+    const modal = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-modal')), 'export modal');
+    const area = await waitFor(() => {
+        return find(modal, (node) => node.tagName === 'TEXTAREA' && node.value.indexOf('command-maker-tool') !== -1);
+    }, 'exported JSON');
+
+    const file = JSON.parse(area.value);
+    assert.equal(file.tool.title, 'ffmpeg');
+    assert.equal(file.tool.category, 'Media');
+    assert.equal(file.tool.options.length, 3);
+    assert.equal(file.tool.options[0].flag, '-i');
+    assert.match(file.tool.help, /Usage: ffmpeg/);
+    assert.ok(find(modal, (node) => node.tagName === 'BUTTON' && node.textContent === 'Download .json'), 'download action exists');
+
+    buttonWithText(modal, 'Copy JSON').click();
+    await waitFor(() => env.calls.copied.length > 0, 'copied tool file');
+    assert.match(env.calls.copied[0], /"kind": "command-maker-tool"/);
+    assert.match(env.calls.copied[0], /"title": "ffmpeg"/);
+});
+
+test('the modal body can shrink and scroll instead of being clipped', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    const style = dom.getElementById('cm-palette-style');
+
+    assert.match(style.textContent, /\.cm-modal-panel\{[^}]*max-height:100%/);
+    assert.match(style.textContent, /\.cm-modal-body\{[^}]*min-height:0/);
+    assert.match(style.textContent, /\.cm-modal-body\{[^}]*overflow-y:auto/);
+    assert.match(style.textContent, /\.cm-modal-actions\{[^}]*flex:0 0 auto/);
+});
+
+test('modals render on the overlay, not inside the panel that shrinks on first open', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    buttonWithText(dom.body, 'Import tool').click();
+
+    const overlay = find(dom.body, (node) => classed(node, 'cm-overlay'));
+    const panel = find(overlay, (node) => classed(node, 'cm-panel'));
+    const host = overlay.children.filter((node) => classed(node, 'cm-modal-host'))[0];
+
+    assert.ok(host, 'the modal host is a direct child of the overlay');
+    assert.equal(
+        find(panel, (node) => classed(node, 'cm-modal-host')),
+        null,
+        'the modal host is not inside the panel that can shrink to its content'
+    );
+    assert.ok(find(host, (node) => classed(node, 'cm-modal')), 'the modal renders inside the overlay host');
 });

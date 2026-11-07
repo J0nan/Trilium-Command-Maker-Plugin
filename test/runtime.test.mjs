@@ -179,6 +179,54 @@ test('refresh falls back to #cmBase when present and to the title otherwise', as
     globalThis.api = undefined;
 });
 
+test('exportTool builds a portable file with raw contents and every option', async () => {
+    const built = makeTool();
+    installApi(built.tool, {});
+    await Runtime.refresh();
+    const controller = Runtime.controller();
+
+    const file = await controller.exportTool('t1');
+    assert.equal(file.kind, 'command-maker-tool');
+    assert.equal(file.version, 1);
+    assert.equal(file.tool.title, 'ffmpeg');
+    assert.equal(file.tool.category, 'Media');
+    assert.equal(file.tool.base, 'ffmpeg');
+    assert.equal(file.tool.description, 'Media toolkit');
+    assert.match(file.tool.content, /<h2>What is\?<\/h2>/);
+    assert.match(file.tool.install, /<p>winget install ffmpeg<\/p>/, 'install keeps its HTML');
+    assert.match(file.tool.usage, /<pre><code>ffmpeg -i in.mp4 out.mp4<\/code><\/pre>/);
+    assert.match(file.tool.help, /Usage: ffmpeg/);
+    assert.equal(file.tool.options.length, 2);
+    assert.equal(file.tool.options[0].label, 'Input file');
+    assert.equal(file.tool.options[0].flag, '-i');
+    assert.equal(file.tool.options[0].type, 'path');
+    assert.deepEqual(file.tool.options[1].values, ['libx264', 'libx265']);
+
+    globalThis.api = undefined;
+});
+
+test('importTool posts the portable spec to the backend', async () => {
+    const built = makeTool();
+    const calls = installApi(built.tool, {});
+    await Runtime.refresh();
+    const controller = Runtime.controller();
+
+    await controller.importTool({
+        title: 'ripgrep',
+        category: 'Search',
+        base: 'rg',
+        options: [{ label: 'Pattern', flag: '', type: 'string', required: true }]
+    });
+
+    const call = calls.filter((entry) => entry.action === 'importTool')[0];
+    assert.ok(call, 'importTool backend action was called');
+    assert.equal(call.toolsRootId, 'tools');
+    assert.equal(call.tool.title, 'ripgrep');
+    assert.equal(call.tool.options.length, 1);
+
+    globalThis.api = undefined;
+});
+
 test('createTool sends the three-H2 template and the standard child content', async () => {
     const built = makeTool();
     const calls = installApi(built.tool, {});

@@ -10,7 +10,7 @@
  * being duplicated here. Consequently `beRun` must never reference a
  * module-scope binding and dispatches on literal action strings only.
  *
- * Actions: bootstrap | createCategory | createTool | addOption |
+ * Actions: bootstrap | createCategory | createTool | importTool | addOption |
  * importOptions | deleteOption | setToolBase | setToolsRoot | savePreset |
  * deletePreset
  */
@@ -390,6 +390,19 @@ function beRun(params) {
         return { noteId: note.noteId, optionsFolderId: folder.noteId, presetsId: presets.noteId };
     }
 
+    /** Recreate a tool from a portable tool file (see src/toolfile.js). */
+    function importTool() {
+        const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
+        const note = createToolNote(toolsRoot, options.tool || {}, options.newToolNotes || {});
+        const folder = findChildWithLabel(note, labels.options);
+        const presets = folder ? findChildWithLabel(folder, labels.presets) : null;
+        return {
+            noteId: note.noteId,
+            optionsFolderId: folder ? folder.noteId : null,
+            presetsId: presets ? presets.noteId : null
+        };
+    }
+
     function addOption() {
         const location = presetsLocation(options.toolId);
         const note = createOptionNote(location.folder, options.option || {});
@@ -509,6 +522,8 @@ function beRun(params) {
             return createCategory();
         case 'createTool':
             return createTool();
+        case 'importTool':
+            return importTool();
         case 'addOption':
             return addOption();
         case 'importOptions':

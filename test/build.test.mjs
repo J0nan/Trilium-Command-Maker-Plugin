@@ -31,7 +31,7 @@ test('build produces a valid bundle and installer', () => {
 
 test('every src module is reachable from the entry point', () => {
     const bundle = fs.readFileSync(path.join(root, 'dist', 'command-maker.js'), 'utf8');
-    for (const name of ['render', 'parse', 'sections', 'model', 'version', 'backend', 'ui', 'runtime']) {
+    for (const name of ['render', 'parse', 'sections', 'toolfile', 'prompt', 'model', 'version', 'backend', 'ui', 'runtime']) {
         assert.ok(bundle.includes('__def("' + name + '"'), name + ' is bundled');
     }
 });

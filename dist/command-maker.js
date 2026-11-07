@@ -1408,6 +1408,352 @@ module.exports = {
 };
 
 });
+__def("toolfile", function (module, exports, __require) {
+'use strict';
+
+/**
+ * Portable tool files: one JSON document that holds everything needed to
+ * recreate a tool note (metadata, the three H2 sections, the standard child
+ * notes and every option).
+ *
+ * The palette exports a tool with buildToolFile() and imports one with
+ * parseToolFile(). Both are pure: no Trilium API, no DOM, no file system.
+ *
+ * Shape:
+ * {
+ *   kind: 'command-maker-tool',
+ *   version: 1,
+ *   tool: {
+ *     title, category, base, description,
+ *     content, install, usage, help,
+ *     options: [ option, ... ]
+ *   }
+ * }
+ *
+ * An option uses the same fields the backend option notes store, with the
+ * portable names label/help/values/default so an AI model can fill it in
+ * without knowing Trilium's labels.
+ */
+
+const Model = __require("model");
+
+const TOOL_KIND = 'command-maker-tool';
+const FILE_VERSION = 1;
+
+const QUOTES = ['none', 'single', 'double'];
+
+function text(value) {
+    return value === undefined || value === null ? '' : String(value);
+}
+
+function trimmed(value) {
+    return text(value).trim();
+}
+
+function nonEmpty(value) {
+    return trimmed(value) !== '';
+}
+
+function truthy(value) {
+    if (value === true) {
+        return true;
+    }
+    return ['true', '1', 'yes', 'on'].indexOf(trimmed(value).toLowerCase()) !== -1;
+}
+
+function splitValues(value) {
+    if (value === undefined || value === null || value === '') {
+        return [];
+    }
+    const list = Array.isArray(value) ? value : String(value).split(',');
+    const out = [];
+    for (const entry of list) {
+        const next = trimmed(entry);
+        if (next !== '' && out.indexOf(next) === -1) {
+            out.push(next);
+        }
+    }
+    return out;
+}
+
+function normaliseType(raw, warnings) {
+    const value = trimmed(raw).toLowerCase();
+    if (value === '') {
+        return 'string';
+    }
+    if (Model.TYPES.indexOf(value) !== -1) {
+        return value;
+    }
+    warnings.push({
+        code: 'invalid-type',
+        message: 'Unknown option type "' + value + '"; using string.'
+    });
+    return 'string';
+}
+
+function normaliseDefault(raw) {
+    if (raw === undefined || raw === null || raw === '') {
+        return '';
+    }
+    if (typeof raw === 'boolean') {
+        return raw ? 'true' : '';
+    }
+    return trimmed(raw);
+}
+
+/** Loose option entry -> the option shape the backend importer understands. */
+function normaliseOption(entry, index, warnings) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        warnings.push({
+            code: 'invalid-option',
+            message: 'Option entry ' + (index + 1) + ' is not an object.'
+        });
+        return null;
+    }
+
+    const flag = trimmed(entry.flag);
+    const label = trimmed(
+        entry.label !== undefined ? entry.label
+            : (entry.title !== undefined ? entry.title : entry.name)
+    );
+    if (label === '' && flag === '') {
+        warnings.push({
+            code: 'invalid-option',
+            message: 'Option entry ' + (index + 1) + ' has no label and no flag.'
+        });
+        return null;
+    }
+
+    const type = normaliseType(entry.type, warnings);
+    let values = splitValues(entry.values !== undefined ? entry.values : entry.enumValues);
+    if (type === 'boolean') {
+        values = [];
+    }
+
+    const rawDefault = entry.default !== undefined ? entry.default : entry.defaultValue;
+    const rawOrder = entry.order === undefined || entry.order === null || trimmed(entry.order) === ''
+        ? NaN
+        : Number(entry.order);
+    const quote = QUOTES.indexOf(trimmed(entry.quote).toLowerCase()) === -1
+        ? 'none'
+        : trimmed(entry.quote).toLowerCase();
+
+    return {
+        label: label === '' ? flag : label,
+        flag: flag,
+        help: trimmed(entry.help !== undefined ? entry.help : entry.doc),
+        type: type,
+        values: values,
+        default: normaliseDefault(rawDefault),
+        required: truthy(entry.required),
+        mode: trimmed(entry.mode).toLowerCase() === 'inline' ? 'inline' : 'flag',
+        placeholder: trimmed(entry.placeholder),
+        order: isFinite(rawOrder) ? rawOrder : (index + 1) * 10,
+        quote: quote,
+        sep: trimmed(entry.sep) === '=' || trimmed(entry.separator) === '=' ? '=' : ' '
+    };
+}
+
+/** Tool object (exported or hand-written) -> the canonical portable tool. */
+function normaliseTool(spec, warnings) {
+    const source = spec && typeof spec === 'object' && !Array.isArray(spec) ? spec : {};
+    const options = [];
+    if (Array.isArray(source.options)) {
+        for (let index = 0; index < source.options.length; index += 1) {
+            const option = normaliseOption(source.options[index], index, warnings);
+            if (option) {
+                options.push(option);
+            }
+        }
+    } else if (source.options !== undefined && source.options !== null) {
+        warnings.push({
+            code: 'invalid-options',
+            message: 'The tool "options" field is not an array; no options were read.'
+        });
+    }
+
+    return {
+        title: trimmed(source.title),
+        category: trimmed(source.category),
+        base: trimmed(source.base),
+        description: trimmed(source.description),
+        content: text(source.content),
+        install: text(source.install),
+        usage: text(source.usage),
+        help: text(source.help),
+        options: options
+    };
+}
+
+/**
+ * Tool data -> a portable file object ready for JSON.stringify.
+ * @param {object} tool
+ * @returns {{ kind: string, version: number, tool: object }}
+ */
+function buildToolFile(tool) {
+    return {
+        kind: TOOL_KIND,
+        version: FILE_VERSION,
+        tool: normaliseTool(tool, [])
+    };
+}
+
+/**
+ * Parse a tool file. Accepts the exported envelope, `{ tool: {...} }` or a bare
+ * tool object. Never throws; unusable input becomes warnings.
+ * @param {string} source
+ * @returns {{ tool: object|null, warnings: Array }}
+ */
+function parseToolFile(source) {
+    const warnings = [];
+    const raw = text(source).trim();
+    if (raw === '') {
+        warnings.push({ code: 'invalid-json', message: 'The tool file is empty.' });
+        return { tool: null, warnings: warnings };
+    }
+
+    let data;
+    try {
+        data = JSON.parse(raw);
+    } catch (error) {
+        warnings.push({
+            code: 'invalid-json',
+            message: 'Not valid JSON: ' + (error && error.message ? error.message : error)
+        });
+        return { tool: null, warnings: warnings };
+    }
+
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        warnings.push({ code: 'invalid-json', message: 'The tool file must be a JSON object.' });
+        return { tool: null, warnings: warnings };
+    }
+
+    const spec = data.tool && typeof data.tool === 'object' && !Array.isArray(data.tool)
+        ? data.tool
+        : data;
+    const tool = normaliseTool(spec, warnings);
+    if (!nonEmpty(tool.title)) {
+        warnings.push({ code: 'missing-title', message: 'The tool file has no "title".' });
+        return { tool: null, warnings: warnings };
+    }
+
+    return { tool: tool, warnings: warnings };
+}
+
+module.exports = {
+    TOOL_KIND,
+    FILE_VERSION,
+    normaliseOption,
+    normaliseTool,
+    buildToolFile,
+    parseToolFile
+};
+});
+__def("prompt", function (module, exports, __require) {
+'use strict';
+
+/**
+ * The prompt a user copies into any AI model together with the output of a
+ * tool's `--help` command. The model answers with the JSON tool file that the
+ * palette's "Import tool" action understands (see src/toolfile.js).
+ */
+
+const SCHEMA = [
+    '{',
+    '  "kind": "command-maker-tool",',
+    '  "version": 1,',
+    '  "tool": {',
+    '    "title": "<command name, e.g. git commit>",',
+    '    "category": "<short group, e.g. Version control>",',
+    '    "base": "<command the user types, e.g. git commit>",',
+    '    "description": "<one sentence>",',
+    '    "content": "<h2>What is?</h2><p>...</p><h2>Official links</h2><ul><li><a href=\\"https://...\\">...</a></li></ul><h2>Useful links</h2><ul><li><a href=\\"https://...\\">...</a></li></ul>",',
+    '    "install": "<p>Install steps as HTML</p>",',
+    '    "usage": "<p>Example:</p><pre><code>...</code></pre>",',
+    '    "help": "<the exact --help output, unchanged>",',
+    '    "options": [',
+    '      {',
+    '        "label": "Input file",',
+    '        "flag": "-i",',
+    '        "help": "Input file to read.",',
+    '        "type": "path",',
+    '        "values": [],',
+    '        "default": "",',
+    '        "required": true,',
+    '        "mode": "flag",',
+    '        "placeholder": "input",',
+    '        "order": 10,',
+    '        "quote": "none",',
+    '        "sep": " "',
+    '      }',
+    '    ]',
+    '  }',
+    '}'
+].join('\n');
+
+const RULES = [
+    '- title: the command name. base: the exact command the user types (keep subcommands, e.g. "git commit").',
+    '- category: a short group such as "Network", "Media" or "Version control".',
+    '- description: one sentence that explains what the tool does.',
+    '- content: HTML with exactly three <h2> sections in this order: "What is?", "Official links", "Useful links".',
+    '  Put a <p> summary under "What is?" and one <ul><li><a href="...">...</a></li></ul> list under each links section.',
+    '  If no URL is known, leave an empty <ul></ul>; never invent links.',
+    '- install: HTML install steps (Windows, macOS, Linux) when known; otherwise a short placeholder paragraph.',
+    '- usage: HTML with two or three realistic <pre><code>command</code></pre> examples.',
+    '- help: the raw --help text, unchanged.',
+    '- options: one entry per documented option or positional argument.',
+    '  - flag: the primary flag ("-i", "--ignore-case"), or "" for a positional argument.',
+    '  - label: a short human name ("Ignore case"); required when flag is "".',
+    '  - help: what the option does, taken from the help output.',
+    '  - type: "boolean" when it takes no value, "path" for files or directories, "number" for counts or sizes,',
+    '    "enum" when there is a fixed set of values, "string" otherwise.',
+    '  - values: the enum choices only, otherwise [].',
+    '  - default: the default stated in the help output, otherwise "".',
+    '  - required: true only for positional arguments or options the tool requires.',
+    '  - placeholder: a short unique identifier ("input", "url").',
+    '  - order: 10, 20, 30... in the order the options appear.',
+    '  - quote: "double" for free text or URLs that may contain spaces, otherwise "none".',
+    '  - sep: " " normally, "=" only for --flag=value style options.',
+    '  - mode: "flag" unless the base command itself must contain {{placeholder}}.',
+    'Do not invent options that are not in the help output.'
+].join('\n');
+
+function clean(value) {
+    return String(value == null ? '' : value).trim();
+}
+
+/**
+ * @param {{ title?: string, helpText?: string }} [options]
+ * @returns {string}
+ */
+function buildToolPrompt(options) {
+    const safe = options || {};
+    const title = clean(safe.title);
+    const helpText = clean(safe.helpText);
+
+    const lines = [
+        'You convert command-line tool documentation into a Command Maker tool file.',
+        '',
+        'Return only the JSON object. Do not wrap it in a markdown code fence, do not add commentary,',
+        'and do not omit fields. Use this exact shape:',
+        '',
+        SCHEMA,
+        '',
+        'Rules:',
+        RULES,
+        '',
+        'Input:',
+        title === '' ? 'Tool name: <tool name>' : 'Tool name: ' + title,
+        '--help output:',
+        helpText === '' ? "<paste the output of the tool's --help command here>" : helpText,
+        '',
+        'Convert the input above now. Return only the JSON object.'
+    ];
+    return lines.join('\n');
+}
+
+module.exports = { buildToolPrompt };
+});
 __def("model", function (module, exports, __require) {
 'use strict';
 
@@ -2021,7 +2367,7 @@ __def("backend", function (module, exports, __require) {
  * being duplicated here. Consequently `beRun` must never reference a
  * module-scope binding and dispatches on literal action strings only.
  *
- * Actions: bootstrap | createCategory | createTool | addOption |
+ * Actions: bootstrap | createCategory | createTool | importTool | addOption |
  * importOptions | deleteOption | setToolBase | setToolsRoot | savePreset |
  * deletePreset
  */
@@ -2401,6 +2747,19 @@ function beRun(params) {
         return { noteId: note.noteId, optionsFolderId: folder.noteId, presetsId: presets.noteId };
     }
 
+    /** Recreate a tool from a portable tool file (see src/toolfile.js). */
+    function importTool() {
+        const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
+        const note = createToolNote(toolsRoot, options.tool || {}, options.newToolNotes || {});
+        const folder = findChildWithLabel(note, labels.options);
+        const presets = folder ? findChildWithLabel(folder, labels.presets) : null;
+        return {
+            noteId: note.noteId,
+            optionsFolderId: folder ? folder.noteId : null,
+            presetsId: presets ? presets.noteId : null
+        };
+    }
+
     function addOption() {
         const location = presetsLocation(options.toolId);
         const note = createOptionNote(location.folder, options.option || {});
@@ -2520,6 +2879,8 @@ function beRun(params) {
             return createCategory();
         case 'createTool':
             return createTool();
+        case 'importTool':
+            return importTool();
         case 'addOption':
             return addOption();
         case 'importOptions':
@@ -2558,6 +2919,8 @@ __def("ui", function (module, exports, __require) {
  *   insert(text): void
  *   categories(): string[]
  *   createTool(spec): Promise<{ noteId }>
+ *   importTool(tool): Promise<{ noteId }>
+ *   exportTool(noteId): Promise<{ kind, version, tool }>
  *   importOptions(toolId, options): Promise<{ created }>
  *   savePreset(toolId, name, values): Promise<void>
  *   deletePreset(toolId, name): Promise<void>
@@ -2572,6 +2935,8 @@ __def("ui", function (module, exports, __require) {
 const Model = __require("model");
 const Render = __require("render");
 const Parse = __require("parse");
+const ToolFile = __require("toolfile");
+const Prompt = __require("prompt");
 
 const STYLE_ID = 'cm-palette-style';
 
@@ -2646,12 +3011,12 @@ const CSS = [
     '.cm-example-text{flex:1;min-width:0;font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;overflow-wrap:anywhere;}',
     '.cm-fold summary{cursor:pointer;font-size:12px;text-transform:uppercase;letter-spacing:.06em;opacity:.7;}',
     '.cm-pre{margin:8px 0 0;padding:10px;border-radius:8px;background:var(--input-background-color,#fafafa);border:1px solid var(--main-border-color,#ddd);font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;white-space:pre-wrap;overflow-x:auto;}',
-    '.cm-modal{position:absolute;inset:0;display:flex;justify-content:center;align-items:flex-start;padding:6vh 16px;background:rgba(0,0,0,.45);border-radius:10px;z-index:2;}',
-    '.cm-modal-panel{display:flex;flex-direction:column;width:min(760px,100%);max-height:80vh;border-radius:10px;overflow:hidden;background:var(--main-background-color,#fff);color:inherit;box-shadow:0 20px 48px rgba(0,0,0,.4);}',
-    '.cm-modal-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--main-border-color,#ddd);}',
+    '.cm-modal{position:absolute;inset:0;display:flex;justify-content:center;align-items:flex-start;padding:4vh 16px;background:rgba(0,0,0,.45);z-index:2;}',
+    '.cm-modal-panel{display:flex;flex-direction:column;width:min(760px,100%);max-height:100%;border-radius:10px;overflow:hidden;background:var(--main-background-color,#fff);color:inherit;box-shadow:0 20px 48px rgba(0,0,0,.4);}',
+    '.cm-modal-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--main-border-color,#ddd);flex:0 0 auto;}',
     '.cm-modal-title{flex:1;font-weight:600;}',
-    '.cm-modal-body{overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;}',
-    '.cm-modal-actions{display:flex;flex-wrap:wrap;gap:8px;padding:10px 12px;border-top:1px solid var(--main-border-color,#ddd);}',
+    '.cm-modal-body{overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;min-height:0;flex:1 1 auto;}',
+    '.cm-modal-actions{display:flex;flex-wrap:wrap;gap:8px;padding:10px 12px;border-top:1px solid var(--main-border-color,#ddd);flex:0 0 auto;}',
     '.cm-tabs{display:flex;gap:6px;flex-wrap:wrap;}',
     '.cm-tab{padding:4px 10px;border-radius:999px;border:1px solid var(--main-border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font:inherit;font-size:12px;}',
     '.cm-tab.is-active{background:var(--accented-background-color,#eef2ff);border-color:var(--link-color,#4f8cff);}',
@@ -2765,7 +3130,8 @@ function openPalette(controller) {
         importParsed: null,
         importRows: [],
         importNoteTitle: '',
-        importStatus: ''
+        importStatus: '',
+        importToolParsed: null
     };
 
     const overlay = el('div', 'cm-overlay');
@@ -2791,6 +3157,10 @@ function openPalette(controller) {
     const footer = el('div', 'cm-foot');
     const newToolButton = el('button', 'cm-button', 'New tool');
     newToolButton.type = 'button';
+    const importToolButton = el('button', 'cm-button', 'Import tool');
+    importToolButton.type = 'button';
+    const exportToolButton = el('button', 'cm-button', 'Export tool');
+    exportToolButton.type = 'button';
     const importButton = el('button', 'cm-button', 'Import options');
     importButton.type = 'button';
     const addOptionButton = el('button', 'cm-button', 'Add option');
@@ -2808,20 +3178,24 @@ function openPalette(controller) {
     repoLink.target = '_blank';
     repoLink.rel = 'noreferrer';
     footer.appendChild(newToolButton);
+    footer.appendChild(importToolButton);
     footer.appendChild(importButton);
     footer.appendChild(addOptionButton);
+    footer.appendChild(exportToolButton);
     footer.appendChild(toolsButton);
     footer.appendChild(statusEl);
     footer.appendChild(versionButton);
     footer.appendChild(repoLink);
 
-    const modalHost = el('div', '');
+    const modalHost = el('div', 'cm-modal-host');
 
     panel.appendChild(head);
     panel.appendChild(body);
     panel.appendChild(footer);
-    panel.appendChild(modalHost);
     overlay.appendChild(panel);
+    // The modal lives on the overlay, not inside the panel: the panel shrinks to
+    // its content when no tool is selected, which used to clip the modal.
+    overlay.appendChild(modalHost);
     document.body.appendChild(overlay);
 
     let searchTimer = null;
@@ -2840,6 +3214,18 @@ function openPalette(controller) {
             }
         } catch (ignored) {
             // showing the message in the footer is enough
+        }
+    }
+
+    /** Trilium toast for confirmations, since the footer is hidden behind a modal. */
+    function notifyMessage(message) {
+        setStatus(message);
+        try {
+            if (typeof api !== 'undefined' && typeof api.showMessage === 'function') {
+                api.showMessage(message);
+            }
+        } catch (ignored) {
+            // the footer status is the fallback
         }
     }
 
@@ -2895,6 +3281,7 @@ function openPalette(controller) {
         state.modalKind = '';
         state.importParsed = null;
         state.importRows = [];
+        state.importToolParsed = null;
     }
 
     function close() {
@@ -3652,6 +4039,25 @@ function openPalette(controller) {
         });
     }
 
+    /** Save text as a local file. Throws when the runtime has no Blob/URL support. */
+    function downloadText(filename, value) {
+        if (typeof Blob === 'undefined' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
+            throw new Error('This environment cannot download files. Copy the text instead.');
+        }
+        const blob = new Blob([value], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(function () {
+            URL.revokeObjectURL(url);
+        }, 0);
+    }
+
     function modalShell(title, bodyNode, actionsNode) {
         closeModal();
         const modal = el('div', 'cm-modal');
@@ -3899,6 +4305,290 @@ function openPalette(controller) {
         setSource('paste');
     }
 
+    function openImportTool() {
+        const sourceRow = el('div', 'cm-tabs');
+        const tabPaste = el('button', 'cm-tab is-active', 'Paste text');
+        const tabNote = el('button', 'cm-tab', 'Active note');
+        const tabFile = el('button', 'cm-tab', 'File');
+        [tabPaste, tabNote, tabFile].forEach(function (tab) {
+            tab.type = 'button';
+        });
+        sourceRow.appendChild(tabPaste);
+        sourceRow.appendChild(tabNote);
+        sourceRow.appendChild(tabFile);
+
+        const hint = el('div', 'cm-note', 'Paste a tool file (JSON) exported from another tool, or one generated with "Copy AI prompt". Nothing is written until you import.');
+
+        const textArea = document.createElement('textarea');
+        textArea.className = 'cm-control cm-preview';
+        textArea.rows = 12;
+        textArea.placeholder = 'Tool file JSON, or the output of the tool\'s --help command…';
+
+        const notePreview = el('div', 'cm-note', '');
+        const readNoteButton = el('button', 'cm-button', 'Read active note');
+        readNoteButton.type = 'button';
+        readNoteButton.style.display = 'none';
+
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.className = 'cm-control';
+        fileInput.accept = '.json,.txt,.text';
+        fileInput.style.display = 'none';
+
+        const promptButton = el('button', 'cm-button', 'Copy AI prompt');
+        promptButton.type = 'button';
+        promptButton.title = 'Copy a prompt for any AI model, including the pasted --help output';
+        const parseButton = el('button', 'cm-button', 'Parse');
+        parseButton.type = 'button';
+        const importSelected = el('button', 'cm-button', 'Import tool');
+        importSelected.type = 'button';
+        importSelected.disabled = true;
+        const closeButton2 = el('button', 'cm-button', 'Close');
+        closeButton2.type = 'button';
+        closeButton2.addEventListener('click', closeModal);
+
+        const warnings = el('div', 'cm-warnings', '');
+        const previewList = el('div', 'cm-import-list', '');
+
+        let source = 'paste';
+        let sourceText = '';
+
+        function setSource(next) {
+            source = next;
+            tabPaste.classList.toggle('is-active', next === 'paste');
+            tabNote.classList.toggle('is-active', next === 'note');
+            tabFile.classList.toggle('is-active', next === 'file');
+            textArea.style.display = next === 'paste' ? '' : 'none';
+            readNoteButton.style.display = next === 'note' ? '' : 'none';
+            notePreview.style.display = next === 'note' && notePreview.textContent ? '' : 'none';
+            fileInput.style.display = next === 'file' ? '' : 'none';
+        }
+
+        tabPaste.addEventListener('click', function () { setSource('paste'); });
+        tabNote.addEventListener('click', function () { setSource('note'); });
+        tabFile.addEventListener('click', function () { setSource('file'); });
+
+        readNoteButton.addEventListener('click', function () {
+            Promise.resolve()
+                .then(function () {
+                    return controller.activeNoteText();
+                })
+                .then(function (note) {
+                    sourceText = note.text;
+                    notePreview.textContent = 'Read "' + note.title + '" (' + note.text.length + ' characters).';
+                    notePreview.style.display = '';
+                    setStatus('Note read.');
+                })
+                .catch(notify);
+        });
+
+        fileInput.addEventListener('change', function () {
+            const file = fileInput.files && fileInput.files[0];
+            if (!file) {
+                return;
+            }
+            Promise.resolve()
+                .then(function () {
+                    return readFileText(file);
+                })
+                .then(function (value) {
+                    sourceText = value;
+                    notePreview.textContent = 'Read "' + (file.name || 'file') + '" (' + value.length + ' characters).';
+                    notePreview.style.display = '';
+                    setStatus('File read.');
+                })
+                .catch(notify);
+        });
+
+        function collectText() {
+            return source === 'paste' ? textArea.value : sourceText;
+        }
+
+        function renderToolPreview() {
+            warnings.textContent = '';
+            previewList.textContent = '';
+            importSelected.disabled = true;
+            const parsed = state.importToolParsed;
+            if (!parsed) {
+                return;
+            }
+            (parsed.warnings || []).forEach(function (warning) {
+                warnings.appendChild(el('div', 'cm-warning', warning.message || warning.code));
+            });
+            const tool = parsed.tool;
+            if (!tool) {
+                return;
+            }
+            [
+                ['Title', tool.title],
+                ['Category', tool.category || 'Uncategorized'],
+                ['Base command', tool.base || Model.deriveBase(tool.title)]
+            ].forEach(function (line) {
+                previewList.appendChild(el('div', 'cm-import-flag', line[0] + ': ' + line[1]));
+            });
+            if (tool.description) {
+                previewList.appendChild(el('div', 'cm-note', tool.description));
+            }
+            if (!tool.options.length) {
+                previewList.appendChild(el('div', 'cm-empty', 'This tool file has no options.'));
+            }
+            tool.options.forEach(function (option) {
+                const row = el('div', 'cm-import-row');
+                const main = el('div', 'cm-import-main');
+                const flag = option.flag || '(positional)';
+                main.appendChild(el('div', 'cm-import-flag', flag + '  (' + option.type + ')  ' + option.label));
+                if (option.help) {
+                    main.appendChild(el('div', 'cm-import-help', option.help));
+                }
+                row.appendChild(main);
+                previewList.appendChild(row);
+            });
+            importSelected.disabled = false;
+        }
+
+        promptButton.addEventListener('click', function () {
+            Promise.resolve()
+                .then(function () {
+                    const pasted = collectText();
+                    const looksJson = /^\s*[{[]/.test(String(pasted || ''));
+                    return copyTextToClipboard(Prompt.buildToolPrompt({
+                        helpText: looksJson ? '' : pasted
+                    }));
+                })
+                .then(function () {
+                    notifyMessage('AI prompt copied to the clipboard.');
+                })
+                .catch(notify);
+        });
+
+        parseButton.addEventListener('click', function () {
+            const text = collectText();
+            if (!String(text || '').trim()) {
+                notify(new Error('Nothing to parse. Paste a tool file, read the active note or choose a file.'));
+                return;
+            }
+            try {
+                state.importToolParsed = ToolFile.parseToolFile(text);
+                renderToolPreview();
+                const tool = state.importToolParsed.tool;
+                setStatus(tool ? 'Parsed tool "' + tool.title + '".' : 'The tool file could not be parsed.');
+            } catch (error) {
+                notify(error);
+            }
+        });
+
+        importSelected.addEventListener('click', function () {
+            const parsed = state.importToolParsed;
+            if (!parsed || !parsed.tool) {
+                notify(new Error('Parse a tool file first.'));
+                return;
+            }
+            let created = null;
+            Promise.resolve()
+                .then(function () {
+                    return controller.importTool(parsed.tool);
+                })
+                .then(function (result) {
+                    created = result;
+                    closeModal();
+                    state.importStatus = 'Imported tool "' + parsed.tool.title + '".';
+                    return controller.refresh();
+                })
+                .then(runSearch)
+                .then(function () {
+                    const item = created
+                        ? state.items.filter(function (entry) { return entry.noteId === created.noteId; })[0]
+                        : null;
+                    return item ? selectItem(item) : undefined;
+                })
+                .then(function () {
+                    setStatus(state.importStatus || '');
+                })
+                .catch(notify);
+        });
+
+        const bodyNode = el('div', '');
+        bodyNode.appendChild(sourceRow);
+        bodyNode.appendChild(hint);
+        bodyNode.appendChild(textArea);
+        bodyNode.appendChild(readNoteButton);
+        bodyNode.appendChild(notePreview);
+        bodyNode.appendChild(fileInput);
+        bodyNode.appendChild(warnings);
+        bodyNode.appendChild(previewList);
+
+        const actionsNode = el('div', 'cm-inline');
+        actionsNode.appendChild(promptButton);
+        actionsNode.appendChild(parseButton);
+        actionsNode.appendChild(importSelected);
+        actionsNode.appendChild(closeButton2);
+
+        modalShell('Import a tool', bodyNode, actionsNode);
+        state.modalKind = 'tool';
+        setSource('paste');
+    }
+
+    function openExportTool() {
+        if (!state.current) {
+            notify(new Error('Select a tool first.'));
+            return;
+        }
+        Promise.resolve()
+            .then(function () {
+                return controller.exportTool(state.current.noteId);
+            })
+            .then(function (file) {
+                const json = JSON.stringify(file, null, 2);
+                const filename = (Render.slugify(file.tool.title) || 'tool') + '.tool.json';
+
+                const bodyNode = el('div', '');
+                bodyNode.appendChild(el('div', 'cm-note', 'This plain-JSON file can be imported here, kept as a backup, or shared.'));
+                const area = document.createElement('textarea');
+                area.className = 'cm-control cm-preview';
+                area.rows = 18;
+                area.readOnly = true;
+                area.value = json;
+                bodyNode.appendChild(area);
+                bodyNode.appendChild(el('div', 'cm-note', 'Suggested file name: ' + filename));
+
+                const copyButton = el('button', 'cm-button', 'Copy JSON');
+                copyButton.type = 'button';
+                copyButton.addEventListener('click', function () {
+                    copyTextToClipboard(json)
+                        .then(function () {
+                            setStatus('Tool file copied.');
+                        })
+                        .catch(notify);
+                });
+
+                const downloadButton = el('button', 'cm-button', 'Download .json');
+                downloadButton.type = 'button';
+                downloadButton.addEventListener('click', function () {
+                    Promise.resolve()
+                        .then(function () {
+                            downloadText(filename, json);
+                        })
+                        .then(function () {
+                            setStatus('Downloaded ' + filename + '.');
+                        })
+                        .catch(notify);
+                });
+
+                const closeButton2 = el('button', 'cm-button', 'Close');
+                closeButton2.type = 'button';
+                closeButton2.addEventListener('click', closeModal);
+
+                const actionsNode = el('div', 'cm-inline');
+                actionsNode.appendChild(copyButton);
+                actionsNode.appendChild(downloadButton);
+                actionsNode.appendChild(closeButton2);
+
+                modalShell('Export "' + file.tool.title + '"', bodyNode, actionsNode);
+                state.modalKind = 'export';
+            })
+            .catch(notify);
+    }
+
     function openAddOption() {
         if (!state.current) {
             notify(new Error('Select a tool first.'));
@@ -4112,6 +4802,8 @@ function openPalette(controller) {
         Promise.resolve().then(checkForUpdates).catch(notify);
     });
     newToolButton.addEventListener('click', toggleNewTool);
+    importToolButton.addEventListener('click', openImportTool);
+    exportToolButton.addEventListener('click', openExportTool);
     importButton.addEventListener('click', openImport);
     addOptionButton.addEventListener('click', openAddOption);
     toolsButton.addEventListener('click', openToolsFolder);
@@ -4171,6 +4863,7 @@ const Model = __require("model");
 const Backend = __require("backend");
 const Sections = __require("sections");
 const Parse = __require("parse");
+const ToolFile = __require("toolfile");
 const Version = __require("version");
 const UI = __require("ui");
 
@@ -4521,6 +5214,54 @@ async function load(noteId) {
     };
 }
 
+async function readRawContent(note) {
+    if (!note) {
+        return '';
+    }
+    try {
+        return String(await note.getContent() || '');
+    } catch (error) {
+        return '';
+    }
+}
+
+/**
+ * Read one tool into the portable file the palette writes to disk.
+ * Raw note contents are kept so an export/import round trip loses nothing.
+ */
+async function exportTool(noteId) {
+    const entry = entriesById.get(noteId);
+    if (!entry) {
+        throw new Error('Tool not found. Reopen the palette.');
+    }
+    const note = entry.note;
+    const labels = entry.labels;
+
+    const installNote = await childWithLabel(note, Model.LABELS.install) || await childByTitle(note, 'Install');
+    const usageNote = await childWithLabel(note, Model.LABELS.usage) || await childByTitle(note, 'Usage');
+    const helpNote = await childWithLabel(note, Model.LABELS.helpNote) || await childByTitle(note, 'Help');
+
+    const definition = Model.buildTool({
+        noteId: note.noteId,
+        title: note.title,
+        category: entry.category,
+        labels: labels,
+        optionNotes: entry.optionSnapshots
+    });
+
+    return ToolFile.buildToolFile({
+        title: note.title,
+        category: entry.category,
+        base: definition.base,
+        description: definition.description,
+        content: await readRawContent(note),
+        install: await readRawContent(installNote),
+        usage: await readRawContent(usageNote),
+        help: await readRawContent(helpNote),
+        options: definition.options
+    });
+}
+
 async function copyText(text) {
     try {
         if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
@@ -4717,6 +5458,20 @@ function controller() {
 
         addOption(toolId, option) {
             return backendAction('addOption', { toolId: toolId, option: option });
+        },
+
+        exportTool(noteId) {
+            return exportTool(noteId);
+        },
+
+        async importTool(tool) {
+            const created = await backendAction('importTool', {
+                toolsRootId: toolsRootId(),
+                tool: tool,
+                newToolNotes: Model.newToolNotes()
+            });
+            await refresh();
+            return created;
         },
 
         importOptions(toolId, options) {

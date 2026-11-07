@@ -9,7 +9,7 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 
 // Dependency order does not matter: modules are registered first and executed
 // lazily on first require.
-const MODULES = ['render', 'parse', 'sections', 'model', 'version', 'backend', 'ui', 'runtime'];
+const MODULES = ['render', 'parse', 'sections', 'toolfile', 'prompt', 'model', 'version', 'backend', 'ui', 'runtime'];
 const REQUIRE_RE = /require\(\s*['"]\.\/([\w-]+)(?:\.js)?['"]\s*\)/g;
 
 function inlineRequires(code) {
