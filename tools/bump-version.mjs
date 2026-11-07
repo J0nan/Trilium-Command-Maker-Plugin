@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 export function isValidVersion(version) {
-    return /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(String(version == null ? '' : version));
+    return /^\d+\.\d+$/.test(String(version == null ? '' : version));
 }
 
 function numericParts(version) {
@@ -36,7 +36,7 @@ export function compareVersions(left, right) {
 export function setVersion(version, rootDir) {
     const base = rootDir || root;
     if (!isValidVersion(version)) {
-        throw new Error('Invalid version "' + version + '". Use x.y.z or x.y.z-prerelease.');
+        throw new Error('Invalid version "' + version + '". Use x.y (for example 0.2).');
     }
 
     const pkgPath = path.join(base, 'package.json');

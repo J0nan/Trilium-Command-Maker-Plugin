@@ -10,7 +10,7 @@ Built for TriliumNext ≥ 0.101 (launcher API, frontend scripts).
 Ctrl+Shift+Space  →  search a tool  →  read help  →  fill options  →  command  →  copy / insert
 ```
 
-Current version: **1.0.0**. The palette footer shows `v1.0.0`; click it to check
+Current version: **0.1**. The palette footer shows `v0.1`; click it to check
 GitHub's latest release (falling back to the highest tag, then `package.json` on
 `main`). The settings note stores `#cmVersion`, and the installer log prints the
 version. A network/CORS failure is reported in the status and the **Repository**
@@ -213,17 +213,17 @@ type.
 ## Releasing
 
 Releases are created manually from GitHub Actions: **Actions → Release → Run
-workflow**, enter the new semantic version (for example `1.1.0`), and choose
+workflow**, enter the new version (major.minor, for example `0.2`), and choose
 whether it is a prerelease. The workflow:
 
 1. updates `package.json` and `src/version.js` (the build refuses to run if they disagree),
 2. runs `npm run check` and rebuilds `dist/`,
-3. commits `chore(release): vX.Y.Z`, tags `vX.Y.Z`, and pushes,
+3. commits `chore(release): vX.Y`, tags `vX.Y`, and pushes,
 4. creates the GitHub release with `dist/command-maker.js` and `dist/install.js`.
 
 The workflow only runs from `main`. If `main` is protected, allow GitHub Actions
 to bypass the protection; otherwise the tag push is rejected. Locally, the same
-bump is `node tools/bump-version.mjs 1.1.0` followed by `npm run check`.
+bump is `node tools/bump-version.mjs 0.2` followed by `npm run check`.
 
 ## Development
 

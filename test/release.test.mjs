@@ -24,30 +24,32 @@ test('the release workflow is manual and publishes both artifacts', () => {
 });
 
 test('release versions are validated and ordered', () => {
-    assert.equal(isValidVersion('1.2.3'), true);
-    assert.equal(isValidVersion('1.2.3-rc.1'), true);
-    assert.equal(isValidVersion('v1.2.3'), false);
-    assert.equal(isValidVersion('1.2'), false);
+    assert.equal(isValidVersion('0.1'), true);
+    assert.equal(isValidVersion('0.2'), true);
+    assert.equal(isValidVersion('1.10'), true);
+    assert.equal(isValidVersion('1.2.3'), false, 'only two components are allowed');
+    assert.equal(isValidVersion('v1.2'), false);
+    assert.equal(isValidVersion('1'), false);
     assert.equal(isValidVersion(''), false);
-    assert.ok(compareVersions('1.10.0', '1.9.0') > 0);
-    assert.ok(compareVersions('1.0.1', '1.0.0') > 0);
-    assert.equal(compareVersions('1.0.0', '1.0.0'), 0);
+    assert.ok(compareVersions('0.10', '0.9') > 0);
+    assert.ok(compareVersions('0.2', '0.1') > 0);
+    assert.equal(compareVersions('0.1', '0.1'), 0);
 });
 
 test('setVersion updates package.json and src/version.js together', () => {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-bump-'));
     try {
         fs.mkdirSync(path.join(temp, 'src'), { recursive: true });
-        fs.writeFileSync(path.join(temp, 'package.json'), JSON.stringify({ name: 'demo', version: '1.0.0' }, null, 2) + '\n');
-        fs.writeFileSync(path.join(temp, 'src', 'version.js'), "'use strict';\nconst VERSION = '1.0.0';\nmodule.exports = { VERSION };\n");
+        fs.writeFileSync(path.join(temp, 'package.json'), JSON.stringify({ name: 'demo', version: '0.1' }, null, 2) + '\n');
+        fs.writeFileSync(path.join(temp, 'src', 'version.js'), "'use strict';\nconst VERSION = '0.1';\nmodule.exports = { VERSION };\n");
 
-        assert.equal(setVersion('1.1.0', temp), '1.1.0');
-        assert.equal(JSON.parse(fs.readFileSync(path.join(temp, 'package.json'), 'utf8')).version, '1.1.0');
-        assert.match(fs.readFileSync(path.join(temp, 'src', 'version.js'), 'utf8'), /const VERSION = '1\.1\.0';/);
+        assert.equal(setVersion('0.2', temp), '0.2');
+        assert.equal(JSON.parse(fs.readFileSync(path.join(temp, 'package.json'), 'utf8')).version, '0.2');
+        assert.match(fs.readFileSync(path.join(temp, 'src', 'version.js'), 'utf8'), /const VERSION = '0\.2';/);
 
-        assert.throws(() => setVersion('1.1.0', temp), /already set/);
-        assert.throws(() => setVersion('1.0.9', temp), /must be greater/);
-        assert.throws(() => setVersion('v1.2.0', temp), /Invalid version/);
+        assert.throws(() => setVersion('0.2', temp), /already set/);
+        assert.throws(() => setVersion('0.1', temp), /must be greater/);
+        assert.throws(() => setVersion('0.2.0', temp), /Invalid version/);
     } finally {
         fs.rmSync(temp, { recursive: true, force: true });
     }

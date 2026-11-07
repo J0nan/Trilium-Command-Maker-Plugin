@@ -11,6 +11,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 
 test('src/version.js and package.json agree', () => {
+    assert.match(pkg.version, /^\d+\.\d+$/, 'versions use major.minor only');
     assert.equal(Version.VERSION, pkg.version);
 });
 

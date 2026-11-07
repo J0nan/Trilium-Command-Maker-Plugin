@@ -1,8 +1,8 @@
 name: Release
 
 # Manual release: Actions -> Release -> Run workflow.
-# Enter the new semantic version; the job bumps package.json and src/version.js,
-# rebuilds dist/, commits, tags, and creates the GitHub release.
+# Enter the new version (major.minor); the job bumps
+# package.json and src/version.js, rebuilds dist/, commits, tags, and creates the GitHub release.
 #
 # If `main` is protected, allow GitHub Actions to bypass the protection (or run
 # the workflow on a branch you can push to and merge it before releasing).
@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Semantic version to release (e.g. 1.1.0)'
+        description: 'Version to release (major.minor, e.g. 0.2)'
         required: true
         type: string
       prerelease:
