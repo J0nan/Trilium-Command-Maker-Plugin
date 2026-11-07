@@ -679,6 +679,11 @@ test('the version button checks the latest published tag', async () => {
     }, 'update status');
 
     assert.equal(fetchCalls[0], Version.LATEST_TAG_API);
+    assert.equal(
+        find(dom.body, (node) => classed(node, 'cm-version')).textContent,
+        'v' + Version.VERSION + ' → v9.9.9',
+        'the footer shows the installed and latest versions'
+    );
     assert.deepEqual(env.calls.errors, []);
 });
 

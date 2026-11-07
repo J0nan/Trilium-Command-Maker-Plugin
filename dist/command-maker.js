@@ -2862,6 +2862,11 @@ function openPalette(controller) {
                 setStatus('v' + info.current + ' — ' + info.error + ' See the Repository link.', true);
                 return;
             }
+            if (info.latest && info.latest !== info.current) {
+                versionButton.textContent = 'v' + info.current + ' → v' + info.latest;
+                versionButton.title = 'Installed v' + info.current + '; latest v' + info.latest + '. Click to check again.';
+            }
+
             if (info.latest && info.latest === info.current) {
                 setStatus('v' + info.current + ' is the latest version.');
             } else if (info.outdated) {
