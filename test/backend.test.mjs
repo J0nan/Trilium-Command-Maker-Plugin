@@ -130,7 +130,8 @@ function seedApi() {
     const result = boot(api, beRun, {
         seed: true,
         seedTools: Model.seedTools(),
-        newToolNotes: Model.newToolNotes()
+        newToolNotes: Model.newToolNotes(),
+        icons: Model.ICONS
     });
     return { api, beRun, result };
 }
@@ -179,20 +180,24 @@ test('beRun survives serialisation and bootstrap seeds the model tools', () => {
         assert.ok(install.hasLabel(labels.install));
         assert.equal(install.type, 'text');
         assert.equal(install.getContent(), seed.install);
+        assert.equal(install.getLabelValue(labels.icon), Model.ICONS.install);
 
         const usage = findByTitle(tool, 'Usage');
         assert.ok(usage.hasLabel(labels.usage));
         assert.equal(usage.type, 'text');
         assert.equal(usage.getContent(), seed.usage);
+        assert.equal(usage.getLabelValue(labels.icon), Model.ICONS.usage);
 
         const help = findByTitle(tool, 'Help');
         assert.ok(help.hasLabel(labels.helpNote));
         assert.equal(help.type, 'code');
         assert.equal(help.mime, 'text/x-sh');
         assert.equal(help.getContent(), seed.help);
+        assert.equal(help.getLabelValue(labels.icon), Model.ICONS.help);
 
         const folder = findByTitle(tool, 'Options');
         assert.ok(folder.hasLabel(labels.options));
+        assert.equal(folder.getLabelValue(labels.icon), Model.ICONS.options);
         const presets = findByTitle(folder, 'Presets');
         assert.ok(presets.hasLabel(labels.presets));
         assert.equal(presets.type, 'code');
@@ -223,6 +228,29 @@ test('beRun survives serialisation and bootstrap seeds the model tools', () => {
     assert.equal(again.seeded, false, 'seeding only happens once');
     assert.equal(api.getNotesWithLabel(labels.tool).length, seeds.length);
     assert.equal(api.getNotesWithLabel(labels.category).length, seeds.length);
+});
+
+test('bootstrap backfills icons on existing tools without overwriting a custom icon', () => {
+    const { api, beRun, result } = seedApi();
+    const toolsRoot = api.getNote(result.toolsRootId);
+    const ffmpeg = findByTitle(findByTitle(toolsRoot, 'Media'), 'ffmpeg');
+    const install = findByTitle(ffmpeg, 'Install');
+    const usage = findByTitle(ffmpeg, 'Usage');
+    const help = findByTitle(ffmpeg, 'Help');
+    const options = findByTitle(ffmpeg, 'Options');
+
+    install.removeLabel(labels.icon);
+    usage.removeLabel(labels.icon);
+    help.removeLabel(labels.icon);
+    options.removeLabel(labels.icon);
+    usage.setLabel(labels.icon, 'bx bx-star');
+
+    beRun({ action: 'bootstrap', labels, icons: Model.ICONS });
+
+    assert.equal(install.getLabelValue(labels.icon), Model.ICONS.install);
+    assert.equal(usage.getLabelValue(labels.icon), 'bx bx-star', 'a user icon is preserved');
+    assert.equal(help.getLabelValue(labels.icon), Model.ICONS.help);
+    assert.equal(options.getLabelValue(labels.icon), Model.ICONS.options);
 });
 
 test('relocating the Tools folder never seeds the chosen note', () => {
@@ -336,6 +364,10 @@ test('createTool returns ids and writes the exact H2 content and standard childr
     assert.equal(findByTitle(tool, 'Install').getContent(), 'winget install GnuWin32.Tar');
     assert.equal(findByTitle(tool, 'Help').mime, 'text/x-sh');
     assert.equal(findByTitle(tool, 'Help').getContent(), 'Usage: tar [OPTIONS] [FILE]...');
+    assert.equal(findByTitle(tool, 'Install').getLabelValue(labels.icon), Model.ICONS.install);
+    assert.equal(findByTitle(tool, 'Usage').getLabelValue(labels.icon), Model.ICONS.usage);
+    assert.equal(findByTitle(tool, 'Help').getLabelValue(labels.icon), Model.ICONS.help);
+    assert.equal(findByTitle(tool, 'Options').getLabelValue(labels.icon), Model.ICONS.options);
 
     const folder = api.getNote(created.optionsFolderId);
     assert.ok(folder.hasLabel(labels.options));
@@ -361,6 +393,7 @@ test('createTool returns ids and writes the exact H2 content and standard childr
     const zip = api.getNote(minimal.noteId);
     assert.equal(findByTitle(zip, 'Install').getContent(), Model.newToolNotes().install);
     assert.equal(findByTitle(zip, 'Help').getContent(), '');
+    assert.equal(findByTitle(zip, 'Install').getLabelValue(labels.icon), Model.ICONS.install);
     assert.ok(findByTitle(toolsRoot, 'Uncategorized').hasLabel(labels.category));
     assert.equal(zip.hasLabel(labels.base), false, 'no base label when base is absent');
     assert.equal(zip.hasLabel(labels.description), false, 'no description label when absent');

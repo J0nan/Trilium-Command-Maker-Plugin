@@ -117,6 +117,10 @@ get in the way when you read the tool manually.
 > A `Usage` note stored as a **code** note also works: every non-empty line is
 > treated as one example.
 
+The standard children get their own icons (`#iconClass`): download for `Install`,
+terminal for `Usage`, help for `Help`, and a cog for `Options`. You can change any
+icon; the plugin only fills in one that is missing.
+
 The palette reads all three: examples can be used or copied, the help output and
 install steps are shown in collapsible sections, and an example can be loaded
 straight into the command preview.

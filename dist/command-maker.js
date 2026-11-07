@@ -1460,6 +1460,8 @@ const LABELS = {
     seeded: 'cmSeeded',
     managed: 'cmManaged',
     migrated: 'cmMigrated',
+    // note presentation
+    icon: 'iconClass',
     // legacy command/template labels, only used by the legacy importer
     legacyCommand: 'cmCommand',
     legacyTemplate: 'cmTemplate',
@@ -1473,6 +1475,14 @@ const LABEL_NAMES = Object.keys(LABELS).map(function (key) {
 
 const TYPES = ['string', 'path', 'number', 'boolean', 'enum'];
 const QUOTES = ['none', 'single', 'double'];
+
+/** Boxicons classes for the standard child notes. */
+const ICONS = {
+    install: 'bx bx-download',
+    usage: 'bx bx-terminal',
+    help: 'bx bx-help-circle',
+    options: 'bx bx-cog'
+};
 
 function readString(labels, name, fallback) {
     const value = labels ? labels[name] : undefined;
@@ -1869,6 +1879,7 @@ module.exports = {
     LABEL_NAMES,
     TYPES,
     QUOTES,
+    ICONS,
     EXTRA_KEY: Render.EXTRA_KEY,
     deriveBase,
     optionFromNote,
@@ -1902,6 +1913,12 @@ __def("backend", function (module, exports, __require) {
 function beRun(params) {
     const options = params || {};
     const labels = options.labels || {};
+    const icons = options.icons || {
+        install: 'bx bx-download',
+        usage: 'bx bx-terminal',
+        help: 'bx bx-help-circle',
+        options: 'bx bx-cog'
+    };
 
     function nonEmpty(value) {
         return value !== undefined && value !== null && String(value).trim() !== '';
@@ -1947,6 +1964,17 @@ function beRun(params) {
         return null;
     }
 
+    /** Set a note icon only when the note has none, so a user's choice wins. */
+    function ensureIcon(note, className) {
+        if (!note || !labels.icon || !nonEmpty(className)) {
+            return;
+        }
+        if (hasLabel(note, labels.icon)) {
+            return;
+        }
+        note.setLabel(labels.icon, String(className));
+    }
+
     function findCategory(toolsRoot, name) {
         const children = toolsRoot.getChildNotes();
         for (let index = 0; index < children.length; index += 1) {
@@ -1984,6 +2012,7 @@ function beRun(params) {
             content: ''
         }).note;
         note.setLabel(labels.options, '');
+        ensureIcon(note, icons.options);
         return note;
     }
 
@@ -2091,6 +2120,10 @@ function beRun(params) {
             content: childContent(safeSpec.help, safeFallbacks.help)
         }).note;
         help.setLabel(labels.helpNote, '');
+
+        ensureIcon(install, icons.install);
+        ensureIcon(usage, icons.usage);
+        ensureIcon(help, icons.help);
 
         const folder = ensureOptionsFolder(note);
         ensurePresetsNote(folder);
@@ -2234,6 +2267,21 @@ function beRun(params) {
         return api.getTodayNote().noteId;
     }
 
+    /** Give existing standard children their icons, preserving any user choice. */
+    function backfillIcons() {
+        if (!labels.icon) {
+            return;
+        }
+        const tools = api.getNotesWithLabel(labels.tool);
+        for (let index = 0; index < tools.length; index += 1) {
+            const tool = tools[index];
+            ensureIcon(findChildWithLabel(tool, labels.install), icons.install);
+            ensureIcon(findChildWithLabel(tool, labels.usage), icons.usage);
+            ensureIcon(findChildWithLabel(tool, labels.helpNote), icons.help);
+            ensureIcon(findChildWithLabel(tool, labels.options), icons.options);
+        }
+    }
+
     function bootstrap() {
         let root = api.getNoteWithLabel(labels.root);
         if (!root) {
@@ -2271,6 +2319,7 @@ function beRun(params) {
             seeded = true;
         }
 
+        backfillIcons();
         return { rootId: root.noteId, toolsRootId: toolsRoot.noteId, seeded: seeded };
     }
 
@@ -4097,6 +4146,7 @@ function ensureBootstrap() {
         apiRef.runOnBackend(Backend.beRun, [{
             action: 'bootstrap',
             labels: Model.LABELS,
+            icons: Model.ICONS,
             seed: true,
             seedTools: Model.seedTools(),
             newToolNotes: Model.newToolNotes()
@@ -4400,7 +4450,7 @@ function insertText(text) {
 
 function backendAction(action, extra) {
     const apiRef = getApi();
-    const params = Object.assign({ action: action, labels: Model.LABELS }, extra || {});
+    const params = Object.assign({ action: action, labels: Model.LABELS, icons: Model.ICONS }, extra || {});
     return apiRef.runOnBackend(Backend.beRun, [params]);
 }
 

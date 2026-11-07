@@ -102,6 +102,7 @@ function ensureBootstrap() {
         apiRef.runOnBackend(Backend.beRun, [{
             action: 'bootstrap',
             labels: Model.LABELS,
+            icons: Model.ICONS,
             seed: true,
             seedTools: Model.seedTools(),
             newToolNotes: Model.newToolNotes()
@@ -405,7 +406,7 @@ function insertText(text) {
 
 function backendAction(action, extra) {
     const apiRef = getApi();
-    const params = Object.assign({ action: action, labels: Model.LABELS }, extra || {});
+    const params = Object.assign({ action: action, labels: Model.LABELS, icons: Model.ICONS }, extra || {});
     return apiRef.runOnBackend(Backend.beRun, [params]);
 }
 

@@ -49,6 +49,8 @@ const LABELS = {
     seeded: 'cmSeeded',
     managed: 'cmManaged',
     migrated: 'cmMigrated',
+    // note presentation
+    icon: 'iconClass',
     // legacy command/template labels, only used by the legacy importer
     legacyCommand: 'cmCommand',
     legacyTemplate: 'cmTemplate',
@@ -62,6 +64,14 @@ const LABEL_NAMES = Object.keys(LABELS).map(function (key) {
 
 const TYPES = ['string', 'path', 'number', 'boolean', 'enum'];
 const QUOTES = ['none', 'single', 'double'];
+
+/** Boxicons classes for the standard child notes. */
+const ICONS = {
+    install: 'bx bx-download',
+    usage: 'bx bx-terminal',
+    help: 'bx bx-help-circle',
+    options: 'bx bx-cog'
+};
 
 function readString(labels, name, fallback) {
     const value = labels ? labels[name] : undefined;
@@ -458,6 +468,7 @@ module.exports = {
     LABEL_NAMES,
     TYPES,
     QUOTES,
+    ICONS,
     EXTRA_KEY: Render.EXTRA_KEY,
     deriveBase,
     optionFromNote,
