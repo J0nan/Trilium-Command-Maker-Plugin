@@ -452,8 +452,9 @@ function compareVersions(left, right) {
 }
 
 /**
- * Best-effort update check: the highest tag, else the package.json version on the
- * default branch. A private or unreachable repository becomes a readable error.
+ * Best-effort update check: the latest GitHub release, else the highest tag,
+ * else the package.json version on the default branch. A private or unreachable
+ * repository becomes a readable error.
  */
 async function checkLatestVersion() {
     const result = { current: Version.VERSION, latest: '', outdated: false, error: '' };
@@ -473,7 +474,19 @@ async function checkLatestVersion() {
     }
 
     try {
-        const tags = await read(Version.LATEST_TAG_API, 'json');
+        const release = await read(Version.LATEST_RELEASE_API, 'json');
+        const tag = release && (release.tag_name || release.name);
+        if (tag) {
+            result.latest = String(tag).replace(/^v/i, '');
+            result.outdated = compareVersions(result.latest, result.current) > 0;
+            return result;
+        }
+    } catch (error) {
+        // no release yet; try tags
+    }
+
+    try {
+        const tags = await read(Version.LATEST_TAGS_API, 'json');
         if (Array.isArray(tags) && tags.length) {
             const names = tags
                 .map(function (tag) {

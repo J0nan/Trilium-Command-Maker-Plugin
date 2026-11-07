@@ -652,13 +652,24 @@ test('importing options preserves the values already entered', async () => {
     assert.deepEqual(env.calls.errors, []);
 });
 
-test('the version button checks the latest published tag', async () => {
+test('the version button checks the latest GitHub release', async () => {
     const dom = createDom();
     const fixture = buildFixture();
     const env = makeApi(fixture);
     const fetchCalls = [];
     const fakeFetch = async function (url) {
         fetchCalls.push(url);
+        if (url.indexOf('/releases/latest') !== -1) {
+            return {
+                ok: true,
+                async json() {
+                    return { tag_name: 'v9.9.9' };
+                },
+                async text() {
+                    return '';
+                }
+            };
+        }
         return {
             ok: true,
             async json() {
@@ -678,7 +689,7 @@ test('the version button checks the latest published tag', async () => {
         return status && /latest is v9\.9\.9/.test(status.textContent);
     }, 'update status');
 
-    assert.equal(fetchCalls[0], Version.LATEST_TAG_API);
+    assert.equal(fetchCalls[0], Version.LATEST_RELEASE_API);
     assert.equal(
         find(dom.body, (node) => classed(node, 'cm-version')).textContent,
         'v' + Version.VERSION + ' → v9.9.9',

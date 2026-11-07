@@ -15,10 +15,11 @@ test('src/version.js and package.json agree', () => {
 });
 
 test('version metadata points at the repository', () => {
-    assert.match(Version.REPOSITORY, /^https:\/\//);
-    assert.ok(pkg.repository && pkg.repository.url.indexOf('Trilium-command-maker') !== -1);
-    assert.ok(Version.LATEST_TAG_API.indexOf(Version.REPOSITORY) === 0);
-    assert.ok(Version.LATEST_RAW.indexOf(Version.REPOSITORY) === 0);
+    assert.match(Version.REPOSITORY, /^https:\/\/github\.com\//);
+    assert.ok(pkg.repository && pkg.repository.url.indexOf('Trilium-Command-Maker-Plugin') !== -1);
+    assert.ok(Version.LATEST_RELEASE_API.indexOf('https://api.github.com/repos/') === 0);
+    assert.ok(Version.LATEST_TAGS_API.indexOf('https://api.github.com/repos/') === 0);
+    assert.ok(Version.LATEST_RAW.indexOf('https://raw.githubusercontent.com/') === 0);
 });
 
 test('the bundle and installer carry the current version', () => {

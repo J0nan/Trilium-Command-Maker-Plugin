@@ -11,10 +11,10 @@ Ctrl+Shift+Space  →  search a tool  →  read help  →  fill options  →  co
 ```
 
 Current version: **1.0.0**. The palette footer shows `v1.0.0`; click it to check
-the repository's latest tag (falling back to `package.json` on `main`). The
-settings note stores `#cmVersion`, and the installer log prints the version. If
-the repository is private or the request is blocked, the palette says so and the
-**Repository** link opens the source.
+GitHub's latest release (falling back to the highest tag, then `package.json` on
+`main`). The settings note stores `#cmVersion`, and the installer log prints the
+version. A network/CORS failure is reported in the status and the **Repository**
+link opens the source.
 
 ## Install
 
@@ -209,6 +209,21 @@ type.
   with it while outer helpers would not.
 - The frontend note MIME is `application/javascript;env=frontend`.
 - `dist/` is committed because it is the artifact users import.
+
+## Releasing
+
+Releases are created manually from GitHub Actions: **Actions → Release → Run
+workflow**, enter the new semantic version (for example `1.1.0`), and choose
+whether it is a prerelease. The workflow:
+
+1. updates `package.json` and `src/version.js` (the build refuses to run if they disagree),
+2. runs `npm run check` and rebuilds `dist/`,
+3. commits `chore(release): vX.Y.Z`, tags `vX.Y.Z`, and pushes,
+4. creates the GitHub release with `dist/command-maker.js` and `dist/install.js`.
+
+The workflow only runs from `main`. If `main` is protected, allow GitHub Actions
+to bypass the protection; otherwise the tag push is rejected. Locally, the same
+bump is `node tools/bump-version.mjs 1.1.0` followed by `npm run check`.
 
 ## Development
 

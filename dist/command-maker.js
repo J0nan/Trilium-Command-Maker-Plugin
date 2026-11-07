@@ -2006,13 +2006,15 @@ __def("version", function (module, exports, __require) {
  */
 const VERSION = '1.0.0';
 const REPOSITORY = 'https://github.com/J0nan/Trilium-Command-Maker-Plugin';
-const LATEST_TAG_API = REPOSITORY + '/api/v1/repos/J0nan/Trilium-command-maker/tags?limit=50';
-const LATEST_RAW = REPOSITORY + '/raw/branch/main/package.json';
+const LATEST_RELEASE_API = 'https://api.github.com/repos/J0nan/Trilium-Command-Maker-Plugin/releases/latest';
+const LATEST_TAGS_API = 'https://api.github.com/repos/J0nan/Trilium-Command-Maker-Plugin/tags?per_page=50';
+const LATEST_RAW = 'https://raw.githubusercontent.com/J0nan/Trilium-Command-Maker-Plugin/main/package.json';
 
 module.exports = {
     VERSION,
     REPOSITORY,
-    LATEST_TAG_API,
+    LATEST_RELEASE_API,
+    LATEST_TAGS_API,
     LATEST_RAW
 };
 });
@@ -4577,8 +4579,9 @@ function compareVersions(left, right) {
 }
 
 /**
- * Best-effort update check: the highest tag, else the package.json version on the
- * default branch. A private or unreachable repository becomes a readable error.
+ * Best-effort update check: the latest GitHub release, else the highest tag,
+ * else the package.json version on the default branch. A private or unreachable
+ * repository becomes a readable error.
  */
 async function checkLatestVersion() {
     const result = { current: Version.VERSION, latest: '', outdated: false, error: '' };
@@ -4598,7 +4601,19 @@ async function checkLatestVersion() {
     }
 
     try {
-        const tags = await read(Version.LATEST_TAG_API, 'json');
+        const release = await read(Version.LATEST_RELEASE_API, 'json');
+        const tag = release && (release.tag_name || release.name);
+        if (tag) {
+            result.latest = String(tag).replace(/^v/i, '');
+            result.outdated = compareVersions(result.latest, result.current) > 0;
+            return result;
+        }
+    } catch (error) {
+        // no release yet; try tags
+    }
+
+    try {
+        const tags = await read(Version.LATEST_TAGS_API, 'json');
         if (Array.isArray(tags) && tags.length) {
             const names = tags
                 .map(function (tag) {
