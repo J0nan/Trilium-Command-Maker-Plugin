@@ -206,7 +206,7 @@ function buildFixture() {
     const input = note({
         noteId: 'o1',
         title: 'Input file',
-        labels: { cmOption: '', cmFlag: '-i', cmType: 'path', cmDoc: 'Input file to read.', cmDefault: 'in.mp4', cmOrder: '10' }
+        labels: { cmOption: '', cmFlag: '-i', cmType: 'path', cmDoc: 'Input file to read.', cmDefault: 'in.mp4', cmOrder: '10', cmRequired: 'true' }
     });
     const codec = note({
         noteId: 'o2',
@@ -401,6 +401,12 @@ test('palette lists tools, shows option help, examples, help, copy/insert and pr
     assert.ok(helpTexts.indexOf('Input file to read.') !== -1, 'option help string is rendered');
     assert.ok(helpTexts.indexOf('Video encoder.') !== -1, 'enum help string is rendered');
 
+    const requiredBadge = find(dom.body, (node) => classed(node, 'cm-required-badge'));
+    assert.ok(requiredBadge, 'a required option shows a badge');
+    assert.equal(requiredBadge.textContent, 'Required');
+    assert.ok(find(dom.body, (node) => classed(node, 'cm-option-required')), 'the required row is marked');
+    assert.match(find(dom.body, (node) => classed(node, 'cm-required-hint')).textContent, /1 required/);
+
     const example = find(dom.body, (node) => classed(node, 'cm-example-text'));
     assert.equal(example.textContent, 'ffmpeg -i in.mp4 out.mp4');
 
@@ -481,13 +487,20 @@ test('import dialog parses pasted help output and imports the selected options',
     findAll(modal, (node) => node.tagName === 'BUTTON' && node.textContent === 'Parse')[0].click();
     await waitFor(() => findAll(modal, (node) => classed(node, 'cm-import-row')).length === 2, 'parsed options');
 
+    const importCheckboxes = findAll(modal, (node) => node.tagName === 'INPUT' && node.type === 'checkbox');
+    assert.equal(importCheckboxes.length, 4, 'each row has a select and a required checkbox');
+    importCheckboxes[1].checked = true;
+    importCheckboxes[1].dispatch('change');
+
     findAll(modal, (node) => node.tagName === 'BUTTON' && node.textContent === 'Import selected')[0].click();
     await waitFor(() => env.calls.backend.filter((call) => call.action === 'importOptions').length > 0, 'import action');
     const call = env.calls.backend.filter((entry) => entry.action === 'importOptions')[0];
     assert.equal(call.toolId, 't1');
     assert.equal(call.options.length, 2);
     assert.equal(call.options[0].flag, '--all');
+    assert.equal(call.options[0].required, true, 'the required checkbox is imported');
     assert.equal(call.options[1].flag, '--tag');
+    assert.equal(call.options[1].required, false);
     assert.deepEqual(env.calls.errors, []);
 });
 

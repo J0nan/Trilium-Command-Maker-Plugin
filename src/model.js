@@ -468,7 +468,7 @@ function seedTools() {
                 '  -vf FILTERGRAPH   apply a video filter'
             ].join('\n'),
             options: [
-                { label: 'Input file', flag: '-i', type: 'path', doc: 'Input file the command reads from.', order: 10 },
+                { label: 'Input file', flag: '-i', type: 'path', doc: 'Input file the command reads from.', order: 10, required: true },
                 { label: 'Video codec', flag: '-c:v', type: 'enum', values: ['libx264', 'libx265', 'libvpx-vp9'], defaultValue: 'libx264', doc: 'Video encoder to use.', order: 20 },
                 { label: 'CRF quality', flag: '-crf', type: 'number', defaultValue: '23', doc: 'Constant Rate Factor; lower values keep more quality.', order: 30 },
                 { label: 'Audio codec', flag: '-c:a', type: 'enum', values: ['aac', 'libopus', 'copy'], doc: 'Audio encoder to use.', order: 40 },
@@ -511,7 +511,7 @@ function seedTools() {
                 '    --author <author>        override the author'
             ].join('\n'),
             options: [
-                { label: 'Message', flag: '-m', type: 'string', doc: 'Commit message. Repeat the flag to add paragraphs.', order: 10 },
+                { label: 'Message', flag: '-m', type: 'string', doc: 'Commit message. Repeat the flag to add paragraphs.', order: 10, required: true },
                 { label: 'All changes', flag: '-a', type: 'boolean', doc: 'Stage all tracked changes before committing.', order: 20 },
                 { label: 'Amend last commit', flag: '--amend', type: 'boolean', doc: 'Replace the previous commit instead of creating a new one.', order: 30 },
                 { label: 'Allow empty', flag: '--allow-empty', type: 'boolean', doc: 'Record a commit with no changes.', order: 40 },

@@ -221,6 +221,12 @@ test('seedTools provides three documented examples with help strings', () => {
             assert.ok(option.doc, tool.title + ' option has a help string');
         });
     });
+    const required = tools.reduce(function (total, tool) {
+        return total + tool.options.filter(function (option) {
+            return option.required;
+        }).length;
+    }, 0);
+    assert.ok(required >= 2, 'the seeded tools demonstrate required options');
 });
 
 function exampleDefinition() {

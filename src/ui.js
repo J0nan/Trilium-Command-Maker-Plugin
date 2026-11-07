@@ -58,6 +58,9 @@ const CSS = [
     '.cm-base-label{flex:0 0 110px;opacity:.75;}',
     '.cm-options{display:flex;flex-direction:column;gap:4px;}',
     '.cm-option{display:flex;align-items:flex-start;gap:12px;padding:6px 8px;border-radius:6px;}',
+    '.cm-option.cm-option-required{box-shadow:inset 3px 0 0 #b91c1c;}',
+    '.cm-required-badge{font-size:10px;text-transform:uppercase;letter-spacing:.04em;padding:1px 6px;border-radius:999px;background:#b91c1c;color:#fff;white-space:nowrap;}',
+    '.cm-required-hint{color:#b91c1c;font-weight:600;text-transform:none;letter-spacing:0;margin-left:6px;}',
     '.cm-option:hover{background:var(--hover-item-background-color,#00000010);}',
     '.cm-opt-main{flex:1;min-width:0;}',
     '.cm-opt-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}',
@@ -107,6 +110,8 @@ const CSS = [
     '.cm-import-list{display:flex;flex-direction:column;gap:2px;max-height:36vh;overflow-y:auto;border:1px solid var(--main-border-color,#ddd);border-radius:8px;padding:6px;}',
     '.cm-import-row{display:flex;gap:8px;align-items:flex-start;padding:4px 6px;border-radius:6px;}',
     '.cm-import-row:hover{background:var(--hover-item-background-color,#00000010);}',
+    '.cm-import-select{display:flex;align-items:center;}',
+    '.cm-import-required{display:flex;align-items:center;gap:4px;font-size:11px;opacity:.8;white-space:nowrap;}',
     '.cm-import-main{flex:1;min-width:0;}',
     '.cm-import-flag{font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;}',
     '.cm-import-help{font-size:12px;opacity:.7;}',
@@ -505,10 +510,15 @@ function openPalette(controller) {
     }
 
     function optionRow(option, inferred) {
-        const row = el('div', 'cm-option' + (inferred ? ' cm-option-inferred' : ''));
+        const row = el('div', 'cm-option' + (inferred ? ' cm-option-inferred' : '') + (option.required ? ' cm-option-required' : ''));
         const main = el('div', 'cm-opt-main');
         const headRow = el('div', 'cm-opt-head');
-        headRow.appendChild(el('span', 'cm-opt-title', option.title + (option.required ? ' *' : '')));
+        headRow.appendChild(el('span', 'cm-opt-title', option.title));
+        if (option.required) {
+            const badge = el('span', 'cm-required-badge', 'Required');
+            badge.title = 'This option must have a value.';
+            headRow.appendChild(badge);
+        }
         if (option.flag) {
             headRow.appendChild(el('code', 'cm-opt-flag', option.flag));
         }
@@ -811,6 +821,12 @@ function openPalette(controller) {
         detail.appendChild(baseRow());
 
         detail.appendChild(el('div', 'cm-section', 'Options (' + definition.options.length + ')'));
+        const requiredCount = definition.options.filter(function (option) {
+            return option.required;
+        }).length;
+        if (requiredCount > 0) {
+            detail.appendChild(el('div', 'cm-required-hint', requiredCount + ' required — marked with a red badge.'));
+        }
         const filter = document.createElement('input');
         filter.type = 'search';
         filter.className = 'cm-control cm-filter';
@@ -1157,7 +1173,8 @@ function openPalette(controller) {
                 return;
             }
             options.forEach(function (option, index) {
-                const row = el('label', 'cm-import-row');
+                const row = el('div', 'cm-import-row');
+                const selectLabel = el('label', 'cm-import-select');
                 const checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
                 checkbox.checked = true;
@@ -1167,7 +1184,8 @@ function openPalette(controller) {
                         return entry.checked;
                     });
                 });
-                row.appendChild(checkbox);
+                selectLabel.appendChild(checkbox);
+                row.appendChild(selectLabel);
                 const main = el('div', 'cm-import-main');
                 const flag = el('div', 'cm-import-flag', option.flag + (option.type ? '  (' + option.type + ')' : ''));
                 main.appendChild(flag);
@@ -1175,8 +1193,18 @@ function openPalette(controller) {
                     main.appendChild(el('div', 'cm-import-help', option.help));
                 }
                 row.appendChild(main);
+                const requiredLabel = el('label', 'cm-import-required');
+                const requiredBox = document.createElement('input');
+                requiredBox.type = 'checkbox';
+                requiredBox.checked = Boolean(option.required);
+                requiredBox.addEventListener('change', function () {
+                    state.importRows[index].required = requiredBox.checked;
+                });
+                requiredLabel.appendChild(requiredBox);
+                requiredLabel.appendChild(el('span', '', 'Required'));
+                row.appendChild(requiredLabel);
                 previewList.appendChild(row);
-                state.importRows.push({ option: option, checked: true });
+                state.importRows.push({ option: option, checked: true, required: Boolean(option.required) });
             });
             importSelected.disabled = false;
         }
@@ -1201,7 +1229,9 @@ function openPalette(controller) {
                 .then(function () {
                     const selected = state.importRows
                         .filter(function (entry) { return entry.checked; })
-                        .map(function (entry) { return entry.option; });
+                        .map(function (entry) {
+                            return Object.assign({}, entry.option, { required: entry.required });
+                        });
                     if (!selected.length) {
                         throw new Error('Select at least one option.');
                     }
@@ -1349,6 +1379,7 @@ function openPalette(controller) {
         bodyNode.appendChild(field('Values', valuesInput));
         bodyNode.appendChild(field('Order', orderInput));
         bodyNode.appendChild(requiredRow);
+        bodyNode.appendChild(el('div', 'cm-note', 'Required options show a red badge in the palette and warn until they have a value.'));
 
         const actionsNode = el('div', 'cm-inline');
         actionsNode.appendChild(add);
