@@ -316,7 +316,9 @@ async function load(noteId) {
     const optionsNote = await childWithLabel(note, Model.LABELS.options);
     const presetsNote = optionsNote ? await childWithLabel(optionsNote, Model.LABELS.presets) : null;
 
-    const installText = await readNoteText(installNote);
+    const installHtml = await readRawContent(installNote);
+    const installIsCode = Boolean(installNote && installNote.type === 'code');
+    const installText = installIsCode ? installHtml : Parse.stripHtml(installHtml);
     const usageHtml = usageNote ? await usageNote.getContent() : '';
     const helpText = await readNoteText(helpNote);
     const usageExamples = usageNote && usageNote.type === 'code'
@@ -365,6 +367,8 @@ async function load(noteId) {
         usageExamples: usageExamples,
         helpText: helpText,
         installText: installText,
+        installHtml: installHtml,
+        installIsCode: installIsCode,
         optionsFolderId: optionsNote ? optionsNote.noteId : null,
         presetsNoteId: presetsNote ? presetsNote.noteId : null,
         toolNotePath: toolNotePath

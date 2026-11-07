@@ -1238,6 +1238,22 @@ const USEFUL = 'useful links';
 
 const MAX_EXAMPLES = 50;
 
+/** Tags that survive install-note rendering; everything else loses its markup. */
+const ALLOWED_TAGS = {
+    p: true, br: true, div: true, span: true,
+    strong: true, b: true, em: true, i: true, u: true, s: true, strike: true, del: true,
+    code: true, pre: true,
+    ul: true, ol: true, li: true,
+    h1: true, h2: true, h3: true, h4: true, h5: true, h6: true,
+    a: true, blockquote: true, hr: true,
+    table: true, thead: true, tbody: true, tfoot: true, tr: true, th: true, td: true,
+    dl: true, dt: true, dd: true
+};
+const DROP_ELEMENT_RE = /<(script|style|iframe|object|embed|svg|math|form|input|textarea|select|button|link|meta)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
+const TAG_TOKEN_RE = /<\/?([a-zA-Z][A-Za-z0-9:-]*)([^>]*)>/g;
+const SAFE_HREF_RE = /^(?:https?|mailto):/i;
+const COMMENT_RE = /<!--[\s\S]*?-->/g;
+
 function trim(value) {
     return String(value == null ? '' : value).trim();
 }
@@ -1401,10 +1417,69 @@ function parseExampleLines(text) {
     return out.slice(0, MAX_EXAMPLES);
 }
 
+function escapeAttribute(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+function safeHref(raw) {
+    const decoded = Parse.decodeEntities(String(raw == null ? '' : raw)).trim();
+    return SAFE_HREF_RE.test(decoded) ? decoded : '';
+}
+
+/**
+ * Install-note HTML -> the same formatting with only safe tags and attributes.
+ * Keeps paragraphs, lists, headings, code blocks, emphasis and http(s)/mailto
+ * links; removes scripts, styles, event handlers, classes and inline styles.
+ * @param {string} html
+ * @returns {string}
+ */
+function sanitizeNoteHtml(html) {
+    const source = String(html == null ? '' : html).replace(COMMENT_RE, '');
+    const cleaned = source.replace(DROP_ELEMENT_RE, '');
+    return cleaned.replace(TAG_TOKEN_RE, function (match, rawName, rawAttrs) {
+        const tag = String(rawName).toLowerCase();
+        if (!ALLOWED_TAGS[tag]) {
+            return '';
+        }
+        if (match.charAt(1) === '/') {
+            return '</' + tag + '>';
+        }
+        if (tag === 'a') {
+            const found = HREF_RE.exec(rawAttrs || '');
+            const href = found
+                ? safeHref(found[1] !== undefined ? found[1] : (found[2] !== undefined ? found[2] : found[3]))
+                : '';
+            return href === ''
+                ? '<a>'
+                : '<a href="' + escapeAttribute(href) + '" target="_blank" rel="noreferrer">';
+        }
+        return '<' + tag + '>';
+    });
+}
+
+/**
+ * Wrap every `<pre>` block in a relative container that can hold a copy button.
+ * Inline `<code>` is left alone.
+ * @param {string} html
+ * @param {string} buttonHtml trusted markup for the copy control
+ * @returns {string}
+ */
+function wrapCodeBlocks(html, buttonHtml) {
+    return String(html == null ? '' : html).replace(/<pre\b[^>]*>[\s\S]*?<\/pre\s*>/gi, function (block) {
+        return '<div class="cm-code-block">' + (buttonHtml || '') + block + '</div>';
+    });
+}
+
 module.exports = {
     parseToolNote,
     parseExamples,
-    parseExampleLines
+    parseExampleLines,
+    sanitizeNoteHtml,
+    wrapCodeBlocks
 };
 
 });
@@ -2935,10 +3010,22 @@ __def("ui", function (module, exports, __require) {
 const Model = __require("model");
 const Render = __require("render");
 const Parse = __require("parse");
+const Sections = __require("sections");
 const ToolFile = __require("toolfile");
 const Prompt = __require("prompt");
 
 const STYLE_ID = 'cm-palette-style';
+
+/** Copy icon and control injected into every code block of the Install note. */
+const CODE_COPY_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 2H10c-1.103 0-2 .897-2 2v4H4c-1.103 0-2 .897-2 2v10c0 1.103.897 2 2 2h10c1.103 0 2-.897 2-2v-4h4c1.103 0 2-.897 2-2V4c0-1.103-.897-2-2-2zM4 20V10h10l.002 10H4zm16-6h-4v-4c0-1.103-.897-2-2-2h-4V4h10v10z"></path></svg>';
+const CODE_COPY_BUTTON = '<button type="button" class="cm-code-copy" title="Copy to clipboard" aria-label="Copy to clipboard">' + CODE_COPY_ICON + '</button>';
+
+function escapeHtml(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
 
 const CSS = [
     '.cm-overlay{position:fixed;inset:0;z-index:99999;display:flex;justify-content:center;align-items:flex-start;padding:7vh 16px;background:rgba(0,0,0,.45);}',
@@ -2955,7 +3042,7 @@ const CSS = [
     '.cm-result-meta{display:flex;gap:6px;align-items:center;margin-top:2px;}',
     '.cm-result-desc{opacity:.7;font-size:12px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
     '.cm-cat{font-size:11px;padding:1px 6px;border-radius:999px;background:var(--accented-background-color,#eef2ff);opacity:.85;white-space:nowrap;}',
-    '.cm-detail{flex:1;min-width:0;overflow-y:auto;padding:14px 16px;}',
+    '.cm-detail{flex:1;min-width:0;overflow-y:auto;padding:14px 16px;user-select:text;}',
     '.cm-detail-head{margin:0 0 8px;}',
     '.cm-title{margin:0 0 4px;font-size:18px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}',
     '.cm-subtitle{margin:0 0 4px;opacity:.75;}',
@@ -3011,11 +3098,29 @@ const CSS = [
     '.cm-example-text{flex:1;min-width:0;font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;overflow-wrap:anywhere;}',
     '.cm-fold summary{cursor:pointer;font-size:12px;text-transform:uppercase;letter-spacing:.06em;opacity:.7;}',
     '.cm-pre{margin:8px 0 0;padding:10px;border-radius:8px;background:var(--input-background-color,#fafafa);border:1px solid var(--main-border-color,#ddd);font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;white-space:pre-wrap;overflow-x:auto;}',
+    '.cm-install{font-size:13px;line-height:1.55;user-select:text;}',
+    '.cm-install p{margin:0 0 8px;}',
+    '.cm-install ul,.cm-install ol{margin:0 0 8px;padding-left:22px;}',
+    '.cm-install h1,.cm-install h2,.cm-install h3,.cm-install h4,.cm-install h5,.cm-install h6{margin:10px 0 6px;font-size:14px;}',
+    '.cm-install pre{margin:0;padding:0;border:0;border-radius:6px;background:var(--accented-background-color,var(--input-background-color,#fafafa));box-shadow:var(--code-block-box-shadow,none);overflow:hidden;font-size:12px;}',
+    '.cm-install code{font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;background:var(--accented-background-color,#eef2ff);padding:1px 5px;border-radius:4px;}',
+    '.cm-install pre code{display:block;padding:0.75em 3em 0.75em 1em;background:transparent;border-radius:0;white-space:pre;overflow-x:auto;}',
+    '.cm-code-block{position:relative;margin:8px 0;}',
+    '.cm-code-copy{position:absolute;top:0.4em;inset-inline-end:0.4em;z-index:1;display:flex;align-items:center;justify-content:center;width:1.8em;height:1.8em;padding:0;border:0;border-radius:4px;background:transparent;color:inherit;opacity:.6;cursor:pointer;transition:opacity 150ms ease;}',
+    '.cm-code-copy:hover{background:var(--hover-item-background-color,#0000001a);}',
+    '.cm-code-copy:focus-visible{opacity:1;}',
+    '.cm-code-block:hover .cm-code-copy{opacity:1;}',
+    '.cm-code-copy svg{width:16px;height:16px;fill:currentColor;}',
+    '@media (hover:none){.cm-code-copy{opacity:1;}}',
+    '.cm-install a{color:var(--link-color,#4f8cff);}',
+    '.cm-install blockquote{margin:8px 0;padding-left:10px;border-left:3px solid var(--main-border-color,#ddd);opacity:.85;}',
+    '.cm-install table{border-collapse:collapse;margin:8px 0;}',
+    '.cm-install th,.cm-install td{border:1px solid var(--main-border-color,#ddd);padding:4px 8px;text-align:left;}',
     '.cm-modal{position:absolute;inset:0;display:flex;justify-content:center;align-items:flex-start;padding:4vh 16px;background:rgba(0,0,0,.45);z-index:2;}',
     '.cm-modal-panel{display:flex;flex-direction:column;width:min(760px,100%);max-height:100%;border-radius:10px;overflow:hidden;background:var(--main-background-color,#fff);color:inherit;box-shadow:0 20px 48px rgba(0,0,0,.4);}',
     '.cm-modal-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--main-border-color,#ddd);flex:0 0 auto;}',
     '.cm-modal-title{flex:1;font-weight:600;}',
-    '.cm-modal-body{overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;min-height:0;flex:1 1 auto;}',
+    '.cm-modal-body{overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;min-height:0;flex:1 1 auto;user-select:text;}',
     '.cm-modal-actions{display:flex;flex-wrap:wrap;gap:8px;padding:10px 12px;border-top:1px solid var(--main-border-color,#ddd);flex:0 0 auto;}',
     '.cm-tabs{display:flex;gap:6px;flex-wrap:wrap;}',
     '.cm-tab{padding:4px 10px;border-radius:999px;border:1px solid var(--main-border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font:inherit;font-size:12px;}',
@@ -3749,6 +3854,39 @@ function openPalette(controller) {
         return details;
     }
 
+    /** Same fold, but the body keeps the formatting of a rich-text note. */
+    function foldHtmlBlock(title, html) {
+        if (!html) {
+            return null;
+        }
+        const details = document.createElement('details');
+        details.className = 'cm-fold-block';
+        const summary = document.createElement('summary');
+        summary.textContent = title;
+        details.appendChild(summary);
+        const box = el('div', 'cm-install');
+        box.innerHTML = Sections.wrapCodeBlocks(Sections.sanitizeNoteHtml(html), CODE_COPY_BUTTON);
+        box.addEventListener('click', function (event) {
+            const target = event.target;
+            if (!target || typeof target.closest !== 'function') {
+                return;
+            }
+            const control = target.closest('.cm-code-copy');
+            if (!control) {
+                return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            const wrapper = control.parentNode;
+            const pre = wrapper && typeof wrapper.querySelector === 'function'
+                ? wrapper.querySelector('pre')
+                : null;
+            copyTextToClipboard(pre ? pre.textContent : '', 'Code copied to the clipboard.').catch(notify);
+        });
+        details.appendChild(box);
+        return details;
+    }
+
     function baseRow() {
         const row = el('div', 'cm-base-row');
         row.appendChild(el('span', 'cm-base-label', 'Base command'));
@@ -3924,7 +4062,14 @@ function openPalette(controller) {
         if (help) {
             detail.appendChild(help);
         }
-        const install = foldBlock('Install', state.loaded ? state.loaded.installText : '');
+        let install = null;
+        if (state.loaded && state.loaded.installHtml) {
+            install = state.loaded.installIsCode
+                ? foldHtmlBlock('Install', '<pre><code>' + escapeHtml(state.loaded.installHtml) + '</code></pre>')
+                : foldHtmlBlock('Install', state.loaded.installHtml);
+        } else if (state.loaded) {
+            install = foldBlock('Install', state.loaded.installText);
+        }
         if (install) {
             detail.appendChild(install);
         }
@@ -5153,7 +5298,9 @@ async function load(noteId) {
     const optionsNote = await childWithLabel(note, Model.LABELS.options);
     const presetsNote = optionsNote ? await childWithLabel(optionsNote, Model.LABELS.presets) : null;
 
-    const installText = await readNoteText(installNote);
+    const installHtml = await readRawContent(installNote);
+    const installIsCode = Boolean(installNote && installNote.type === 'code');
+    const installText = installIsCode ? installHtml : Parse.stripHtml(installHtml);
     const usageHtml = usageNote ? await usageNote.getContent() : '';
     const helpText = await readNoteText(helpNote);
     const usageExamples = usageNote && usageNote.type === 'code'
@@ -5202,6 +5349,8 @@ async function load(noteId) {
         usageExamples: usageExamples,
         helpText: helpText,
         installText: installText,
+        installHtml: installHtml,
+        installIsCode: installIsCode,
         optionsFolderId: optionsNote ? optionsNote.noteId : null,
         presetsNoteId: presetsNote ? presetsNote.noteId : null,
         toolNotePath: toolNotePath

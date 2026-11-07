@@ -236,7 +236,7 @@ function buildFixture() {
         noteId: 'i1',
         title: 'Install',
         labels: { cmInstall: '' },
-        content: '<p>winget install Gyan.FFmpeg</p>'
+        content: '<p>Install on Windows:</p><pre><code>winget install Gyan.FFmpeg</code></pre>'
     });
     const usage = note({
         noteId: 'u1',
@@ -379,6 +379,13 @@ test('palette lists tools, shows option help, examples, help, copy/insert and pr
     assert.match(style.textContent, /\.cm-result-desc\{[^}]*min-width:0/);
     assert.match(style.textContent, /\.cm-result-desc\{[^}]*white-space:nowrap/);
     assert.match(style.textContent, /\.cm-result-desc\{[^}]*text-overflow:ellipsis/);
+    assert.match(style.textContent, /\.cm-code-block:hover \.cm-code-copy/);
+    assert.match(style.textContent, /\.cm-code-copy\{[^}]*z-index:1/);
+    assert.match(style.textContent, /\.cm-detail\{[^}]*user-select:text/);
+    assert.match(style.textContent, /\.cm-modal-body\{[^}]*user-select:text/);
+    assert.match(style.textContent, /\.cm-install\{[^}]*user-select:text/);
+    assert.match(style.textContent, /\.cm-install pre\{[^}]*box-shadow:var\(--code-block-box-shadow/);
+    assert.match(style.textContent, /@media \(hover:none\)\{\.cm-code-copy\{opacity:1;\}\}/);
     assert.equal(style.textContent.includes('#f4f4f4'), false, 'no hard-coded light code background');
 
     const versionButton = find(dom.body, (node) => classed(node, 'cm-version'));
@@ -443,8 +450,11 @@ test('palette lists tools, shows option help, examples, help, copy/insert and pr
 
     const helpPre = findAll(dom.body, (node) => node.tagName === 'PRE').filter((node) => /Usage: ffmpeg/.test(node.textContent))[0];
     assert.ok(helpPre, 'help output is rendered in a pre block');
-    const installPre = findAll(dom.body, (node) => node.tagName === 'PRE').filter((node) => /winget install/.test(node.textContent))[0];
-    assert.ok(installPre, 'install steps are rendered');
+    const installBlock = find(dom.body, (node) => classed(node, 'cm-install'));
+    assert.ok(installBlock, 'install steps are rendered with their note formatting');
+    assert.match(installBlock.innerHTML, /winget install/);
+    assert.match(installBlock.innerHTML, /class="cm-code-block"/, 'code blocks are wrapped');
+    assert.match(installBlock.innerHTML, /class="cm-code-copy"/, 'code blocks get a copy control');
 
     const links = findAll(dom.body, (node) => node.tagName === 'A' && classed(node, 'cm-link')).map((node) => node.textContent);
     assert.deepEqual(links, ['ffmpeg.org', 'Reference']);

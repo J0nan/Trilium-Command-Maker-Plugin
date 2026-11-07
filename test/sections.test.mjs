@@ -116,3 +116,68 @@ test('parseExampleLines reads one example per line from a code Usage note', () =
         ['ffmpeg -i in.mp4 out.mp4', 'ffmpeg -i in.mp4 -c:v libx264 out.mp4']
     );
 });
+
+test('sanitizeNoteHtml keeps readable formatting and removes unsafe markup', () => {
+    const html = [
+        '<h3>Install</h3>',
+        '<p>Use <strong>winget</strong> or <code>brew</code>.</p>',
+        '<ul><li>One</li><li>Two</li></ul>',
+        '<pre><code>winget install Tool</code></pre>',
+        '<a href="https://example.com" onclick="steal()">Docs</a>',
+        '<script>alert(1)</script>',
+        '<img src="x" onerror="alert(1)">',
+        '<div class="x" style="color:red">Text</div>'
+    ].join('');
+
+    const clean = Sections.sanitizeNoteHtml(html);
+    assert.match(clean, /<h3>Install<\/h3>/);
+    assert.match(clean, /<strong>winget<\/strong>/);
+    assert.match(clean, /<ul><li>One<\/li><li>Two<\/li><\/ul>/);
+    assert.match(clean, /<pre><code>winget install Tool<\/code><\/pre>/);
+    assert.match(clean, /<a href="https:\/\/example.com" target="_blank" rel="noreferrer">Docs<\/a>/);
+    assert.match(clean, /<div>Text<\/div>/);
+    assert.equal(clean.includes('script'), false);
+    assert.equal(clean.includes('alert(1)'), false, 'script and event contents are removed');
+    assert.equal(clean.includes('onclick'), false);
+    assert.equal(clean.includes('onerror'), false);
+    assert.equal(clean.includes('class='), false);
+    assert.equal(clean.includes('style='), false);
+    assert.equal(clean.includes('<img'), false);
+});
+
+test('sanitizeNoteHtml only keeps safe link targets', () => {
+    const clean = Sections.sanitizeNoteHtml([
+        '<a href="javascript:alert(1)">bad</a>',
+        '<a href="//evil.test">relative</a>',
+        '<a href="mailto:team@example.org">team</a>',
+        '<a href="https://x.test/?a=1&amp;b=2" title="ignored">link</a>'
+    ].join(''));
+
+    assert.ok(clean.indexOf('<a>bad</a>') !== -1);
+    assert.ok(clean.indexOf('<a>relative</a>') !== -1);
+    assert.match(clean, /<a href="mailto:team@example.org" target="_blank" rel="noreferrer">team<\/a>/);
+    assert.match(clean, /<a href="https:\/\/x.test\/\?a=1&amp;b=2" target="_blank" rel="noreferrer">link<\/a>/);
+    assert.equal(clean.includes('javascript:'), false);
+    assert.equal(clean.includes('title='), false);
+});
+
+test('sanitizeNoteHtml drops comments and style blocks', () => {
+    const clean = Sections.sanitizeNoteHtml('<!-- secret --><style>p{color:red}</style><p onclick="x">ok</p>');
+    assert.equal(clean, '<p>ok</p>');
+});
+
+test('wrapCodeBlocks adds a copy control to every code block but not inline code', () => {
+    const button = '<button class="cm-code-copy">copy</button>';
+    const html = '<p>Run</p><pre><code>tool --install</code></pre><pre>plain</pre><code>inline</code>';
+
+    const wrapped = Sections.wrapCodeBlocks(html, button);
+    assert.match(wrapped, /<div class="cm-code-block"><button class="cm-code-copy">copy<\/button><pre><code>tool --install<\/code><\/pre><\/div>/);
+    assert.match(wrapped, /<div class="cm-code-block"><button class="cm-code-copy">copy<\/button><pre>plain<\/pre><\/div>/);
+    assert.match(wrapped, /<code>inline<\/code>$/);
+    assert.equal((wrapped.match(/cm-code-block/g) || []).length, 2);
+});
+
+test('wrapCodeBlocks leaves markup without pre blocks unchanged', () => {
+    const html = '<p>Run <code>tool</code>.</p>';
+    assert.equal(Sections.wrapCodeBlocks(html, '<button></button>'), html);
+});

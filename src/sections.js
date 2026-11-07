@@ -24,6 +24,22 @@ const USEFUL = 'useful links';
 
 const MAX_EXAMPLES = 50;
 
+/** Tags that survive install-note rendering; everything else loses its markup. */
+const ALLOWED_TAGS = {
+    p: true, br: true, div: true, span: true,
+    strong: true, b: true, em: true, i: true, u: true, s: true, strike: true, del: true,
+    code: true, pre: true,
+    ul: true, ol: true, li: true,
+    h1: true, h2: true, h3: true, h4: true, h5: true, h6: true,
+    a: true, blockquote: true, hr: true,
+    table: true, thead: true, tbody: true, tfoot: true, tr: true, th: true, td: true,
+    dl: true, dt: true, dd: true
+};
+const DROP_ELEMENT_RE = /<(script|style|iframe|object|embed|svg|math|form|input|textarea|select|button|link|meta)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
+const TAG_TOKEN_RE = /<\/?([a-zA-Z][A-Za-z0-9:-]*)([^>]*)>/g;
+const SAFE_HREF_RE = /^(?:https?|mailto):/i;
+const COMMENT_RE = /<!--[\s\S]*?-->/g;
+
 function trim(value) {
     return String(value == null ? '' : value).trim();
 }
@@ -187,8 +203,67 @@ function parseExampleLines(text) {
     return out.slice(0, MAX_EXAMPLES);
 }
 
+function escapeAttribute(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+function safeHref(raw) {
+    const decoded = Parse.decodeEntities(String(raw == null ? '' : raw)).trim();
+    return SAFE_HREF_RE.test(decoded) ? decoded : '';
+}
+
+/**
+ * Install-note HTML -> the same formatting with only safe tags and attributes.
+ * Keeps paragraphs, lists, headings, code blocks, emphasis and http(s)/mailto
+ * links; removes scripts, styles, event handlers, classes and inline styles.
+ * @param {string} html
+ * @returns {string}
+ */
+function sanitizeNoteHtml(html) {
+    const source = String(html == null ? '' : html).replace(COMMENT_RE, '');
+    const cleaned = source.replace(DROP_ELEMENT_RE, '');
+    return cleaned.replace(TAG_TOKEN_RE, function (match, rawName, rawAttrs) {
+        const tag = String(rawName).toLowerCase();
+        if (!ALLOWED_TAGS[tag]) {
+            return '';
+        }
+        if (match.charAt(1) === '/') {
+            return '</' + tag + '>';
+        }
+        if (tag === 'a') {
+            const found = HREF_RE.exec(rawAttrs || '');
+            const href = found
+                ? safeHref(found[1] !== undefined ? found[1] : (found[2] !== undefined ? found[2] : found[3]))
+                : '';
+            return href === ''
+                ? '<a>'
+                : '<a href="' + escapeAttribute(href) + '" target="_blank" rel="noreferrer">';
+        }
+        return '<' + tag + '>';
+    });
+}
+
+/**
+ * Wrap every `<pre>` block in a relative container that can hold a copy button.
+ * Inline `<code>` is left alone.
+ * @param {string} html
+ * @param {string} buttonHtml trusted markup for the copy control
+ * @returns {string}
+ */
+function wrapCodeBlocks(html, buttonHtml) {
+    return String(html == null ? '' : html).replace(/<pre\b[^>]*>[\s\S]*?<\/pre\s*>/gi, function (block) {
+        return '<div class="cm-code-block">' + (buttonHtml || '') + block + '</div>';
+    });
+}
+
 module.exports = {
     parseToolNote,
     parseExamples,
-    parseExampleLines
+    parseExampleLines,
+    sanitizeNoteHtml,
+    wrapCodeBlocks
 };

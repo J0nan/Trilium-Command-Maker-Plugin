@@ -157,6 +157,8 @@ test('load returns options with help, examples, links, help output, install and 
     assert.deepEqual(loaded.usageExamples, ['ffmpeg -i in.mp4 out.mp4']);
     assert.match(loaded.helpText, /Usage: ffmpeg/);
     assert.match(loaded.installText, /winget install ffmpeg/);
+    assert.equal(loaded.installHtml, '<p>winget install ffmpeg</p>', 'the raw Install HTML is available');
+    assert.equal(loaded.installIsCode, false);
     assert.equal(loaded.presets.length, 1);
     assert.equal(loaded.presets[0].name, 'web');
     globalThis.api = undefined;

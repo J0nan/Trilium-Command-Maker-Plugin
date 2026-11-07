@@ -132,6 +132,14 @@ install steps are shown in collapsible sections, and loading an example fills th
 option controls from its flags while the preview initially shows the example
 verbatim; changing any option then regenerates the command from the form.
 
+`Install` keeps the note's formatting in the palette: paragraphs, lists,
+headings, bold/italic text, code blocks, tables and http(s)/mailto links are
+rendered as written. Scripts, styles, event handlers, classes and inline styles
+are removed before rendering. Inline code keeps the monospace/inline-code style,
+and every code block gets the same copy button Trilium shows on hover (always
+visible on touch devices). An `Install` note stored as a **code** note is shown
+as one copyable code block too.
+
 ### Option notes
 
 Options live under the tool's `Options` folder. Each option is a note whose title
