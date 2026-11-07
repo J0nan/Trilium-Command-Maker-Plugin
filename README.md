@@ -258,7 +258,8 @@ Both work on one portable JSON file per tool:
 ### Generating the file with an AI model
 
 **Import tool → Copy AI prompt** copies a self-contained prompt. It explains the
-file shape, the option types and the HTML sections the tool note expects. If the
+file shape, the option types and the HTML sections the tool note expects, and
+requires install commands to be `<pre><code>` blocks (never inline code). If the
 paste box already contains `--help` output, the prompt includes it too.
 
 1. Run `<tool> --help` and copy the output.

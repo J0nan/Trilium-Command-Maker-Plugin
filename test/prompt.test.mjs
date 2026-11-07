@@ -30,6 +30,13 @@ test('the AI prompt embeds the tool name and the pasted help output', () => {
     assert.match(text, /--ignore-case/);
 });
 
+test('the AI prompt asks for install commands as code blocks, not inline code', () => {
+    const text = Prompt.buildToolPrompt();
+
+    assert.match(text, /"install": "[^"]*<pre><code>/);
+    assert.match(text, /Never use inline <code> for install commands/i);
+});
+
 test('the AI prompt leaves clear placeholders when the input is missing', () => {
     const text = Prompt.buildToolPrompt();
 
