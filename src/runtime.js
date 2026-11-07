@@ -253,24 +253,28 @@ function search(query) {
 
 function readPresetsContent(content) {
     let data = null;
+    let invalid = false;
     try {
         data = JSON.parse(String(content || ''));
     } catch (error) {
-        data = null;
+        invalid = true;
     }
     if (!data || typeof data !== 'object' || !Array.isArray(data.presets)) {
-        return [];
+        return { presets: [], invalid: true };
     }
-    return data.presets
-        .filter(function (entry) {
-            return entry && typeof entry.name === 'string';
-        })
-        .map(function (entry) {
-            return {
-                name: entry.name,
-                values: entry.values && typeof entry.values === 'object' ? entry.values : {}
-            };
-        });
+    return {
+        presets: data.presets
+            .filter(function (entry) {
+                return entry && typeof entry.name === 'string';
+            })
+            .map(function (entry) {
+                return {
+                    name: entry.name,
+                    values: entry.values && typeof entry.values === 'object' ? entry.values : {}
+                };
+            }),
+        invalid: invalid
+    };
 }
 
 async function readNoteText(note) {
@@ -330,11 +334,15 @@ async function load(noteId) {
     });
 
     let presets = [];
+    let presetsInvalid = false;
     if (presetsNote) {
         try {
-            presets = readPresetsContent(await presetsNote.getContent());
+            const read = readPresetsContent(await presetsNote.getContent());
+            presets = read.presets;
+            presetsInvalid = read.invalid;
         } catch (error) {
             presets = [];
+            presetsInvalid = true;
         }
     }
 
@@ -348,6 +356,7 @@ async function load(noteId) {
     return {
         definition: definition,
         presets: presets,
+        presetsInvalid: presetsInvalid,
         whatIs: parsed.whatIs,
         links: parsed.links,
         officialLinks: parsed.officialLinks,

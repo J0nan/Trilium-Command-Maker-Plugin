@@ -112,10 +112,10 @@ get in the way when you read the tool manually.
 | --- | --- | --- |
 | `Install` | text | installation steps/commands |
 | `Usage` | text | examples; every code block becomes a one-click example in the palette |
+| `Help` | code (`text/x-sh`) | paste the output of `tool --help` here |
 
 > A `Usage` note stored as a **code** note also works: every non-empty line is
 > treated as one example.
-| `Help` | code (`text/x-sh`) | paste the output of `tool --help` here |
 
 The palette reads all three: examples can be used or copied, the help output and
 install steps are shown in collapsible sections, and an example can be loaded
@@ -137,7 +137,7 @@ is the readable label and whose attributes describe the flag:
 | `#cmDefault` | initial value | empty / `false` |
 | `#cmRequired` | `true` marks the option required | `false` |
 | `#cmOrder` | numeric ordering of emitted segments | `100` |
-| `#cmQuote` | `none`, `single`, `double` (flag segments only) | `none` |
+| `#cmQuote` | `none`, `single`, `double` (emitted segments) | `none` |
 | `#cmSep` | `space` or `=` (`--flag=value`) | `space` |
 
 The option note's content is a good place for a longer explanation; the palette
@@ -187,8 +187,8 @@ type.
 
 Older versions stored commands as `#cmCommand` notes with an `Options` folder.
 Those notes are left untouched. Use **Tools folder → Import legacy commands** to
-copy them into `Tools/Imported` as tool entries. The import runs once per install
-(`#cmMigrated` on the settings note).
+copy them into `Tools/Imported` as tool entries. The import runs once per settings
+note (`#cmMigrated` on the settings note, which survives reinstalls).
 
 ## Design notes
 

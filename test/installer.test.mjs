@@ -149,6 +149,7 @@ test('a fresh install creates the settings note and the Tools folder', () => {
     const tools = Array.from(api.notes.values()).filter((note) => note.hasLabel('cmTools'));
     assert.equal(tools.length, 1, 'one Tools folder');
     assert.equal(tools[0].title, 'Tools');
+    assert.ok(tools[0].hasLabel('cmManaged'), 'the plugin marks its own Tools folder');
 });
 
 test('re-running the installer preserves a shortcut changed on the launcher', () => {

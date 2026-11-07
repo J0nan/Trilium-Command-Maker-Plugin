@@ -590,6 +590,38 @@ test('palette can add a single option with a help string', async () => {
     assert.deepEqual(env.calls.errors, []);
 });
 
+test('importing options preserves the values already entered', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+
+    const input = findAll(dom.body, (node) => classed(node, 'cm-control') && node.placeholder === '-i')[0];
+    input.value = 'kept.mp4';
+    input.dispatch('input');
+    await tick();
+    assert.equal(find(dom.body, (node) => classed(node, 'cm-preview')).value, 'ffmpeg -i kept.mp4 -c:v libx264');
+
+    findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'Import options')[0].click();
+    const modal = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-modal')), 'import modal');
+    const textArea = find(modal, (node) => node.tagName === 'TEXTAREA' && String(node.placeholder || '').indexOf('--help') !== -1);
+    textArea.value = '  -p PORT  listen port';
+    findAll(modal, (node) => node.tagName === 'BUTTON' && node.textContent === 'Parse')[0].click();
+    await waitFor(() => findAll(modal, (node) => classed(node, 'cm-import-row')).length === 1, 'parsed option');
+    findAll(modal, (node) => node.tagName === 'BUTTON' && node.textContent === 'Import selected')[0].click();
+    await waitFor(() => env.calls.backend.filter((call) => call.action === 'importOptions').length > 0, 'import action');
+
+    await waitFor(() => {
+        const again = findAll(dom.body, (node) => classed(node, 'cm-control') && node.placeholder === '-i')[0];
+        return again && again.value === 'kept.mp4';
+    }, 'preserved option value');
+    assert.deepEqual(env.calls.errors, []);
+});
+
 test('dropdowns hide the native arrow and keep a single themed arrow', async () => {
     const dom = createDom();
     const fixture = buildFixture();

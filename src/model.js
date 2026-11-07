@@ -47,6 +47,7 @@ const LABELS = {
     doc: 'cmDoc',
     // bookkeeping
     seeded: 'cmSeeded',
+    managed: 'cmManaged',
     migrated: 'cmMigrated',
     // legacy command/template labels, only used by the legacy importer
     legacyCommand: 'cmCommand',
@@ -195,6 +196,21 @@ function buildTool(note) {
             continue;
         }
         byPlaceholder[option.placeholder] = option;
+    }
+
+    const byFlag = {};
+    for (const option of options) {
+        if (!option.flag) {
+            continue;
+        }
+        if (byFlag[option.flag]) {
+            warnings.push({
+                code: 'duplicate-flag',
+                message: 'Two options use the flag "' + option.flag + '"; the command will repeat it.'
+            });
+            continue;
+        }
+        byFlag[option.flag] = true;
     }
 
     const declared = Render.placeholderNames(base);

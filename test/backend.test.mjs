@@ -154,6 +154,7 @@ test('beRun survives serialisation and bootstrap seeds the model tools', () => {
     const toolsRoot = api.getNote(seeded.toolsRootId);
     assert.equal(toolsRoot.title, 'Tools');
     assert.ok(toolsRoot.hasLabel(labels.tools));
+    assert.ok(toolsRoot.hasLabel(labels.managed), 'the plugin-created Tools root is marked managed');
     assert.ok(toolsRoot.hasLabel(labels.seeded));
     assert.match(toolsRoot.getContent(), /tool/i, 'the Tools root explains itself');
     assert.deepEqual(
@@ -222,6 +223,30 @@ test('beRun survives serialisation and bootstrap seeds the model tools', () => {
     assert.equal(again.seeded, false, 'seeding only happens once');
     assert.equal(api.getNotesWithLabel(labels.tool).length, seeds.length);
     assert.equal(api.getNotesWithLabel(labels.category).length, seeds.length);
+});
+
+test('relocating the Tools folder never seeds the chosen note', () => {
+    const { api, beRun, result } = seedApi();
+    const userFolder = api.createNewNote({
+        parentNoteId: api.getTodayNote().noteId,
+        title: 'My tools',
+        type: 'text',
+        content: 'user data'
+    }).note;
+    beRun({ action: 'setToolsRoot', labels, noteId: userFolder.noteId, oldToolsRootId: result.toolsRootId });
+    const before = api.getNotesWithLabel(labels.tool).length;
+    const again = beRun({
+        action: 'bootstrap',
+        labels,
+        seed: true,
+        seedTools: Model.seedTools(),
+        newToolNotes: Model.newToolNotes()
+    });
+    assert.equal(again.toolsRootId, userFolder.noteId);
+    assert.equal(userFolder.getChildNotes().length, 0, 'the chosen folder is not seeded');
+    assert.equal(api.getNotesWithLabel(labels.tool).length, before, 'the tool count is unchanged');
+    assert.ok(userFolder.hasLabel(labels.seeded), 'the chosen folder is marked as seeded');
+    assert.equal(api.getNote(result.toolsRootId).hasLabel(labels.tools), false, 'the old root lost the label');
 });
 
 test('bootstrap honours parentId and always ensures the Tools root', () => {
@@ -433,6 +458,35 @@ test('importOptions creates options and deleteOption removes one', () => {
     assert.throws(() => beRun({ action: 'deleteOption', labels, noteId: 'nope' }), /Option note not found/);
 });
 
+test('importOptions skips flags that already exist on the tool', () => {
+    const api = createApi();
+    const beRun = serialise(Backend.beRun, api);
+    const { toolsRootId } = boot(api, beRun);
+    const created = beRun({ action: 'createTool', labels, toolsRootId, title: 'git', base: 'git' });
+    const folder = api.getNote(created.optionsFolderId);
+
+    const first = beRun({
+        action: 'importOptions',
+        labels,
+        toolId: created.noteId,
+        options: [{ label: 'Message', flag: '-m', type: 'string', doc: 'Commit message.' }]
+    });
+    assert.equal(first.created, 1);
+
+    const second = beRun({
+        action: 'importOptions',
+        labels,
+        toolId: created.noteId,
+        options: [
+            { label: 'Message again', flag: '-m', type: 'string', doc: 'Duplicate.' },
+            { label: 'Verbose', flag: '-v', type: 'boolean', doc: 'Be verbose.' }
+        ]
+    });
+    assert.equal(second.created, 1, 'only the new flag is created');
+    assert.equal(second.skipped, 1, 'the duplicate flag is reported');
+    assert.equal(labelledChildren(folder, labels.option).length, 2);
+});
+
 test('savePreset and deletePreset round-trip through the JSON note', () => {
     const api = createApi();
     const beRun = serialise(Backend.beRun, api);
@@ -467,13 +521,16 @@ test('savePreset and deletePreset round-trip through the JSON note', () => {
     beRun({ action: 'deletePreset', labels, toolId: created.noteId, name: 'ghost' });
     assert.deepEqual(JSON.parse(presets.getContent()).presets, [{ name: 'safe', values: {} }]);
 
-    // Invalid JSON content is tolerated and rewritten in the canonical shape.
+    // Invalid JSON content is refused instead of silently wiping the note.
     presets.setContent('this is not json');
-    beRun({ action: 'savePreset', labels, toolId: created.noteId, name: 'recovered', values: { x: 1 } });
-    assert.deepEqual(JSON.parse(presets.getContent()), {
-        v: 1,
-        presets: [{ name: 'recovered', values: { x: 1 } }]
-    });
+    assert.throws(function () {
+        beRun({ action: 'savePreset', labels, toolId: created.noteId, name: 'recovered', values: { x: 1 } });
+    }, /not valid JSON/);
+    assert.equal(presets.getContent(), 'this is not json', 'the malformed note is left untouched');
+    assert.throws(function () {
+        beRun({ action: 'deletePreset', labels, toolId: created.noteId, name: 'safe' });
+    }, /not valid JSON/);
+    assert.equal(presets.getContent(), 'this is not json');
 });
 
 test('setToolBase sets and clears the base label', () => {

@@ -126,18 +126,21 @@ function beRun(params) {
         return { tool: tool, folder: folder, presets: ensurePresetsNote(folder) };
     }
 
-    /** Read the presets JSON note, tolerating missing or invalid content. */
     function readPresets(note) {
         let data = null;
+        let valid = true;
         try {
             data = JSON.parse(note.getContent() || '');
         } catch (error) {
-            data = null;
+            valid = false;
         }
         if (!data || typeof data !== 'object' || !Array.isArray(data.presets)) {
+            valid = false;
+        }
+        if (!valid) {
             data = { v: 1, presets: [] };
         }
-        return data;
+        return { data: data, valid: valid };
     }
 
     /** Minimal body for imported tools: exactly the three H2 sections. */
@@ -296,6 +299,7 @@ function beRun(params) {
             const quote = child.getLabelValue(labels.quote);
             const separator = child.getLabelValue(labels.separator);
             const placeholder = child.getLabelValue(labels.placeholder);
+            const mode = child.getLabelValue(labels.mode);
             if (nonEmpty(flag)) {
                 spec.flag = String(flag);
             }
@@ -322,6 +326,9 @@ function beRun(params) {
             }
             if (nonEmpty(placeholder)) {
                 spec.placeholder = String(placeholder);
+            }
+            if (nonEmpty(mode)) {
+                spec.mode = String(mode);
             }
             specs.push(spec);
         }
@@ -364,10 +371,13 @@ function beRun(params) {
                 content: 'Tool notes live in this folder, grouped by category. Move it anywhere; the label is what matters.'
             }).note;
             toolsRoot.setLabel(labels.tools, '');
+            toolsRoot.setLabel(labels.managed, '');
         }
 
         let seeded = false;
-        if (options.seed && !hasLabel(toolsRoot, labels.seeded)) {
+        // Only a Tools folder the plugin created itself is seeded. A folder the
+        // user chose (or labelled by hand) is never touched.
+        if (options.seed && hasLabel(toolsRoot, labels.managed) && !hasLabel(toolsRoot, labels.seeded)) {
             const specs = Array.isArray(options.seedTools) ? options.seedTools : [];
             const fallbacks = options.newToolNotes || {};
             for (let index = 0; index < specs.length; index += 1) {
@@ -417,11 +427,29 @@ function beRun(params) {
     function importOptions() {
         const location = presetsLocation(options.toolId);
         const specs = Array.isArray(options.options) ? options.options : [];
-        const noteIds = [];
-        for (let index = 0; index < specs.length; index += 1) {
-            noteIds.push(createOptionNote(location.folder, specs[index]).noteId);
+        const seenFlags = {};
+        const existing = location.folder.getChildNotes();
+        for (let index = 0; index < existing.length; index += 1) {
+            const flag = existing[index].getLabelValue(labels.flag);
+            if (nonEmpty(flag)) {
+                seenFlags[String(flag)] = true;
+            }
         }
-        return { created: noteIds.length, noteIds: noteIds };
+        const noteIds = [];
+        let skipped = 0;
+        for (let index = 0; index < specs.length; index += 1) {
+            const spec = specs[index] || {};
+            const flag = spec.flag;
+            if (nonEmpty(flag) && seenFlags[String(flag)]) {
+                skipped += 1;
+                continue;
+            }
+            if (nonEmpty(flag)) {
+                seenFlags[String(flag)] = true;
+            }
+            noteIds.push(createOptionNote(location.folder, spec).noteId);
+        }
+        return { created: noteIds.length, skipped: skipped, noteIds: noteIds };
     }
 
     function deleteOption() {
@@ -451,12 +479,18 @@ function beRun(params) {
             }
         }
         target.setLabel(labels.tools, '');
+        // A folder the user picks is theirs: never seed examples into it.
+        target.setLabel(labels.seeded, '');
         return { ok: true };
     }
 
     function savePreset() {
         const location = presetsLocation(options.toolId);
-        const data = readPresets(location.presets);
+        const read = readPresets(location.presets);
+        if (!read.valid) {
+            throw new Error('The Presets note is not valid JSON. Fix or delete it before saving a preset.');
+        }
+        const data = read.data;
         const name = nonEmpty(options.name) ? String(options.name) : 'Preset';
         const values = options.values && typeof options.values === 'object' ? options.values : {};
         let updated = false;
@@ -478,7 +512,11 @@ function beRun(params) {
 
     function deletePreset() {
         const location = presetsLocation(options.toolId);
-        const data = readPresets(location.presets);
+        const read = readPresets(location.presets);
+        if (!read.valid) {
+            throw new Error('The Presets note is not valid JSON. Fix or delete it before deleting a preset.');
+        }
+        const data = read.data;
         const name = String(options.name == null ? '' : options.name);
         const kept = [];
         for (let index = 0; index < data.presets.length; index += 1) {

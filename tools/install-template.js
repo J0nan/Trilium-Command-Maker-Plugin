@@ -15,6 +15,7 @@ var BUNDLE = __BUNDLE__;
 
 var ROOT_LABEL = 'cmRoot';
 var TOOLS_LABEL = 'cmTools';
+var MANAGED_LABEL = 'cmManaged';
 var PLUGIN_LABEL = 'cmPlugin';
 var LAUNCHER_ID = 'commandmaker';
 var SHORTCUT_LABEL = 'cmShortcut';
@@ -95,6 +96,7 @@ if (!toolsRoot) {
         content: 'Tool notes live here, grouped by category. Move this folder anywhere you like; the plugin follows its label.'
     }).note;
     toolsRoot.setLabel(TOOLS_LABEL, '');
+    toolsRoot.setLabel(MANAGED_LABEL, '');
 }
 
 var shortcut = resolveShortcut(root);

@@ -425,7 +425,11 @@ function openPalette(controller) {
         }
     }
 
-    async function selectItem(item) {
+    async function selectItem(item, options) {
+        const preserve = Boolean(options && options.preserveValues);
+        const previousValues = preserve ? state.values : null;
+        const previousEdited = preserve ? state.edited : false;
+        const previousPreview = preserve && state.previewEl ? state.previewEl.value : '';
         state.current = item;
         state.edited = false;
         markActive(item);
@@ -435,7 +439,14 @@ function openPalette(controller) {
             state.definition = loaded.definition;
             state.presets = loaded.presets || [];
             state.values = Model.defaultValueMap(state.definition);
+            if (previousValues) {
+                state.values = Object.assign(state.values, previousValues);
+            }
             renderDetail();
+            if (previousEdited && state.previewEl) {
+                state.previewEl.value = previousPreview;
+                state.edited = true;
+            }
             setStatus('');
         } catch (error) {
             state.loaded = null;
@@ -524,7 +535,8 @@ function openPalette(controller) {
             return;
         }
         state.warningsEl.textContent = '';
-        (warnings || []).forEach(function (warning) {
+        const definitionWarnings = state.definition && state.definition.warnings ? state.definition.warnings : [];
+        definitionWarnings.concat(warnings || []).forEach(function (warning) {
             state.warningsEl.appendChild(el('div', 'cm-warning', warning.message));
         });
     }
@@ -641,6 +653,9 @@ function openPalette(controller) {
     function presetBlock() {
         const block = el('div', 'cm-presets');
         block.appendChild(el('div', 'cm-section', 'Presets'));
+        if (state.loaded && state.loaded.presetsInvalid) {
+            block.appendChild(el('div', 'cm-warning', 'The Presets note is not valid JSON. Fix or delete it before saving a preset.'));
+        }
 
         const row = el('div', 'cm-row');
         const select = document.createElement('select');
@@ -1182,12 +1197,14 @@ function openPalette(controller) {
                 })
                 .then(function (result) {
                     closeModal();
-                    setStatus('Imported ' + (result && result.created ? result.created : 'the selected') + ' option(s).');
+                    const created = result && typeof result.created === 'number' ? result.created : 'the selected';
+                    const skipped = result && result.skipped ? ' Skipped ' + result.skipped + ' duplicate(s).' : '';
+                    setStatus('Imported ' + created + ' option(s).' + skipped);
                     return controller.refresh();
                 })
                 .then(runSearch)
                 .then(function () {
-                    return selectItem(state.current);
+                    return selectItem(state.current, { preserveValues: true });
                 })
                 .catch(notify);
         });
@@ -1296,7 +1313,7 @@ function openPalette(controller) {
                 })
                 .then(runSearch)
                 .then(function () {
-                    return selectItem(state.current);
+                    return selectItem(state.current, { preserveValues: true });
                 })
                 .catch(notify);
         });
