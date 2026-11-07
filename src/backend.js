@@ -1,29 +1,32 @@
 'use strict';
 
 /**
- * Backend operations.
+ * Backend operations for the tools registry.
  *
  * Everything runs through a single `beRun(params)` function because Trilium's
  * `api.runOnBackend` serialises the function by source: inner helpers travel
- * with it, outer helpers would not. `params.labels` carries the attribute names
- * so the schema lives in one place (model.js) instead of being duplicated here.
+ * with it, outer helpers would not. `params.labels` carries the attribute
+ * names from Model.LABELS so the label schema lives in one place instead of
+ * being duplicated here. Consequently `beRun` must never reference a
+ * module-scope binding and dispatches on literal action strings only.
  *
- * Actions: bootstrap | createCommand | addOption | savePreset | deletePreset
+ * Actions: bootstrap | createCategory | createTool | addOption |
+ * importOptions | deleteOption | setToolBase | setToolsRoot | savePreset |
+ * deletePreset | importLegacy
  */
-
-const ACTIONS = {
-    bootstrap: 'bootstrap',
-    createCommand: 'createCommand',
-    addOption: 'addOption',
-    savePreset: 'savePreset',
-    deletePreset: 'deletePreset'
-};
 
 function beRun(params) {
     const options = params || {};
     const labels = options.labels || {};
 
+    function nonEmpty(value) {
+        return value !== undefined && value !== null && String(value).trim() !== '';
+    }
+
     function hasLabel(note, name) {
+        if (!note || !name) {
+            return false;
+        }
         if (typeof note.hasLabel === 'function') {
             return note.hasLabel(name);
         }
@@ -31,102 +34,298 @@ function beRun(params) {
         return value !== null && value !== undefined;
     }
 
-    function hasRelation(note, name) {
-        if (typeof note.hasRelation === 'function') {
-            return note.hasRelation(name);
+    function isTruthy(value) {
+        if (value === true) {
+            return true;
         }
-        const value = note.getRelationValue(name);
-        return value !== null && value !== undefined;
+        if (value === undefined || value === null) {
+            return false;
+        }
+        const normalised = String(value).trim().toLowerCase();
+        return normalised === 'true' || normalised === '1' || normalised === 'yes' || normalised === 'on';
     }
 
-    function findChild(parent, label) {
+    function requireNote(noteId, message) {
+        const note = api.getNote(noteId);
+        if (!note) {
+            throw new Error(message + ': ' + noteId);
+        }
+        return note;
+    }
+
+    function findChildWithLabel(parent, name) {
         const children = parent.getChildNotes();
         for (let index = 0; index < children.length; index += 1) {
-            if (hasLabel(children[index], label)) {
+            if (hasLabel(children[index], name)) {
                 return children[index];
             }
         }
         return null;
     }
 
-    function findChildByTitle(parent, title) {
-        const children = parent.getChildNotes();
+    function findCategory(toolsRoot, name) {
+        const children = toolsRoot.getChildNotes();
         for (let index = 0; index < children.length; index += 1) {
-            if (children[index].title === title) {
+            if (children[index].title === name && hasLabel(children[index], labels.category)) {
                 return children[index];
             }
         }
         return null;
     }
 
-    function ensureFolder(parent, label, title) {
-        const existing = findChild(parent, label);
+    function ensureCategory(toolsRoot, name) {
+        const existing = findCategory(toolsRoot, name);
         if (existing) {
             return existing;
         }
         const note = api.createNewNote({
-            parentNoteId: parent.noteId,
+            parentNoteId: toolsRoot.noteId,
+            title: name,
+            type: 'text',
+            content: ''
+        }).note;
+        note.setLabel(labels.category, '');
+        return note;
+    }
+
+    function ensureOptionsFolder(toolNote) {
+        const existing = findChildWithLabel(toolNote, labels.options);
+        if (existing) {
+            return existing;
+        }
+        const note = api.createNewNote({
+            parentNoteId: toolNote.noteId,
+            title: 'Options',
+            type: 'text',
+            content: ''
+        }).note;
+        note.setLabel(labels.options, '');
+        return note;
+    }
+
+    function ensurePresetsNote(optionsFolder) {
+        const existing = findChildWithLabel(optionsFolder, labels.presets);
+        if (existing) {
+            return existing;
+        }
+        const note = api.createNewNote({
+            parentNoteId: optionsFolder.noteId,
+            title: 'Presets',
+            type: 'code',
+            mime: 'application/json',
+            content: '{"v":1,"presets":[]}'
+        }).note;
+        note.setLabel(labels.presets, '');
+        return note;
+    }
+
+    /** Validate the tool and make sure its Options folder and Presets note exist. */
+    function presetsLocation(toolId) {
+        const tool = requireNote(toolId, 'Tool note not found');
+        const folder = ensureOptionsFolder(tool);
+        return { tool: tool, folder: folder, presets: ensurePresetsNote(folder) };
+    }
+
+    /** Read the presets JSON note, tolerating missing or invalid content. */
+    function readPresets(note) {
+        let data = null;
+        try {
+            data = JSON.parse(note.getContent() || '');
+        } catch (error) {
+            data = null;
+        }
+        if (!data || typeof data !== 'object' || !Array.isArray(data.presets)) {
+            data = { v: 1, presets: [] };
+        }
+        return data;
+    }
+
+    /** Minimal body for imported tools: exactly the three H2 sections. */
+    function toolHtmlContent() {
+        return [
+            '<h2>What is?</h2>',
+            '<p>Describe what this tool does and when to use it.</p>',
+            '<h2>Official links</h2>',
+            '<p>Add the official documentation, repository or website links here.</p>',
+            '<h2>Useful links</h2>',
+            '<p>Add useful guides, cheat sheets or articles here.</p>'
+        ].join('\n');
+    }
+
+    function childContent(value, fallback) {
+        if (nonEmpty(value)) {
+            return String(value);
+        }
+        return nonEmpty(fallback) ? String(fallback) : '';
+    }
+
+    /** Shared creation path for createTool, bootstrap seeding and the importer. */
+    function createToolNote(toolsRoot, spec, fallbacks) {
+        const safeSpec = spec || {};
+        const safeFallbacks = fallbacks || {};
+        const categoryName = nonEmpty(safeSpec.category) ? String(safeSpec.category) : 'Uncategorized';
+        const title = nonEmpty(safeSpec.title) ? String(safeSpec.title) : 'New tool';
+        const category = ensureCategory(toolsRoot, categoryName);
+        const note = api.createNewNote({
+            parentNoteId: category.noteId,
             title: title,
             type: 'text',
-            content: ''
+            content: nonEmpty(safeSpec.content) ? String(safeSpec.content) : toolHtmlContent()
         }).note;
-        note.setLabel(label, '');
+        note.setLabel(labels.tool, '');
+        if (nonEmpty(safeSpec.base)) {
+            note.setLabel(labels.base, String(safeSpec.base));
+        }
+        if (nonEmpty(safeSpec.description)) {
+            note.setLabel(labels.description, String(safeSpec.description));
+        }
+
+        const install = api.createNewNote({
+            parentNoteId: note.noteId,
+            title: 'Install',
+            type: 'text',
+            content: childContent(safeSpec.install, safeFallbacks.install)
+        }).note;
+        install.setLabel(labels.install, '');
+
+        const usage = api.createNewNote({
+            parentNoteId: note.noteId,
+            title: 'Usage',
+            type: 'text',
+            content: childContent(safeSpec.usage, safeFallbacks.usage)
+        }).note;
+        usage.setLabel(labels.usage, '');
+
+        const help = api.createNewNote({
+            parentNoteId: note.noteId,
+            title: 'Help',
+            type: 'code',
+            mime: 'text/x-sh',
+            content: childContent(safeSpec.help, safeFallbacks.help)
+        }).note;
+        help.setLabel(labels.helpNote, '');
+
+        const folder = ensureOptionsFolder(note);
+        ensurePresetsNote(folder);
+        const specs = Array.isArray(safeSpec.options) ? safeSpec.options : [];
+        for (let index = 0; index < specs.length; index += 1) {
+            createOptionNote(folder, specs[index]);
+        }
         return note;
     }
 
-    function slugify(text) {
-        return String(text == null ? '' : text)
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, '_')
-            .replace(/^_+|_+$/g, '');
-    }
-
-    function createOption(commandNote, spec) {
-        const optionTemplate = api.getNoteWithLabel(labels.optionTemplate);
-        const folder = ensureFolder(commandNote, labels.options, 'Options');
+    /** Create one option note under a tool's Options folder. */
+    function createOptionNote(folder, spec) {
+        const safe = spec || {};
+        const title = nonEmpty(safe.label) ? String(safe.label) : 'Option';
         const note = api.createNewNote({
             parentNoteId: folder.noteId,
-            title: spec.label || 'Option',
+            title: title,
             type: 'text',
-            content: ''
+            content: safe.content == null ? '' : String(safe.content)
         }).note;
-
-        if (optionTemplate && !hasRelation(note, 'template')) {
-            note.setRelation('template', optionTemplate.noteId);
+        note.setLabel(labels.option, '');
+        if (nonEmpty(safe.flag)) {
+            note.setLabel(labels.flag, String(safe.flag));
         }
-        if (spec.flag) {
-            note.setLabel(labels.flag, spec.flag);
+        const doc = safe.help || safe.doc;
+        if (nonEmpty(doc)) {
+            note.setLabel(labels.doc, String(doc));
         }
-        if (spec.type) {
-            note.setLabel(labels.type, spec.type);
+        if (nonEmpty(safe.type)) {
+            note.setLabel(labels.type, String(safe.type));
         }
-        if (spec.mode) {
-            note.setLabel(labels.mode, spec.mode);
+        const enumValues = safe.values !== undefined && safe.values !== null ? safe.values : safe.enumValues;
+        if (Array.isArray(enumValues)) {
+            if (enumValues.length > 0) {
+                note.setLabel(labels.enumValues, enumValues.join(','));
+            }
+        } else if (nonEmpty(enumValues)) {
+            note.setLabel(labels.enumValues, String(enumValues));
         }
-        if (spec.placeholder !== undefined && spec.placeholder !== null) {
-            note.setLabel(labels.placeholder, String(spec.placeholder));
-        } else {
-            note.setLabel(labels.placeholder, slugify(spec.label));
+        let rawDefault = undefined;
+        if (safe.default !== undefined && safe.default !== null) {
+            rawDefault = safe.default;
+        } else if (safe.defaultValue !== undefined && safe.defaultValue !== null) {
+            rawDefault = safe.defaultValue;
         }
-        if (spec.enumValues && spec.enumValues.length) {
-            note.setLabel(labels.enumValues, spec.enumValues.join(','));
+        if (rawDefault !== undefined) {
+            note.setLabel(labels.defaultValue, String(rawDefault));
         }
-        if (spec.defaultValue !== undefined && spec.defaultValue !== null) {
-            note.setLabel(labels.defaultValue, String(spec.defaultValue));
-        }
-        if (spec.quote) {
-            note.setLabel(labels.quote, spec.quote);
-        }
-        if (spec.sep) {
-            note.setLabel(labels.separator, spec.sep);
-        }
-        if (spec.order !== undefined && spec.order !== null) {
-            note.setLabel(labels.order, String(spec.order));
-        }
-        if (spec.required) {
+        if (safe.required) {
             note.setLabel(labels.required, 'true');
         }
+        if (safe.mode === 'inline') {
+            note.setLabel(labels.mode, 'inline');
+        }
+        if (nonEmpty(safe.placeholder)) {
+            note.setLabel(labels.placeholder, String(safe.placeholder));
+        }
+        if (safe.order !== undefined && safe.order !== null && String(safe.order).trim() !== '') {
+            note.setLabel(labels.order, String(safe.order));
+        }
+        if (nonEmpty(safe.quote)) {
+            note.setLabel(labels.quote, String(safe.quote));
+        }
+        if (safe.sep === '=' || safe.separator === '=') {
+            note.setLabel(labels.separator, '=');
+        }
         return note;
+    }
+
+    /** Legacy option notes are stored under a cmOptions-labelled child folder. */
+    function legacyOptionSpecs(commandNote) {
+        const folder = findChildWithLabel(commandNote, labels.options);
+        if (!folder) {
+            return [];
+        }
+        const children = folder.getChildNotes();
+        const specs = [];
+        for (let index = 0; index < children.length; index += 1) {
+            const child = children[index];
+            if (hasLabel(child, labels.legacyOptionTemplate)) {
+                continue;
+            }
+            const spec = { label: child.title };
+            const flag = child.getLabelValue(labels.flag);
+            const type = child.getLabelValue(labels.type);
+            const values = child.getLabelValue(labels.enumValues);
+            const defaultValue = child.getLabelValue(labels.defaultValue);
+            const required = child.getLabelValue(labels.required);
+            const order = child.getLabelValue(labels.order);
+            const quote = child.getLabelValue(labels.quote);
+            const separator = child.getLabelValue(labels.separator);
+            const placeholder = child.getLabelValue(labels.placeholder);
+            if (nonEmpty(flag)) {
+                spec.flag = String(flag);
+            }
+            if (nonEmpty(type)) {
+                spec.type = String(type);
+            }
+            if (nonEmpty(values)) {
+                spec.values = String(values);
+            }
+            if (nonEmpty(defaultValue)) {
+                spec.default = String(defaultValue);
+            }
+            if (isTruthy(required)) {
+                spec.required = true;
+            }
+            if (nonEmpty(order)) {
+                spec.order = String(order);
+            }
+            if (nonEmpty(quote)) {
+                spec.quote = String(quote);
+            }
+            if (nonEmpty(separator)) {
+                spec.separator = String(separator);
+            }
+            if (nonEmpty(placeholder)) {
+                spec.placeholder = String(placeholder);
+            }
+            specs.push(spec);
+        }
+        return specs;
     }
 
     function parentForRoot() {
@@ -144,37 +343,6 @@ function beRun(params) {
         return api.getTodayNote().noteId;
     }
 
-    function seedCommand(title, base, specs) {
-        const note = api.createNewNote({
-            parentNoteId: api.getNoteWithLabel(labels.root).noteId,
-            title: title,
-            type: 'code',
-            mime: 'text/x-sh',
-            content: base
-        }).note;
-        const template = api.getNoteWithLabel(labels.template);
-        note.setRelation('template', template.noteId);
-        note.setLabel(labels.command, '');
-        note.setLabel(labels.description, '');
-        note.setContent(base);
-        ensureFolder(note, labels.options, 'Options');
-        ensureFolder(note, labels.presets, 'Presets');
-        for (let index = 0; index < specs.length; index += 1) {
-            createOption(note, specs[index]);
-        }
-        return note;
-    }
-
-    function hasSeededCommands(templateId) {
-        const candidates = api.getNotesWithLabel(labels.command);
-        for (let index = 0; index < candidates.length; index += 1) {
-            if (candidates[index].noteId !== templateId) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     function bootstrap() {
         let root = api.getNoteWithLabel(labels.root);
         if (!root) {
@@ -182,148 +350,216 @@ function beRun(params) {
                 parentNoteId: parentForRoot(),
                 title: 'Command Maker',
                 type: 'text',
-                content: 'Commands live in this subtree. Press Ctrl+Shift+Space to open the palette.'
+                content: 'Command Maker settings. The plugin finds this note through its label.'
             }).note;
             root.setLabel(labels.root, '');
         }
 
-        let template = api.getNoteWithLabel(labels.template);
-        if (!template) {
-            template = api.createNewNote({
+        let toolsRoot = api.getNoteWithLabel(labels.tools);
+        if (!toolsRoot) {
+            toolsRoot = api.createNewNote({
                 parentNoteId: root.noteId,
-                title: 'Command Template',
-                type: 'code',
-                mime: 'text/x-sh',
-                content: 'command goes here'
-            }).note;
-            template.setLabel('template', '');
-            template.setLabel(labels.template, '');
-            template.setLabel(labels.command, '');
-            template.setLabel(labels.description, 'One line describing the command.');
-        }
-
-        let optionTemplate = api.getNoteWithLabel(labels.optionTemplate);
-        if (!optionTemplate) {
-            optionTemplate = api.createNewNote({
-                parentNoteId: root.noteId,
-                title: 'Option Template',
+                title: 'Tools',
                 type: 'text',
-                content: ''
+                content: 'Tool notes live in this folder, grouped by category. Move it anywhere; the label is what matters.'
             }).note;
-            optionTemplate.setLabel('template', '');
-            optionTemplate.setLabel(labels.optionTemplate, '');
-            optionTemplate.setLabel(labels.type, 'string');
-            optionTemplate.setLabel(labels.quote, 'none');
-            optionTemplate.setLabel(labels.order, '100');
+            toolsRoot.setLabel(labels.tools, '');
         }
 
-        const optionsFolder = ensureFolder(template, labels.options, 'Options');
-        if (!hasRelation(optionsFolder, 'child:template')) {
-            optionsFolder.setRelation('child:template', optionTemplate.noteId);
-        }
-        ensureFolder(template, labels.presets, 'Presets');
-
-        if (!hasSeededCommands(template.noteId)) {
-            seedCommand('ffmpeg compress', 'ffmpeg -i "{{input}}"', [
-                { label: 'Input file', flag: '-i', type: 'path', placeholder: 'input', order: 10 },
-                { label: 'Video codec', flag: '-c:v', type: 'enum', enumValues: ['libx264', 'libx265', 'libvpx-vp9'], defaultValue: 'libx264', order: 20 },
-                { label: 'CRF quality', flag: '-crf', type: 'number', defaultValue: '23', order: 30 },
-                { label: 'Overwrite output', flag: '-y', type: 'boolean', order: 40 }
-            ]);
-            seedCommand('git commit', 'git commit -m "{{message}}"', [
-                { label: 'Message', flag: '', type: 'string', placeholder: 'message', order: 10 },
-                { label: 'Amend last commit', flag: '--amend', type: 'boolean', order: 20 },
-                { label: 'Skip hooks', flag: '--no-verify', type: 'boolean', order: 30 }
-            ]);
+        let seeded = false;
+        if (options.seed && !hasLabel(toolsRoot, labels.seeded)) {
+            const specs = Array.isArray(options.seedTools) ? options.seedTools : [];
+            const fallbacks = options.newToolNotes || {};
+            for (let index = 0; index < specs.length; index += 1) {
+                createToolNote(toolsRoot, specs[index], fallbacks);
+            }
+            toolsRoot.setLabel(labels.seeded, '');
+            seeded = true;
         }
 
-        return {
-            rootId: root.noteId,
-            templateId: template.noteId,
-            optionTemplateId: optionTemplate.noteId
-        };
+        return { rootId: root.noteId, toolsRootId: toolsRoot.noteId, seeded: seeded };
     }
 
-    function createCommand() {
-        const root = api.getNoteWithLabel(labels.root);
-        const template = api.getNoteWithLabel(labels.template);
-        if (!root || !template) {
-            throw new Error('Command Maker is not installed. Run the installer first.');
-        }
-        const title = String(options.title || '').trim() || 'New command';
-        const base = String(options.base || 'command goes here');
-        const note = api.createNewNote({
-            parentNoteId: root.noteId,
-            title: title,
-            type: 'code',
-            mime: 'text/x-sh',
-            content: base
-        }).note;
-        note.setRelation('template', template.noteId);
-        note.setLabel(labels.command, '');
-        note.setLabel(labels.description, '');
-        note.setContent(base);
-        ensureFolder(note, labels.options, 'Options');
-        ensureFolder(note, labels.presets, 'Presets');
-        return { noteId: note.noteId };
+    function createCategory() {
+        const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
+        const name = nonEmpty(options.name) ? String(options.name) : 'Uncategorized';
+        return { noteId: ensureCategory(toolsRoot, name).noteId };
+    }
+
+    function createTool() {
+        const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
+        const note = createToolNote(
+            toolsRoot,
+            {
+                category: options.category,
+                title: options.title,
+                base: options.base,
+                description: options.description,
+                content: options.content,
+                install: options.install,
+                usage: options.usage,
+                help: options.help,
+                options: options.options
+            },
+            options.newToolNotes || {}
+        );
+        const folder = findChildWithLabel(note, labels.options);
+        const presets = findChildWithLabel(folder, labels.presets);
+        return { noteId: note.noteId, optionsFolderId: folder.noteId, presetsId: presets.noteId };
     }
 
     function addOption() {
-        const command = api.getNote(options.commandId);
-        if (!command) {
-            throw new Error('Command note not found: ' + options.commandId);
-        }
-        const note = createOption(command, options.option || {});
+        const location = presetsLocation(options.toolId);
+        const note = createOptionNote(location.folder, options.option || {});
         return { noteId: note.noteId };
+    }
+
+    function importOptions() {
+        const location = presetsLocation(options.toolId);
+        const specs = Array.isArray(options.options) ? options.options : [];
+        const noteIds = [];
+        for (let index = 0; index < specs.length; index += 1) {
+            noteIds.push(createOptionNote(location.folder, specs[index]).noteId);
+        }
+        return { created: noteIds.length, noteIds: noteIds };
+    }
+
+    function deleteOption() {
+        const note = requireNote(options.noteId, 'Option note not found');
+        note.deleteNote();
+        return { ok: true };
+    }
+
+    function setToolBase() {
+        const tool = requireNote(options.toolId, 'Tool note not found');
+        if (nonEmpty(options.base)) {
+            tool.setLabel(labels.base, String(options.base));
+        } else if (typeof tool.removeLabel === 'function') {
+            tool.removeLabel(labels.base);
+        } else {
+            tool.setLabel(labels.base, '');
+        }
+        return { ok: true };
+    }
+
+    function setToolsRoot() {
+        const target = requireNote(options.noteId, 'Note not found');
+        if (options.oldToolsRootId && options.oldToolsRootId !== options.noteId) {
+            const old = api.getNote(options.oldToolsRootId);
+            if (old && typeof old.removeLabel === 'function') {
+                old.removeLabel(labels.tools);
+            }
+        }
+        target.setLabel(labels.tools, '');
+        return { ok: true };
     }
 
     function savePreset() {
-        const command = api.getNote(options.commandId);
-        if (!command) {
-            throw new Error('Command note not found: ' + options.commandId);
+        const location = presetsLocation(options.toolId);
+        const data = readPresets(location.presets);
+        const name = nonEmpty(options.name) ? String(options.name) : 'Preset';
+        const values = options.values && typeof options.values === 'object' ? options.values : {};
+        let updated = false;
+        for (let index = 0; index < data.presets.length; index += 1) {
+            const entry = data.presets[index];
+            if (entry && entry.name === name) {
+                entry.values = values;
+                updated = true;
+                break;
+            }
         }
-        const folder = ensureFolder(command, labels.presets, 'Presets');
-        const name = String(options.name || '').trim() || 'Preset';
-        const payload = JSON.stringify({ v: 1, values: options.values || {} });
-        const existing = findChildByTitle(folder, name);
-        if (existing) {
-            existing.setContent(payload);
-            return { noteId: existing.noteId };
+        if (!updated) {
+            data.presets.push({ name: name, values: values });
         }
-        const note = api.createNewNote({
-            parentNoteId: folder.noteId,
-            title: name,
-            type: 'code',
-            mime: 'application/json',
-            content: payload
-        }).note;
-        note.setLabel(labels.preset, '');
-        return { noteId: note.noteId };
+        data.v = 1;
+        location.presets.setContent(JSON.stringify(data));
+        return { noteId: location.presets.noteId };
     }
 
     function deletePreset() {
-        const note = api.getNote(options.noteId);
-        if (!note) {
-            throw new Error('Preset not found: ' + options.noteId);
+        const location = presetsLocation(options.toolId);
+        const data = readPresets(location.presets);
+        const name = String(options.name == null ? '' : options.name);
+        const kept = [];
+        for (let index = 0; index < data.presets.length; index += 1) {
+            const entry = data.presets[index];
+            if (entry && entry.name !== name) {
+                kept.push(entry);
+            }
         }
-        note.deleteNote();
+        data.presets = kept;
+        location.presets.setContent(JSON.stringify(data));
         return { ok: true };
+    }
+
+    function importLegacy() {
+        const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
+        const settings = api.getNoteWithLabel(labels.root);
+        if (settings && hasLabel(settings, labels.migrated)) {
+            return { created: 0, skipped: true };
+        }
+        const fallbacks = options.newToolNotes || {};
+        const categoryName = nonEmpty(options.categoryName) ? String(options.categoryName) : 'Imported';
+        const candidates = api.getNotesWithLabel(labels.legacyCommand);
+        let created = 0;
+        for (let index = 0; index < candidates.length; index += 1) {
+            const note = candidates[index];
+            if (hasLabel(note, labels.legacyTemplate) || hasLabel(note, labels.legacyOptionTemplate)) {
+                continue;
+            }
+            let base = note.getLabelValue(labels.base);
+            if (!nonEmpty(base)) {
+                base = note.getContent();
+            }
+            createToolNote(
+                toolsRoot,
+                {
+                    category: categoryName,
+                    title: note.title,
+                    base: base,
+                    description: note.getLabelValue(labels.description),
+                    content: toolHtmlContent(),
+                    install: fallbacks.install,
+                    usage: fallbacks.usage,
+                    help: fallbacks.help,
+                    options: legacyOptionSpecs(note)
+                },
+                fallbacks
+            );
+            created += 1;
+        }
+        if (settings) {
+            settings.setLabel(labels.migrated, '');
+        }
+        return { created: created };
     }
 
     switch (options.action) {
         case 'bootstrap':
             return bootstrap();
-        case 'createCommand':
-            return createCommand();
+        case 'createCategory':
+            return createCategory();
+        case 'createTool':
+            return createTool();
         case 'addOption':
             return addOption();
+        case 'importOptions':
+            return importOptions();
+        case 'deleteOption':
+            return deleteOption();
+        case 'setToolBase':
+            return setToolBase();
+        case 'setToolsRoot':
+            return setToolsRoot();
         case 'savePreset':
             return savePreset();
         case 'deletePreset':
             return deletePreset();
+        case 'importLegacy':
+            return importLegacy();
         default:
             throw new Error('Unknown action: ' + options.action);
     }
 }
 
-module.exports = { beRun, ACTIONS };
+module.exports = { beRun };

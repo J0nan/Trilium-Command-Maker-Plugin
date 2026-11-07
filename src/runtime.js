@@ -2,16 +2,31 @@
 
 /**
  * Trilium runtime glue: reads FNote objects into plain snapshots, keeps a
- * command index for fast fuzzy search, and exposes actions to the palette.
+ * tool index for fast search, and exposes actions to the palette.
+ *
+ * Structure the runtime expects:
+ *   Tools/                 #cmTools (any path)
+ *     Category/            #cmCategory
+ *       Tool/              #cmTool  (three H2 sections in its content)
+ *         Install          #cmInstall
+ *         Usage            #cmUsage
+ *         Help             #cmHelpNote
+ *         Options/         #cmOptions
+ *           Option         #cmOption
+ *           Presets        #cmPresets (JSON)
  */
 
 const Model = require('./model');
 const Backend = require('./backend');
+const Sections = require('./sections');
+const Parse = require('./parse');
 const UI = require('./ui');
 
 let index = [];
-let notesById = new Map();
+let entriesById = new Map();
 let bootstrapPromise = null;
+let bootstrapApi = null;
+let bootstrapInfo = null;
 
 function getApi() {
     return typeof api !== 'undefined' ? api : null;
@@ -36,16 +51,38 @@ function readLabels(note) {
     return labels;
 }
 
+function hasLabel(note, name) {
+    if (!note) {
+        return false;
+    }
+    try {
+        if (typeof note.hasLabel === 'function') {
+            return note.hasLabel(name);
+        }
+        const value = note.getLabelValue(name);
+        return value !== null && value !== undefined;
+    } catch (error) {
+        return false;
+    }
+}
+
 async function childWithLabel(note, label) {
+    if (!note) {
+        return null;
+    }
     const children = await note.getChildNotes();
     for (const child of children) {
-        let value = null;
-        try {
-            value = child.getLabelValue(label);
-        } catch (error) {
-            value = null;
+        if (hasLabel(child, label)) {
+            return child;
         }
-        if (value !== null && value !== undefined) {
+    }
+    return null;
+}
+
+async function childByTitle(note, title) {
+    const children = await note.getChildNotes();
+    for (const child of children) {
+        if (child.title === title) {
             return child;
         }
     }
@@ -53,165 +90,273 @@ async function childWithLabel(note, label) {
 }
 
 function ensureBootstrap() {
-    if (bootstrapPromise) {
+    const apiRef = getApi();
+    if (bootstrapPromise && bootstrapApi === apiRef) {
         return bootstrapPromise;
     }
-    const apiRef = getApi();
     if (!apiRef) {
         return Promise.reject(new Error('Trilium api is not available.'));
     }
+    bootstrapApi = apiRef;
     bootstrapPromise = Promise.resolve(
         apiRef.runOnBackend(Backend.beRun, [{
-            action: Backend.ACTIONS.bootstrap,
-            labels: Model.LABELS
+            action: 'bootstrap',
+            labels: Model.LABELS,
+            seed: true,
+            seedTools: Model.seedTools(),
+            newToolNotes: Model.newToolNotes()
         }])
-    ).catch(function (error) {
+    ).then(function (result) {
+        bootstrapInfo = result || null;
+        return result;
+    }).catch(function (error) {
         bootstrapPromise = null;
+        bootstrapApi = null;
         throw error;
     });
     return bootstrapPromise;
 }
 
-async function readOptionTitles(note) {
-    const optionsNote = await childWithLabel(note, Model.LABELS.options);
-    if (!optionsNote) {
-        return [];
+async function resolveToolsRoot() {
+    const apiRef = getApi();
+    try {
+        const found = await apiRef.searchForNote('#' + Model.LABELS.tools);
+        if (found) {
+            return found;
+        }
+    } catch (error) {
+        // fall through to the bootstrap result
     }
-    const children = await optionsNote.getChildNotes();
-    return children.map(function (child) {
-        return child.title;
-    });
+    if (bootstrapInfo && bootstrapInfo.toolsRootId) {
+        try {
+            return await apiRef.getNote(bootstrapInfo.toolsRootId);
+        } catch (error) {
+            return null;
+        }
+    }
+    return null;
 }
 
-/**
- * The base string lives in the note content (code note, raw text) unless
- * #cmBase overrides it. It must be indexed here: search has to match the
- * command text, not just the title.
- */
-async function readBase(note, labels) {
-    if (labels && labels[Model.LABELS.base] !== undefined) {
-        return String(labels[Model.LABELS.base]);
+async function readOptionSnapshots(toolNote) {
+    const folder = await childWithLabel(toolNote, Model.LABELS.options);
+    if (!folder) {
+        return [];
     }
-    try {
-        return String(await note.getContent());
-    } catch (error) {
-        return '';
+    const children = await folder.getChildNotes();
+    const snapshots = [];
+    for (const child of children) {
+        if (hasLabel(child, Model.LABELS.option)) {
+            snapshots.push({
+                noteId: child.noteId,
+                title: child.title,
+                labels: readLabels(child)
+            });
+        }
     }
+    return snapshots;
+}
+
+function optionSearchText(snapshots) {
+    return snapshots.map(function (snapshot) {
+        const labels = snapshot.labels || {};
+        return [
+            snapshot.title,
+            labels[Model.LABELS.flag],
+            labels[Model.LABELS.doc],
+            labels[Model.LABELS.enumValues]
+        ].join(' ');
+    }).join(' ');
 }
 
 async function refresh() {
     await ensureBootstrap();
     const apiRef = getApi();
-    const notes = await apiRef.searchForNotes('#' + Model.LABELS.command);
-
-    let templateId = null;
-    try {
-        const template = await apiRef.searchForNote('#' + Model.LABELS.template);
-        templateId = template ? template.noteId : null;
-    } catch (error) {
-        templateId = null;
-    }
+    const toolsRoot = await resolveToolsRoot();
+    const notes = await apiRef.searchForNotes('#' + Model.LABELS.tool);
 
     const nextIndex = [];
     const nextById = new Map();
+
     for (const note of notes) {
-        if (templateId && note.noteId === templateId) {
+        if (hasLabel(note, Model.LABELS.legacyTemplate)) {
             continue;
         }
         const labels = readLabels(note);
-        let optionTitles = [];
+        let category = '';
         try {
-            optionTitles = await readOptionTitles(note);
+            const parents = note.getParentNotes();
+            if (parents && parents.length) {
+                category = parents[0].title;
+            }
         } catch (error) {
-            optionTitles = [];
+            category = '';
         }
-        nextById.set(note.noteId, note);
+
+        let optionSnapshots = [];
+        try {
+            optionSnapshots = await readOptionSnapshots(note);
+        } catch (error) {
+            optionSnapshots = [];
+        }
+
+        let whatIs = '';
+        try {
+            const parsed = Sections.parseToolNote(await note.getContent());
+            whatIs = parsed.whatIs;
+        } catch (error) {
+            whatIs = '';
+        }
+
+        const entry = {
+            noteId: note.noteId,
+            title: note.title,
+            category: category,
+            labels: labels,
+            note: note,
+            optionSnapshots: optionSnapshots,
+            searchText: [labels[Model.LABELS.description], whatIs].join(' ')
+        };
+
+        nextById.set(note.noteId, entry);
         nextIndex.push({
             noteId: note.noteId,
             title: note.title,
-            labels: labels,
-            base: await readBase(note, labels),
-            optionTitles: optionTitles
+            category: category,
+            description: labels[Model.LABELS.description] || '',
+            base: labels[Model.LABELS.base] || Model.deriveBase(note.title),
+            optionCount: optionSnapshots.length,
+            optionTitles: optionSnapshots.map(function (snapshot) {
+                return snapshot.title;
+            })
         });
     }
 
     index = nextIndex;
-    notesById = nextById;
+    entriesById = nextById;
     return index;
 }
 
 function search(query) {
     return index.filter(function (item) {
+        const entry = entriesById.get(item.noteId);
         return Model.matches({
             title: item.title,
-            description: item.labels[Model.LABELS.description] || '',
-            tags: item.labels[Model.LABELS.tags] || '',
-            base: item.base || item.labels[Model.LABELS.base] || '',
+            category: item.category,
+            description: item.description,
+            base: item.base,
             options: [],
-            optionTitles: item.optionTitles || []
+            optionTitles: item.optionTitles,
+            searchText: entry ? entry.searchText + ' ' + optionSearchText(entry.optionSnapshots) : ''
         }, query);
     });
 }
 
-async function readPresets(presetsNote) {
-    const children = await presetsNote.getChildNotes();
-    const presets = [];
-    for (const child of children) {
-        let marker = null;
-        try {
-            marker = child.getLabelValue(Model.LABELS.preset);
-        } catch (error) {
-            marker = null;
-        }
-        if (marker === null || marker === undefined) {
-            continue;
-        }
-        let values = {};
-        try {
-            const parsed = JSON.parse(await child.getContent());
-            values = parsed && parsed.values ? parsed.values : {};
-        } catch (error) {
-            values = {};
-        }
-        presets.push({ noteId: child.noteId, title: child.title, values: values });
+function readPresetsContent(content) {
+    let data = null;
+    try {
+        data = JSON.parse(String(content || ''));
+    } catch (error) {
+        data = null;
     }
-    return presets;
+    if (!data || typeof data !== 'object' || !Array.isArray(data.presets)) {
+        return [];
+    }
+    return data.presets
+        .filter(function (entry) {
+            return entry && typeof entry.name === 'string';
+        })
+        .map(function (entry) {
+            return {
+                name: entry.name,
+                values: entry.values && typeof entry.values === 'object' ? entry.values : {}
+            };
+        });
 }
 
-async function load(noteId) {
-    const note = notesById.get(noteId);
+async function readNoteText(note) {
     if (!note) {
-        throw new Error('Command not found. Reopen the palette.');
+        return '';
     }
-    const labels = readLabels(note);
-
     let content = '';
     try {
         content = await note.getContent();
     } catch (error) {
-        content = '';
+        return '';
     }
+    if (note.type === 'code') {
+        return String(content || '');
+    }
+    return Parse.stripHtml(content);
+}
 
+async function load(noteId) {
+    const entry = entriesById.get(noteId);
+    if (!entry) {
+        throw new Error('Tool not found. Reopen the palette.');
+    }
+    const note = entry.note;
+    const labels = entry.labels;
+
+    let toolContent = '';
+    try {
+        toolContent = await note.getContent();
+    } catch (error) {
+        toolContent = '';
+    }
+    const parsed = Sections.parseToolNote(toolContent);
+
+    const installNote = await childWithLabel(note, Model.LABELS.install) || await childByTitle(note, 'Install');
+    const usageNote = await childWithLabel(note, Model.LABELS.usage) || await childByTitle(note, 'Usage');
+    const helpNote = await childWithLabel(note, Model.LABELS.helpNote) || await childByTitle(note, 'Help');
     const optionsNote = await childWithLabel(note, Model.LABELS.options);
-    const presetsNote = await childWithLabel(note, Model.LABELS.presets);
-    const optionNotes = optionsNote ? await optionsNote.getChildNotes() : [];
+    const presetsNote = optionsNote ? await childWithLabel(optionsNote, Model.LABELS.presets) : null;
 
-    const definition = Model.buildCommand({
+    const installText = await readNoteText(installNote);
+    const usageHtml = usageNote ? await usageNote.getContent() : '';
+    const helpText = await readNoteText(helpNote);
+    const usageExamples = Sections.parseExamples(usageHtml, labels[Model.LABELS.base] || Model.deriveBase(note.title));
+
+    const definition = Model.buildTool({
         noteId: note.noteId,
         title: note.title,
-        content: content,
+        category: entry.category,
+        content: toolContent,
         labels: labels,
-        optionNotes: optionNotes.map(function (optionNote) {
-            return {
-                noteId: optionNote.noteId,
-                title: optionNote.title,
-                labels: readLabels(optionNote)
-            };
-        })
+        optionNotes: entry.optionSnapshots,
+        examples: usageExamples,
+        searchText: entry.searchText
     });
 
-    const presets = presetsNote ? await readPresets(presetsNote) : [];
-    return { definition: definition, presets: presets };
+    let presets = [];
+    if (presetsNote) {
+        try {
+            presets = readPresetsContent(await presetsNote.getContent());
+        } catch (error) {
+            presets = [];
+        }
+    }
+
+    let toolNotePath = '';
+    try {
+        toolNotePath = note.getBestNotePathString();
+    } catch (error) {
+        toolNotePath = '';
+    }
+
+    return {
+        definition: definition,
+        presets: presets,
+        whatIs: parsed.whatIs,
+        links: parsed.links,
+        officialLinks: parsed.officialLinks,
+        usefulLinks: parsed.usefulLinks,
+        usageExamples: usageExamples,
+        helpText: helpText,
+        installText: installText,
+        optionsFolderId: optionsNote ? optionsNote.noteId : null,
+        presetsNoteId: presetsNote ? presetsNote.noteId : null,
+        toolNotePath: toolNotePath
+    };
 }
 
 async function copyText(text) {
@@ -253,6 +398,27 @@ function backendAction(action, extra) {
     return apiRef.runOnBackend(Backend.beRun, [params]);
 }
 
+function toolsRootId() {
+    if (!bootstrapInfo || !bootstrapInfo.toolsRootId) {
+        throw new Error('Tools folder is not available yet. Reopen the palette.');
+    }
+    return bootstrapInfo.toolsRootId;
+}
+
+async function setToolsRootAction(noteId) {
+    const current = await resolveToolsRoot();
+    await backendAction('setToolsRoot', {
+        noteId: noteId,
+        oldToolsRootId: current ? current.noteId : null
+    });
+    bootstrapPromise = null;
+    bootstrapInfo = null;
+    index = [];
+    entriesById = new Map();
+    await refresh();
+    return { noteId: noteId };
+}
+
 function controller() {
     return {
         refresh: refresh,
@@ -260,21 +426,116 @@ function controller() {
         load: load,
         copy: copyText,
         insert: insertText,
-        createCommand(title) {
-            return backendAction(Backend.ACTIONS.createCommand, { title: title });
+
+        categories() {
+            const seen = [];
+            for (const item of index) {
+                if (item.category && seen.indexOf(item.category) === -1) {
+                    seen.push(item.category);
+                }
+            }
+            seen.sort();
+            return seen;
         },
-        addOption(commandId, option) {
-            return backendAction(Backend.ACTIONS.addOption, { commandId: commandId, option: option });
-        },
-        savePreset(commandId, name, values) {
-            return backendAction(Backend.ACTIONS.savePreset, {
-                commandId: commandId,
-                name: name,
-                values: values
+
+        async createTool(spec) {
+            const notes = Model.newToolNotes();
+            const created = await backendAction('createTool', {
+                toolsRootId: toolsRootId(),
+                category: spec.category,
+                title: spec.title,
+                base: spec.base,
+                description: spec.description,
+                content: Model.toolTemplate(),
+                install: notes.install,
+                usage: notes.usage,
+                help: notes.help
             });
+            await refresh();
+            return created;
         },
-        deletePreset(noteId) {
-            return backendAction(Backend.ACTIONS.deletePreset, { noteId: noteId });
+
+        addOption(toolId, option) {
+            return backendAction('addOption', { toolId: toolId, option: option });
+        },
+
+        importOptions(toolId, options) {
+            return backendAction('importOptions', { toolId: toolId, options: options || [] });
+        },
+
+        deleteOption(noteId) {
+            return backendAction('deleteOption', { noteId: noteId });
+        },
+
+        setToolBase(toolId, base) {
+            return backendAction('setToolBase', { toolId: toolId, base: base });
+        },
+
+        savePreset(toolId, name, values) {
+            return backendAction('savePreset', { toolId: toolId, name: name, values: values });
+        },
+
+        deletePreset(toolId, name) {
+            return backendAction('deletePreset', { toolId: toolId, name: name });
+        },
+
+        async importLegacy() {
+            const created = await backendAction('importLegacy', {
+                toolsRootId: toolsRootId(),
+                categoryName: 'Imported',
+                newToolNotes: Model.newToolNotes()
+            });
+            await refresh();
+            return created;
+        },
+
+        async currentToolsRoot() {
+            const root = await resolveToolsRoot();
+            return root ? { noteId: root.noteId, title: root.title } : null;
+        },
+
+        setToolsRoot(noteId) {
+            return setToolsRootAction(noteId);
+        },
+
+        async useActiveNoteAsToolsRoot() {
+            const apiRef = getApi();
+            const active = apiRef.getActiveContextNote();
+            if (!active) {
+                throw new Error('No active note to use as the Tools folder.');
+            }
+            return setToolsRootAction(active.noteId);
+        },
+
+        async activeNoteText() {
+            const apiRef = getApi();
+            const active = apiRef.getActiveContextNote();
+            if (!active) {
+                throw new Error('No active note.');
+            }
+            const text = await readNoteText(active);
+            return { noteId: active.noteId, title: active.title, text: text };
+        },
+
+        async noteText(noteId) {
+            const apiRef = getApi();
+            const note = await apiRef.getNote(noteId);
+            if (!note) {
+                throw new Error('Note not found: ' + noteId);
+            }
+            const text = await readNoteText(note);
+            return { noteId: note.noteId, title: note.title, text: text };
+        },
+
+        openNote(noteId) {
+            const apiRef = getApi();
+            return Promise.resolve(apiRef.getNote(noteId)).then(function (note) {
+                if (!note) {
+                    throw new Error('Note not found: ' + noteId);
+                }
+                const path = note.getBestNotePathString();
+                return apiRef.activateNote(path);
+            });
         }
     };
 }

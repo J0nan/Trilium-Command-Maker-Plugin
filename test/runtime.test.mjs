@@ -3,57 +3,208 @@ import assert from 'node:assert/strict';
 
 import Runtime from '../src/runtime.js';
 
-function commandNote(spec) {
+function makeNote(spec) {
+    const labels = spec.labels || {};
+    const children = spec.children || [];
     return {
         noteId: spec.noteId,
         title: spec.title,
+        type: spec.type || 'text',
+        content: spec.content || '',
+        children: children,
         getLabelValue(name) {
-            const labels = spec.labels || {};
             return Object.prototype.hasOwnProperty.call(labels, name) ? labels[name] : null;
         },
-        async getChildNotes() {
-            return spec.children || [];
+        hasLabel(name) {
+            return Object.prototype.hasOwnProperty.call(labels, name);
         },
-        async getContent() {
-            return spec.content || '';
+        getChildNotes() {
+            return Promise.resolve(children);
+        },
+        getContent() {
+            return Promise.resolve(spec.content || '');
+        },
+        getParentNotes() {
+            return spec.parents || [];
+        },
+        getBestNotePathString() {
+            return 'root/' + spec.noteId;
         }
     };
 }
 
-function installApi(notes) {
+function installApi(tool, extraNotes) {
+    const notes = new Map();
+    notes.set(tool.noteId, tool);
+    Object.keys(extraNotes || {}).forEach((id) => {
+        notes.set(id, extraNotes[id]);
+    });
+    const calls = [];
     globalThis.api = {
-        async runOnBackend() {
+        async runOnBackend(fn, params) {
+            calls.push(params[0]);
+            if (params[0].action === 'bootstrap') {
+                return { rootId: 'root', toolsRootId: 'tools' };
+            }
             return {};
         },
-        async searchForNotes() {
-            return notes;
+        async searchForNote(query) {
+            return query === '#cmTools' ? { noteId: 'tools', title: 'Tools' } : null;
         },
-        async searchForNote() {
+        async searchForNotes(query) {
+            return query === '#cmTool' ? [tool] : [];
+        },
+        async getNote(noteId) {
+            return notes.get(noteId) || null;
+        },
+        getActiveContextNote() {
             return null;
         }
     };
+    return calls;
 }
 
-test('search matches a base string stored in note content', async () => {
-    installApi([commandNote({ noteId: 'c1', title: 'My encode', content: 'ffmpeg -i "{{input}}"' })]);
+function makeTool() {
+    const category = makeNote({ noteId: 'cat1', title: 'Media' });
+    const input = makeNote({
+        noteId: 'o1',
+        title: 'Input file',
+        labels: { cmOption: '', cmFlag: '-i', cmType: 'path', cmDoc: 'Input file to read.', cmDefault: 'in.mp4' }
+    });
+    const codec = makeNote({
+        noteId: 'o2',
+        title: 'Video codec',
+        labels: { cmOption: '', cmFlag: '-c:v', cmType: 'enum', cmValues: 'libx264,libx265', cmDoc: 'Video encoder.', cmDefault: 'libx264' }
+    });
+    const options = makeNote({
+        noteId: 'opts',
+        title: 'Options',
+        labels: { cmOptions: '' },
+        children: [input, codec]
+    });
+    const presets = makeNote({
+        noteId: 'presets',
+        title: 'Presets',
+        type: 'code',
+        labels: { cmPresets: '' },
+        content: JSON.stringify({ v: 1, presets: [{ name: 'web', values: { 'note:o1': 'web.mp4' } }] })
+    });
+    options.children.push(presets);
+    const install = makeNote({
+        noteId: 'install',
+        title: 'Install',
+        labels: { cmInstall: '' },
+        content: '<p>winget install ffmpeg</p>'
+    });
+    const usage = makeNote({
+        noteId: 'usage',
+        title: 'Usage',
+        labels: { cmUsage: '' },
+        content: '<p>Compress a video:</p><pre><code>ffmpeg -i in.mp4 out.mp4</code></pre>'
+    });
+    const help = makeNote({
+        noteId: 'help',
+        title: 'Help',
+        type: 'code',
+        labels: { cmHelpNote: '' },
+        content: 'Usage: ffmpeg [options] ...\n  -i input  input file'
+    });
+    const tool = makeNote({
+        noteId: 't1',
+        title: 'ffmpeg',
+        labels: { cmTool: '', cmBase: 'ffmpeg', cmDesc: 'Media toolkit' },
+        content: [
+            '<h2>What is?</h2><p>Encode and process video.</p>',
+            '<h2>Official links</h2><ul><li><a href="https://ffmpeg.org">ffmpeg.org</a></li></ul>',
+            '<h2>Useful links</h2><ul><li><a href="https://ffmpeg.org/ffmpeg.html">Reference</a></li></ul>'
+        ].join(''),
+        children: [install, usage, help, options],
+        parents: [category]
+    });
+    return { tool: tool, install: install, usage: usage, help: help, options: options, presets: presets };
+}
+
+test('refresh indexes tool title, category, base, option help and What is? text', async () => {
+    const built = makeTool();
+    installApi(built.tool, {});
     await Runtime.refresh();
-    assert.equal(Runtime.search('ffmpeg').length, 1, 'base content is indexed');
-    assert.equal(Runtime.search('encode').length, 1, 'title is still indexed');
+
+    assert.equal(Runtime.search('ffmpeg').length, 1, 'base is indexed');
+    assert.equal(Runtime.search('media').length, 1, 'category is indexed');
+    assert.equal(Runtime.search('input').length, 1, 'option title is indexed');
+    assert.equal(Runtime.search('encoder').length, 1, 'option help is indexed');
+    assert.equal(Runtime.search('process video').length, 1, 'What is? text is indexed');
     assert.equal(Runtime.search('docker').length, 0);
     globalThis.api = undefined;
 });
 
-test('#cmBase overrides the content for search', async () => {
-    installApi([
-        commandNote({
-            noteId: 'c2',
-            title: 'Rip',
-            labels: { cmBase: 'ffmpeg -i {{src}}' },
-            content: 'ignored'
-        })
-    ]);
+test('load returns options with help, examples, links, help output, install and presets', async () => {
+    const built = makeTool();
+    installApi(built.tool, {});
+    await Runtime.refresh();
+
+    const loaded = await Runtime.load('t1');
+    assert.equal(loaded.definition.title, 'ffmpeg');
+    assert.equal(loaded.definition.base, 'ffmpeg');
+    assert.equal(loaded.definition.category, 'Media');
+    assert.equal(loaded.definition.options.length, 2);
+    assert.equal(loaded.definition.options[0].help, 'Input file to read.');
+    assert.match(loaded.whatIs, /Encode and process video/);
+    assert.deepEqual(loaded.links.map((link) => link.href), ['https://ffmpeg.org', 'https://ffmpeg.org/ffmpeg.html']);
+    assert.deepEqual(loaded.usageExamples, ['ffmpeg -i in.mp4 out.mp4']);
+    assert.match(loaded.helpText, /Usage: ffmpeg/);
+    assert.match(loaded.installText, /winget install ffmpeg/);
+    assert.equal(loaded.presets.length, 1);
+    assert.equal(loaded.presets[0].name, 'web');
+    globalThis.api = undefined;
+});
+
+test('refresh falls back to #cmBase when present and to the title otherwise', async () => {
+    const built = makeTool();
+    installApi(built.tool, {});
     await Runtime.refresh();
     assert.equal(Runtime.search('ffmpeg').length, 1);
-    assert.equal(Runtime.search('ignored').length, 0);
+
+    built.tool.getLabelValue = function (name) {
+        if (name === 'cmBase') {
+            return 'ffmpeg -hide_banner';
+        }
+        return null;
+    };
+    await Runtime.refresh();
+    assert.equal(Runtime.search('hide_banner').length, 1);
+    globalThis.api = undefined;
+});
+
+test('createTool sends the three-H2 template and the standard child content', async () => {
+    const built = makeTool();
+    const calls = installApi(built.tool, {});
+    await Runtime.refresh();
+    const controller = Runtime.controller();
+
+    await controller.createTool({ title: 'docker', category: 'Containers', base: 'docker', description: '' });
+    const create = calls.filter((call) => call.action === 'createTool')[0];
+    assert.ok(create, 'createTool backend action was called');
+    assert.match(create.content, /<h2>What is\?<\/h2>/);
+    assert.match(create.content, /<h2>Official links<\/h2>/);
+    assert.match(create.content, /<h2>Useful links<\/h2>/);
+    assert.match(create.install, /installation/i);
+    assert.match(create.usage, /examples/i);
+    assert.equal(create.title, 'docker');
+    assert.equal(create.category, 'Containers');
+    globalThis.api = undefined;
+});
+
+test('setToolBase forwards the tool id and the new base', async () => {
+    const built = makeTool();
+    const calls = installApi(built.tool, {});
+    await Runtime.refresh();
+    const controller = Runtime.controller();
+
+    await controller.setToolBase('t1', 'ffmpeg -hide_banner');
+    const call = calls.filter((entry) => entry.action === 'setToolBase')[0];
+    assert.ok(call);
+    assert.equal(call.toolId, 't1');
+    assert.equal(call.base, 'ffmpeg -hide_banner');
     globalThis.api = undefined;
 });
