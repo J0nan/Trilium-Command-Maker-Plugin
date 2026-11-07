@@ -3200,33 +3200,33 @@ function openPalette(controller) {
 
     let searchTimer = null;
 
+    /** Update the footer and always surface the same text as a Trilium message. */
     function setStatus(message, isError) {
-        statusEl.textContent = message || '';
+        const value = message === undefined || message === null ? '' : String(message);
+        statusEl.textContent = value;
         statusEl.classList.toggle('is-error', Boolean(isError));
+        if (value.trim() === '') {
+            return;
+        }
+        try {
+            if (typeof api === 'undefined') {
+                return;
+            }
+            if (isError) {
+                if (typeof api.showError === 'function') {
+                    api.showError('Command Maker: ' + value);
+                }
+            } else if (typeof api.showMessage === 'function') {
+                api.showMessage(value);
+            }
+        } catch (ignored) {
+            // the footer status is the fallback
+        }
     }
 
     function notify(error) {
         const message = error && error.message ? error.message : String(error);
         setStatus(message, true);
-        try {
-            if (typeof api !== 'undefined' && typeof api.showError === 'function') {
-                api.showError('Command Maker: ' + message);
-            }
-        } catch (ignored) {
-            // showing the message in the footer is enough
-        }
-    }
-
-    /** Trilium toast for confirmations, since the footer is hidden behind a modal. */
-    function notifyMessage(message) {
-        setStatus(message);
-        try {
-            if (typeof api !== 'undefined' && typeof api.showMessage === 'function') {
-                api.showMessage(message);
-            }
-        } catch (ignored) {
-            // the footer status is the fallback
-        }
     }
 
     async function checkForUpdates() {
@@ -3580,14 +3580,14 @@ function openPalette(controller) {
         });
     }
 
-    async function copyTextToClipboard(text) {
+    async function copyTextToClipboard(text, message) {
         if (!String(text || '').trim()) {
             notify(new Error('Nothing to copy.'));
             return;
         }
         const ok = await controller.copy(text);
         if (ok) {
-            setStatus('Copied to the clipboard.');
+            setStatus(message || 'Copied to the clipboard.');
         } else {
             notify(new Error('Could not write to the clipboard.'));
         }
@@ -4453,10 +4453,7 @@ function openPalette(controller) {
                     const looksJson = /^\s*[{[]/.test(String(pasted || ''));
                     return copyTextToClipboard(Prompt.buildToolPrompt({
                         helpText: looksJson ? '' : pasted
-                    }));
-                })
-                .then(function () {
-                    notifyMessage('AI prompt copied to the clipboard.');
+                    }), 'AI prompt copied to the clipboard.');
                 })
                 .catch(notify);
         });
@@ -4554,10 +4551,7 @@ function openPalette(controller) {
                 const copyButton = el('button', 'cm-button', 'Copy JSON');
                 copyButton.type = 'button';
                 copyButton.addEventListener('click', function () {
-                    copyTextToClipboard(json)
-                        .then(function () {
-                            setStatus('Tool file copied.');
-                        })
+                    copyTextToClipboard(json, 'Tool file copied to the clipboard.')
                         .catch(notify);
                 });
 

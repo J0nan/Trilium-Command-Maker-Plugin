@@ -772,6 +772,10 @@ test('the version button checks the latest GitHub release', async () => {
     }, 'update status');
 
     assert.equal(fetchCalls[0], Version.LATEST_RELEASE_API);
+    assert.ok(
+        env.calls.messages.some((message) => /latest is v9\.9\.9/.test(message)),
+        'the update status is also shown as a Trilium message'
+    );
     assert.equal(
         find(dom.body, (node) => classed(node, 'cm-version')).textContent,
         'v' + Version.VERSION + ' → v9.9.9',
@@ -844,7 +848,10 @@ test('Import tool parses a tool file, copies the AI prompt and imports the tool'
     assert.match(env.calls.copied[0], /Usage: rg \[OPTIONS\] PATTERN/);
     assert.match(env.calls.copied[0], /--ignore-case/);
     await waitFor(() => env.calls.messages.length > 0, 'Trilium confirmation message');
-    assert.match(env.calls.messages[0], /AI prompt copied/i);
+    assert.ok(
+        env.calls.messages.some((message) => /AI prompt copied/i.test(message)),
+        'the copy confirmation reaches Trilium'
+    );
 
     area.value = JSON.stringify(portableTool);
     buttonWithText(modal, 'Parse').click();
@@ -853,6 +860,10 @@ test('Import tool parses a tool file, copies the AI prompt and imports the tool'
         return status && /Parsed tool "ripgrep"/.test(status.textContent);
     }, 'parse status');
     assert.ok(buttonWithText(modal, 'Import tool').disabled === false, 'the import action is enabled');
+    assert.ok(
+        env.calls.messages.some((message) => /Parsed tool "ripgrep"/.test(message)),
+        'the parse status is also shown as a Trilium message'
+    );
 
     buttonWithText(modal, 'Import tool').click();
     const call = await waitFor(() => {
@@ -861,6 +872,23 @@ test('Import tool parses a tool file, copies the AI prompt and imports the tool'
     assert.equal(call.tool.title, 'ripgrep');
     assert.equal(call.tool.options.length, 2);
     assert.equal(call.tool.options[1].flag, '', 'the positional option survives the import');
+    await waitFor(() => {
+        return env.calls.messages.some((message) => /Imported tool "ripgrep"/.test(message));
+    }, 'import status toast');
+});
+
+test('errors are also shown as Trilium error messages', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    buttonWithText(dom.body, 'Import options').click();
+
+    await waitFor(() => env.calls.errors.length > 0, 'Trilium error message');
+    assert.equal(env.calls.errors.length, 1, 'the error is shown exactly once');
+    assert.match(env.calls.errors[0], /Command Maker: Select a tool first\./);
 });
 
 test('Export tool shows the portable JSON and copies it', async () => {
