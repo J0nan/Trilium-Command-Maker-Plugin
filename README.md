@@ -129,8 +129,8 @@ icon; the plugin only fills in one that is missing.
 
 The palette reads all three: examples can be used or copied, the help output and
 install steps are shown in collapsible sections, and loading an example fills the
-option controls from its flags while the preview shows the example verbatim until
-you regenerate from the form.
+option controls from its flags while the preview initially shows the example
+verbatim; changing any option then regenerates the command from the form.
 
 ### Option notes
 

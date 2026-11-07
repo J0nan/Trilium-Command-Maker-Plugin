@@ -2750,6 +2750,7 @@ function openPalette(controller) {
         presets: [],
         values: {},
         edited: false,
+        exampleLoaded: false,
         optionRows: [],
         optionGroups: [],
         previewEl: null,
@@ -3029,6 +3030,7 @@ function openPalette(controller) {
         const previousPreview = preserve && state.previewEl ? state.previewEl.value : '';
         state.current = item;
         state.edited = false;
+        state.exampleLoaded = false;
         markActive(item);
         try {
             const loaded = await controller.load(item.noteId);
@@ -3055,6 +3057,10 @@ function openPalette(controller) {
 
     function setValue(key, value) {
         state.values[key] = value;
+        if (state.exampleLoaded) {
+            state.edited = false;
+            state.exampleLoaded = false;
+        }
         updatePreview(false);
     }
 
@@ -3230,6 +3236,7 @@ function openPalette(controller) {
         }
         state.values = Object.assign(Model.defaultValueMap(state.definition), preset.values || {});
         state.edited = false;
+        state.exampleLoaded = false;
         renderDetail();
         setStatus('Preset loaded.');
     }
@@ -3307,10 +3314,12 @@ function openPalette(controller) {
             row.appendChild(button('Use', function () {
                 state.values = Model.valuesFromExample(state.definition, example);
                 state.edited = false;
+                state.exampleLoaded = false;
                 renderDetail();
                 if (state.previewEl) {
                     state.previewEl.value = example;
                     state.edited = true;
+                    state.exampleLoaded = true;
                 }
                 setStatus('Example loaded into the form.');
             }));
@@ -3370,6 +3379,7 @@ function openPalette(controller) {
                 .then(function () {
                     state.definition.base = value || Model.deriveBase(state.definition.title);
                     state.values = Object.assign(Model.defaultValueMap(state.definition), state.values);
+                    state.exampleLoaded = false;
                     renderDetail();
                     setStatus('Base command updated.');
                 })
@@ -3497,6 +3507,7 @@ function openPalette(controller) {
         }
         preview.addEventListener('input', function () {
             state.edited = true;
+            state.exampleLoaded = false;
         });
         state.previewEl = preview;
         detail.appendChild(preview);
@@ -3509,6 +3520,7 @@ function openPalette(controller) {
         actions.appendChild(button('Insert', insert));
         actions.appendChild(button('Regenerate', function () {
             state.edited = false;
+            state.exampleLoaded = false;
             updatePreview(true);
         }));
         actions.appendChild(button('Open note', function () {

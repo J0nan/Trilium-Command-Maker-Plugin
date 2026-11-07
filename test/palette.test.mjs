@@ -526,6 +526,32 @@ test('clicking a boolean option row toggles its checkbox', async () => {
     assert.deepEqual(env.calls.errors, []);
 });
 
+test('editing an option after loading an example updates the command', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+
+    findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'Use')[0].click();
+    await tick();
+    assert.equal(find(dom.body, (node) => classed(node, 'cm-preview')).value, 'ffmpeg -i in.mp4 out.mp4');
+
+    const input = findAll(dom.body, (node) => classed(node, 'cm-control') && node.placeholder === '-i')[0];
+    input.value = 'changed.mp4';
+    input.dispatch('input');
+    await tick();
+    assert.equal(
+        find(dom.body, (node) => classed(node, 'cm-preview')).value,
+        'ffmpeg -i changed.mp4',
+        'the command regenerates from the form after an example edit'
+    );
+    assert.deepEqual(env.calls.errors, []);
+});
+
 test('import dialog parses pasted help output and imports the selected options', async () => {
     const dom = createDom();
     const fixture = buildFixture();
