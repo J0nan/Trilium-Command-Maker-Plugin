@@ -12,7 +12,7 @@
  *
  * Actions: bootstrap | createCategory | createTool | importTool | addOption |
  * importOptions | deleteOption | setToolBase | setToolsRoot | savePreset |
- * deletePreset
+ * deletePreset | ensureTab
  */
 
 function beRun(params) {
@@ -515,6 +515,46 @@ function beRun(params) {
         return { ok: true };
     }
 
+    /**
+     * Create (once) the Render Note that hosts the palette in a normal Trilium
+     * tab, including the HTML wrapper and a clone of the plugin script that
+     * mounts the UI into that wrapper. All pieces are looked up by label, so the
+     * user can move them freely and re-clicking never duplicates anything.
+     */
+    function ensureTab() {
+        const root = requireNote(options.rootId, 'Command Maker settings note not found');
+        let html = api.getNoteWithLabel(labels.tabHtml);
+        if (!html) {
+            html = api.createNewNote({
+                parentNoteId: root.noteId,
+                title: 'Command Maker tab',
+                type: 'code',
+                mime: 'text/html',
+                content: '<div class="cm-tab-root"></div>'
+            }).note;
+            html.setLabel(labels.tabHtml, '');
+        }
+        let tab = api.getNoteWithLabel(labels.tab);
+        if (!tab) {
+            tab = api.createNewNote({
+                parentNoteId: root.noteId,
+                title: 'Command Maker',
+                type: 'render',
+                content: ''
+            }).note;
+            tab.setLabel(labels.tab, '');
+        }
+        if (tab.getRelationValue('renderNote') !== html.noteId) {
+            tab.setRelation('renderNote', html.noteId);
+        }
+        if (nonEmpty(options.scriptNoteId)) {
+            // A clone shares the content: updates to the plugin script reach the
+            // tab renderer without copying the bundle into a second note.
+            api.ensureNoteIsPresentInParent(String(options.scriptNoteId), html.noteId, '');
+        }
+        return { tabNoteId: tab.noteId, htmlNoteId: html.noteId };
+    }
+
     switch (options.action) {
         case 'bootstrap':
             return bootstrap();
@@ -538,6 +578,8 @@ function beRun(params) {
             return savePreset();
         case 'deletePreset':
             return deletePreset();
+        case 'ensureTab':
+            return ensureTab();
         default:
             throw new Error('Unknown action: ' + options.action);
     }

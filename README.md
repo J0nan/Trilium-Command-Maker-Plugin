@@ -74,6 +74,23 @@ So to pin a shortcut that survives reinstalls, add `#cmShortcut=ctrl+alt+k` to t
 `Command Maker` note. Useful alternatives that rarely collide: `ctrl+alt+k`,
 `alt+shift+k`, `ctrl+shift+space`.
 
+### Opening the palette in a tab
+
+The palette opens as an overlay. The **Open in tab** button in its header moves
+the same interface into a normal Trilium tab, so you can keep it next to your
+notes instead of covering them.
+
+The first click creates three notes under the `Command Maker` settings note:
+
+| Note | Purpose |
+| --- | --- |
+| `Command Maker` (`#cmTab`) | Render Note that displays the palette |
+| `Command Maker tab` (`#cmTabHtml`) | HTML wrapper rendered by the note |
+| `Command Maker.js` clone | The plugin script, cloned under the wrapper so it runs when the tab renders |
+
+The plugin script is **cloned**, not copied, so updating the plugin also updates
+the tab. Clicking the button again reuses the same notes and opens one more tab.
+
 ### Manual install (no installer script)
 
 Download `command-maker.js` from the

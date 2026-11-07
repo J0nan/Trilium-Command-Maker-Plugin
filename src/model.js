@@ -29,6 +29,8 @@ const LABELS = {
     options: 'cmOptions',
     option: 'cmOption',
     presets: 'cmPresets',
+    tab: 'cmTab',
+    tabHtml: 'cmTabHtml',
     // tool metadata
     description: 'cmDesc',
     tags: 'cmTags',

@@ -43,6 +43,9 @@ function makeNote(params) {
         hasRelation(name) {
             return Object.prototype.hasOwnProperty.call(relations, name);
         },
+        getRelationValue(name) {
+            return Object.prototype.hasOwnProperty.call(relations, name) ? relations[name] : null;
+        },
         setContent(value) {
             content = value == null ? '' : String(value);
         },
@@ -95,6 +98,17 @@ function createApi() {
             return notes.get(noteId) || null;
         },
         createNewNote,
+        ensureNoteIsPresentInParent(noteId, parentNoteId) {
+            const note = notes.get(noteId);
+            const parent = notes.get(parentNoteId);
+            if (!note || !parent) {
+                throw new Error('ensureNoteIsPresentInParent with an unknown note');
+            }
+            if (parent.children.indexOf(note) === -1) {
+                parent.children.push(note);
+            }
+            return { branch: {} };
+        },
         currentNote: { getParentNotes: () => [] },
         getTodayNote: () => today,
         log() {}
@@ -688,6 +702,54 @@ test('importTool creates a tool note with its category, children and options', (
     assert.equal(options[1].getLabelValue(labels.flag), null, 'positional options have no flag label');
     assert.equal(options[1].getLabelValue(labels.required), 'true');
     assert.equal(options[1].getLabelValue(labels.placeholder), 'pattern');
+});
+
+test('ensureTab creates one render note, one HTML wrapper and one plugin clone', () => {
+    const { api, beRun, result } = seedApi();
+    const plugin = api.createNewNote({
+        parentNoteId: result.rootId,
+        title: 'Command Maker.js',
+        type: 'code',
+        mime: 'application/javascript;env=frontend',
+        content: 'bundle'
+    }).note;
+
+    const first = beRun({
+        action: 'ensureTab',
+        labels: labels,
+        rootId: result.rootId,
+        scriptNoteId: plugin.noteId
+    });
+    assert.ok(first.tabNoteId);
+
+    const root = api.getNote(result.rootId);
+    const tabs = root.getChildNotes().filter((child) => child.hasLabel(labels.tab));
+    const htmls = root.getChildNotes().filter((child) => child.hasLabel(labels.tabHtml));
+    assert.equal(tabs.length, 1, 'one render note');
+    assert.equal(htmls.length, 1, 'one HTML wrapper');
+    assert.equal(tabs[0].type, 'render');
+    assert.equal(tabs[0].getRelationValue('renderNote'), htmls[0].noteId);
+    assert.equal(htmls[0].type, 'code');
+    assert.equal(htmls[0].mime, 'text/html');
+    assert.match(htmls[0].getContent(), /cm-tab-root/);
+    assert.ok(
+        htmls[0].getChildNotes().some((child) => child.noteId === plugin.noteId),
+        'the plugin script is cloned under the HTML wrapper'
+    );
+
+    const second = beRun({
+        action: 'ensureTab',
+        labels: labels,
+        rootId: result.rootId,
+        scriptNoteId: plugin.noteId
+    });
+    assert.equal(second.tabNoteId, first.tabNoteId, 'reusing an existing tab note');
+    assert.equal(root.getChildNotes().filter((child) => child.hasLabel(labels.tab)).length, 1);
+    assert.equal(
+        htmls[0].getChildNotes().filter((child) => child.noteId === plugin.noteId).length,
+        1,
+        'the plugin clone is not duplicated'
+    );
 });
 
 test('unknown actions throw', () => {

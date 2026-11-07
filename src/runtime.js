@@ -574,6 +574,56 @@ async function checkLatestVersion() {
     return result;
 }
 
+/**
+ * In a Render Note, Trilium executes the JS child with `api.$container` set to
+ * the rendered note content. The HTML wrapper carries `.cm-tab-root`, so the
+ * palette mounts inside the tab instead of as an overlay. A launcher script has
+ * no rendered container and falls through to the normal overlay.
+ */
+function embeddedHost(apiRef) {
+    if (!apiRef || !apiRef.$container) {
+        return null;
+    }
+    try {
+        const container = apiRef.$container;
+        if (typeof container.find !== 'function') {
+            return null;
+        }
+        const marked = container.find('.cm-tab-root');
+        const node = marked && marked.length ? marked[0] : null;
+        return node && typeof node.appendChild === 'function' ? node : null;
+    } catch (error) {
+        return null;
+    }
+}
+
+async function openInTab() {
+    const apiRef = getApi();
+    if (!apiRef) {
+        throw new Error('Trilium api is not available.');
+    }
+    const info = await ensureBootstrap();
+    if (!info || !info.rootId) {
+        throw new Error('Command Maker is not ready yet. Reopen the palette.');
+    }
+    const scriptNote = apiRef.startNote;
+    if (!scriptNote || !scriptNote.noteId) {
+        throw new Error('Cannot locate the Command Maker plugin note.');
+    }
+    const result = await backendAction('ensureTab', {
+        rootId: info.rootId,
+        scriptNoteId: scriptNote.noteId
+    });
+    if (typeof apiRef.openTabWithNote !== 'function') {
+        throw new Error('This Trilium version cannot open notes in a new tab.');
+    }
+    if (typeof apiRef.waitUntilSynced === 'function') {
+        await apiRef.waitUntilSynced();
+    }
+    await apiRef.openTabWithNote(result.tabNoteId, true);
+    return result.tabNoteId;
+}
+
 function controller() {
     return {
         refresh: refresh,
@@ -692,7 +742,9 @@ function controller() {
                 const path = note.getBestNotePathString();
                 return apiRef.activateNote(path);
             });
-        }
+        },
+
+        openInTab: openInTab
     };
 }
 
@@ -703,7 +755,12 @@ function start() {
         return;
     }
     try {
-        UI.openPalette(controller());
+        const host = embeddedHost(apiRef);
+        if (host) {
+            UI.openPalette(controller(), { container: host });
+        } else {
+            UI.openPalette(controller());
+        }
     } catch (error) {
         console.error('[command-maker]', error);
         try {

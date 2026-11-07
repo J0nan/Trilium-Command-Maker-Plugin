@@ -47,6 +47,9 @@ function installApi(tool, extraNotes) {
             if (params[0].action === 'bootstrap') {
                 return { rootId: 'root', toolsRootId: 'tools' };
             }
+            if (params[0].action === 'ensureTab') {
+                return { tabNoteId: 'tab-note' };
+            }
             return {};
         },
         async searchForNote(query) {
@@ -259,5 +262,34 @@ test('setToolBase forwards the tool id and the new base', async () => {
     assert.ok(call);
     assert.equal(call.toolId, 't1');
     assert.equal(call.base, 'ffmpeg -hide_banner');
+    globalThis.api = undefined;
+});
+
+test('openInTab ensures the tab structure and opens the render note', async () => {
+    const built = makeTool();
+    const calls = installApi(built.tool, {});
+    await Runtime.refresh();
+
+    const opened = [];
+    let synced = false;
+    globalThis.api.startNote = { noteId: 'plugin-note' };
+    globalThis.api.waitUntilSynced = async function () {
+        synced = true;
+    };
+    globalThis.api.openTabWithNote = async function (noteId, activate) {
+        opened.push({ noteId: noteId, activate: activate });
+    };
+
+    const controller = Runtime.controller();
+    const tabNoteId = await controller.openInTab();
+
+    assert.equal(tabNoteId, 'tab-note');
+    const ensure = calls.filter((entry) => entry.action === 'ensureTab')[0];
+    assert.ok(ensure, 'ensureTab reaches the backend');
+    assert.equal(ensure.rootId, 'root');
+    assert.equal(ensure.scriptNoteId, 'plugin-note');
+    assert.equal(synced, true, 'the new notes are synced before the tab opens');
+    assert.deepEqual(opened, [{ noteId: 'tab-note', activate: true }]);
+
     globalThis.api = undefined;
 });

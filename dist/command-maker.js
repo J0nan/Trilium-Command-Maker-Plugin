@@ -1863,6 +1863,8 @@ const LABELS = {
     options: 'cmOptions',
     option: 'cmOption',
     presets: 'cmPresets',
+    tab: 'cmTab',
+    tabHtml: 'cmTabHtml',
     // tool metadata
     description: 'cmDesc',
     tags: 'cmTags',
@@ -2446,7 +2448,7 @@ __def("backend", function (module, exports, __require) {
  *
  * Actions: bootstrap | createCategory | createTool | importTool | addOption |
  * importOptions | deleteOption | setToolBase | setToolsRoot | savePreset |
- * deletePreset
+ * deletePreset | ensureTab
  */
 
 function beRun(params) {
@@ -2949,6 +2951,46 @@ function beRun(params) {
         return { ok: true };
     }
 
+    /**
+     * Create (once) the Render Note that hosts the palette in a normal Trilium
+     * tab, including the HTML wrapper and a clone of the plugin script that
+     * mounts the UI into that wrapper. All pieces are looked up by label, so the
+     * user can move them freely and re-clicking never duplicates anything.
+     */
+    function ensureTab() {
+        const root = requireNote(options.rootId, 'Command Maker settings note not found');
+        let html = api.getNoteWithLabel(labels.tabHtml);
+        if (!html) {
+            html = api.createNewNote({
+                parentNoteId: root.noteId,
+                title: 'Command Maker tab',
+                type: 'code',
+                mime: 'text/html',
+                content: '<div class="cm-tab-root"></div>'
+            }).note;
+            html.setLabel(labels.tabHtml, '');
+        }
+        let tab = api.getNoteWithLabel(labels.tab);
+        if (!tab) {
+            tab = api.createNewNote({
+                parentNoteId: root.noteId,
+                title: 'Command Maker',
+                type: 'render',
+                content: ''
+            }).note;
+            tab.setLabel(labels.tab, '');
+        }
+        if (tab.getRelationValue('renderNote') !== html.noteId) {
+            tab.setRelation('renderNote', html.noteId);
+        }
+        if (nonEmpty(options.scriptNoteId)) {
+            // A clone shares the content: updates to the plugin script reach the
+            // tab renderer without copying the bundle into a second note.
+            api.ensureNoteIsPresentInParent(String(options.scriptNoteId), html.noteId, '');
+        }
+        return { tabNoteId: tab.noteId, htmlNoteId: html.noteId };
+    }
+
     switch (options.action) {
         case 'bootstrap':
             return bootstrap();
@@ -2972,6 +3014,8 @@ function beRun(params) {
             return savePreset();
         case 'deletePreset':
             return deletePreset();
+        case 'ensureTab':
+            return ensureTab();
         default:
             throw new Error('Unknown action: ' + options.action);
     }
@@ -3007,6 +3051,7 @@ __def("ui", function (module, exports, __require) {
  *   useActiveNoteAsToolsRoot(): Promise<void>
  *   activeNoteText(): Promise<{ noteId, title, text }>
  *   openNote(noteId): Promise<void>
+ *   openInTab(): Promise<string>
  */
 
 const Model = __require("model");
@@ -3035,6 +3080,12 @@ const CSS = [
     '.cm-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--main-border-color,#ddd);}',
     '.cm-search{flex:1;padding:8px 10px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--input-background-color,#fafafa);color:inherit;font-size:15px;}',
     '.cm-close{border:0;background:transparent;color:inherit;font-size:16px;cursor:pointer;padding:4px 8px;}',
+    '.cm-open-tab{border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer;padding:4px 10px;white-space:nowrap;}',
+    '.cm-open-tab:hover{background:var(--accented-background-color,#eef2ff);}',
+    '.cm-open-tab:disabled{opacity:.5;cursor:default;}',
+    '.cm-tab-root{display:flex;flex-direction:column;height:100%;min-height:60vh;}',
+    '.cm-tab-view{position:relative;display:flex;flex-direction:column;width:100%;height:100%;min-height:60vh;}',
+    '.cm-tab-view .cm-panel{width:100%;max-width:none;max-height:none;height:100%;flex:1;min-height:0;border-radius:0;box-shadow:none;}',
     '.cm-body{display:flex;min-height:0;flex:1;}',
     '.cm-list{width:300px;flex-shrink:0;overflow-y:auto;border-right:1px solid var(--main-border-color,#ddd);padding:6px;}',
     '.cm-result{display:block;width:100%;text-align:left;padding:8px 10px;border:0;border-radius:6px;background:transparent;color:inherit;cursor:pointer;}',
@@ -3157,6 +3208,30 @@ function ensureStyle() {
     document.head.appendChild(style);
 }
 
+/** Drop a view mounted by an earlier render of the same tab note. */
+function clearEmbeddedView(container) {
+    let stale = null;
+    if (typeof container.querySelector === 'function') {
+        stale = container.querySelector('.cm-tab-view');
+    } else if (container.children) {
+        for (let index = 0; index < container.children.length; index += 1) {
+            const child = container.children[index];
+            if (child && String(child.className || '').split(/\s+/).indexOf('cm-tab-view') !== -1) {
+                stale = child;
+                break;
+            }
+        }
+    }
+    if (!stale) {
+        return;
+    }
+    if (typeof stale.remove === 'function') {
+        stale.remove();
+    } else if (stale.parentNode && typeof stale.parentNode.removeChild === 'function') {
+        stale.parentNode.removeChild(stale);
+    }
+}
+
 function el(tag, className, text) {
     const node = document.createElement(tag);
     if (className) {
@@ -3207,14 +3282,21 @@ function codeBlockTheme() {
     }
 }
 
-function openPalette(controller) {
-    if (instance) {
-        instance.focus();
-        return instance;
-    }
-    if (typeof window !== 'undefined' && window.__cmPaletteInstance) {
-        window.__cmPaletteInstance.focus();
-        return window.__cmPaletteInstance;
+function openPalette(controller, options) {
+    const container = options && options.container ? options.container : null;
+    const embedded = Boolean(container);
+
+    // Only the overlay is a singleton. The tab renderer is rendered by Trilium
+    // next to a possibly open overlay, so it always mounts its own instance.
+    if (!embedded) {
+        if (instance) {
+            instance.focus();
+            return instance;
+        }
+        if (typeof window !== 'undefined' && window.__cmPaletteInstance) {
+            window.__cmPaletteInstance.focus();
+            return window.__cmPaletteInstance;
+        }
     }
 
     ensureStyle();
@@ -3247,7 +3329,8 @@ function openPalette(controller) {
         importToolParsed: null
     };
 
-    const overlay = el('div', 'cm-overlay');
+    const overlay = embedded ? null : el('div', 'cm-overlay');
+    const shell = embedded ? el('div', 'cm-tab-view') : overlay;
     const panel = el('div', 'cm-panel');
 
     const head = el('div', 'cm-head');
@@ -3255,11 +3338,21 @@ function openPalette(controller) {
     searchInput.type = 'search';
     searchInput.className = 'cm-search';
     searchInput.placeholder = 'Search tools…';
+    const openTabButton = embedded ? null : el('button', 'cm-open-tab', 'Open in tab');
+    if (openTabButton) {
+        openTabButton.type = 'button';
+        openTabButton.title = 'Open Command Maker in a new Trilium tab';
+    }
     const closeButton = el('button', 'cm-close', '✕');
     closeButton.type = 'button';
     closeButton.title = 'Close (Esc)';
     head.appendChild(searchInput);
-    head.appendChild(closeButton);
+    if (openTabButton) {
+        head.appendChild(openTabButton);
+    }
+    if (!embedded) {
+        head.appendChild(closeButton);
+    }
 
     const body = el('div', 'cm-body');
     const list = el('div', 'cm-list');
@@ -3305,11 +3398,20 @@ function openPalette(controller) {
     panel.appendChild(head);
     panel.appendChild(body);
     panel.appendChild(footer);
-    overlay.appendChild(panel);
-    // The modal lives on the overlay, not inside the panel: the panel shrinks to
-    // its content when no tool is selected, which used to clip the modal.
-    overlay.appendChild(modalHost);
-    document.body.appendChild(overlay);
+    if (embedded) {
+        clearEmbeddedView(container);
+        shell.appendChild(panel);
+        // The modal lives on the shell, not inside the panel: the panel shrinks
+        // to its content when no tool is selected, which used to clip the modal.
+        shell.appendChild(modalHost);
+        container.appendChild(shell);
+    } else {
+        overlay.appendChild(panel);
+        // The modal lives on the overlay, not inside the panel: the panel shrinks
+        // to its content when no tool is selected, which used to clip the modal.
+        overlay.appendChild(modalHost);
+        document.body.appendChild(overlay);
+    }
 
     let searchTimer = null;
 
@@ -3403,6 +3505,17 @@ function openPalette(controller) {
             clearTimeout(searchTimer);
             searchTimer = null;
         }
+        if (shell) {
+            shell.removeEventListener('keydown', onKeyDown);
+        }
+        if (embedded) {
+            if (shell && shell.parentNode && typeof shell.parentNode.removeChild === 'function') {
+                shell.parentNode.removeChild(shell);
+            } else if (shell) {
+                shell.remove();
+            }
+            return;
+        }
         overlay.removeEventListener('keydown', onKeyDown);
         overlay.remove();
         if (typeof window !== 'undefined' && window.__cmPaletteInstance === instance) {
@@ -3416,7 +3529,7 @@ function openPalette(controller) {
             event.preventDefault();
             if (state.modal) {
                 closeModal();
-            } else {
+            } else if (!embedded) {
                 close();
             }
             return;
@@ -4976,7 +5089,28 @@ function openPalette(controller) {
     }
 
     searchInput.addEventListener('input', onSearchInput);
-    closeButton.addEventListener('click', close);
+    if (!embedded) {
+        closeButton.addEventListener('click', close);
+    }
+    if (openTabButton) {
+        openTabButton.addEventListener('click', function (event) {
+            event.preventDefault();
+            if (typeof controller.openInTab !== 'function') {
+                setStatus('This install cannot open the palette in a tab.', true);
+                return;
+            }
+            openTabButton.disabled = true;
+            Promise.resolve()
+                .then(function () {
+                    return controller.openInTab();
+                })
+                .then(close)
+                .catch(function (error) {
+                    openTabButton.disabled = false;
+                    notify(error);
+                });
+        });
+    }
     versionButton.addEventListener('click', function (event) {
         event.preventDefault();
         Promise.resolve().then(checkForUpdates).catch(notify);
@@ -4987,14 +5121,18 @@ function openPalette(controller) {
     importButton.addEventListener('click', openImport);
     addOptionButton.addEventListener('click', openAddOption);
     toolsButton.addEventListener('click', openToolsFolder);
-    overlay.addEventListener('click', function (event) {
-        if (event.target === overlay) {
-            close();
-        }
-    });
-    overlay.addEventListener('keydown', onKeyDown);
+    if (embedded) {
+        shell.addEventListener('keydown', onKeyDown);
+    } else {
+        overlay.addEventListener('click', function (event) {
+            if (event.target === overlay) {
+                close();
+            }
+        });
+        overlay.addEventListener('keydown', onKeyDown);
+    }
 
-    instance = {
+    const handle = {
         focus() {
             searchInput.focus();
             searchInput.select();
@@ -5002,8 +5140,11 @@ function openPalette(controller) {
         close,
         element: panel
     };
-    if (typeof window !== 'undefined') {
-        window.__cmPaletteInstance = instance;
+    if (!embedded) {
+        instance = handle;
+        if (typeof window !== 'undefined') {
+            window.__cmPaletteInstance = handle;
+        }
     }
 
     searchInput.focus();
@@ -5015,7 +5156,7 @@ function openPalette(controller) {
         .then(runSearch)
         .catch(notify);
 
-    return instance;
+    return handle;
 }
 
 module.exports = { openPalette };
@@ -5597,6 +5738,56 @@ async function checkLatestVersion() {
     return result;
 }
 
+/**
+ * In a Render Note, Trilium executes the JS child with `api.$container` set to
+ * the rendered note content. The HTML wrapper carries `.cm-tab-root`, so the
+ * palette mounts inside the tab instead of as an overlay. A launcher script has
+ * no rendered container and falls through to the normal overlay.
+ */
+function embeddedHost(apiRef) {
+    if (!apiRef || !apiRef.$container) {
+        return null;
+    }
+    try {
+        const container = apiRef.$container;
+        if (typeof container.find !== 'function') {
+            return null;
+        }
+        const marked = container.find('.cm-tab-root');
+        const node = marked && marked.length ? marked[0] : null;
+        return node && typeof node.appendChild === 'function' ? node : null;
+    } catch (error) {
+        return null;
+    }
+}
+
+async function openInTab() {
+    const apiRef = getApi();
+    if (!apiRef) {
+        throw new Error('Trilium api is not available.');
+    }
+    const info = await ensureBootstrap();
+    if (!info || !info.rootId) {
+        throw new Error('Command Maker is not ready yet. Reopen the palette.');
+    }
+    const scriptNote = apiRef.startNote;
+    if (!scriptNote || !scriptNote.noteId) {
+        throw new Error('Cannot locate the Command Maker plugin note.');
+    }
+    const result = await backendAction('ensureTab', {
+        rootId: info.rootId,
+        scriptNoteId: scriptNote.noteId
+    });
+    if (typeof apiRef.openTabWithNote !== 'function') {
+        throw new Error('This Trilium version cannot open notes in a new tab.');
+    }
+    if (typeof apiRef.waitUntilSynced === 'function') {
+        await apiRef.waitUntilSynced();
+    }
+    await apiRef.openTabWithNote(result.tabNoteId, true);
+    return result.tabNoteId;
+}
+
 function controller() {
     return {
         refresh: refresh,
@@ -5715,7 +5906,9 @@ function controller() {
                 const path = note.getBestNotePathString();
                 return apiRef.activateNote(path);
             });
-        }
+        },
+
+        openInTab: openInTab
     };
 }
 
@@ -5726,7 +5919,12 @@ function start() {
         return;
     }
     try {
-        UI.openPalette(controller());
+        const host = embeddedHost(apiRef);
+        if (host) {
+            UI.openPalette(controller(), { container: host });
+        } else {
+            UI.openPalette(controller());
+        }
     } catch (error) {
         console.error('[command-maker]', error);
         try {

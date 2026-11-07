@@ -288,8 +288,9 @@ function buildFixture() {
 }
 
 function makeApi(fixture) {
-    const calls = { backend: [], copied: [], inserted: [], errors: [], activated: [], messages: [] };
+    const calls = { backend: [], copied: [], inserted: [], errors: [], activated: [], messages: [], tabbed: [] };
     const api = {
+        startNote: { noteId: 'plugin-note' },
         async runOnBackend(fn, params) {
             calls.backend.push(params[0]);
             if (params[0].action === 'bootstrap') {
@@ -300,6 +301,9 @@ function makeApi(fixture) {
             }
             if (params[0].action === 'importOptions') {
                 return { created: (params[0].options || []).length };
+            }
+            if (params[0].action === 'ensureTab') {
+                return { tabNoteId: 'tab-note', htmlNoteId: 'tab-html' };
             }
             return {};
         },
@@ -323,6 +327,10 @@ function makeApi(fixture) {
         },
         activateNote(path) {
             calls.activated.push(path);
+        },
+        async waitUntilSynced() {},
+        async openTabWithNote(noteId, activate) {
+            calls.tabbed.push({ noteId, activate });
         },
         showError(message) {
             calls.errors.push(message);
@@ -1013,4 +1021,59 @@ test('deleting a preset needs a second click and arms the red button', async () 
         return env.calls.backend.filter((entry) => entry.action === 'deletePreset')[0];
     }, 'delete preset backend call');
     assert.equal(call.name, 'web');
+});
+
+test('Open in tab creates the tab note and closes the overlay', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    const overlay = find(dom.body, (node) => classed(node, 'cm-overlay'));
+    const openTab = find(dom.body, (node) => classed(node, 'cm-open-tab'));
+    assert.ok(openTab, 'the overlay has an Open in tab button');
+    assert.equal(openTab.textContent, 'Open in tab');
+
+    openTab.click();
+    const tabbed = await waitFor(() => env.calls.tabbed[0], 'open tab call');
+    assert.equal(tabbed.noteId, 'tab-note');
+    assert.equal(tabbed.activate, true);
+
+    const ensure = env.calls.backend.filter((entry) => entry.action === 'ensureTab')[0];
+    assert.ok(ensure, 'the tab structure is ensured before opening it');
+    assert.equal(ensure.rootId, 'root');
+    assert.equal(ensure.scriptNoteId, 'plugin-note');
+    assert.equal(overlay.removed, true, 'the overlay closes once the tab is open');
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('a render-note host mounts the palette inside its tab container', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    const marker = dom.createElement('div');
+    marker.className = 'cm-tab-root';
+    env.api.$container = {
+        0: marker,
+        length: 1,
+        find(selector) {
+            return selector === '.cm-tab-root' ? { 0: marker, length: 1 } : { length: 0 };
+        },
+        get(index) {
+            return index === 0 ? marker : null;
+        }
+    };
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(marker, (node) => classed(node, 'cm-result')), 'embedded search results');
+    assert.equal(find(dom.body, (node) => classed(node, 'cm-overlay')), null, 'no overlay is created');
+    assert.ok(find(marker, (node) => classed(node, 'cm-tab-view')), 'the tab view wraps the panel');
+    assert.ok(find(marker, (node) => classed(node, 'cm-panel')), 'the palette panel is inside the tab');
+    assert.equal(find(marker, (node) => classed(node, 'cm-open-tab')), null, 'no Open in tab button inside a tab');
+    assert.equal(find(marker, (node) => classed(node, 'cm-close')), null, 'no overlay close button inside a tab');
+
+    const style = dom.getElementById('cm-palette-style');
+    assert.match(style.textContent, /\.cm-tab-view\{[^}]*position:relative/);
+    assert.match(style.textContent, /\.cm-tab-view \.cm-panel\{[^}]*height:100%/);
 });
