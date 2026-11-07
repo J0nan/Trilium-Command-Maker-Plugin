@@ -4723,16 +4723,6 @@ function controller() {
             return { noteId: active.noteId, title: active.title, text: text };
         },
 
-        async noteText(noteId) {
-            const apiRef = getApi();
-            const note = await apiRef.getNote(noteId);
-            if (!note) {
-                throw new Error('Note not found: ' + noteId);
-            }
-            const text = await readNoteText(note);
-            return { noteId: note.noteId, title: note.title, text: text };
-        },
-
         openNote(noteId) {
             const apiRef = getApi();
             return Promise.resolve(apiRef.getNote(noteId)).then(function (note) {
