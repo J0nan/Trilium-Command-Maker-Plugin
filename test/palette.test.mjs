@@ -202,6 +202,12 @@ test('palette searches, renders, copies and inserts a command', async () => {
         content: 'ffmpeg -i "{{input}}"',
         children: [optionsFolder, presetsFolder]
     });
+    const secondCommand = note({
+        noteId: 'cmd2',
+        title: 'git commit',
+        content: 'git commit -m "{{message}}"',
+        children: []
+    });
 
     const calls = { backend: [], copied: [], inserted: [], errors: [] };
     const api = {
@@ -210,7 +216,7 @@ test('palette searches, renders, copies and inserts a command', async () => {
             return {};
         },
         async searchForNotes() {
-            return [commandNote, templateNote];
+            return [commandNote, secondCommand, templateNote];
         },
         async searchForNote() {
             return templateNote;
@@ -239,7 +245,13 @@ test('palette searches, renders, copies and inserts a command', async () => {
         console,
         setTimeout,
         clearTimeout,
-        setImmediate
+        setImmediate,
+        getComputedStyle(node) {
+            if (classed(node, 'hljs')) {
+                return { backgroundColor: 'rgb(30, 30, 30)', color: 'rgb(212, 212, 212)' };
+            }
+            return { backgroundColor: 'rgba(0, 0, 0, 0)', color: 'rgb(200, 200, 200)' };
+        }
     });
     vm.runInContext(buildBundle(), context);
 
@@ -248,9 +260,47 @@ test('palette searches, renders, copies and inserts a command', async () => {
     assert.equal(calls.backend.length, 1);
     assert.equal(calls.backend[0].action, 'bootstrap');
 
-    row.click();
+    const style = document.getElementById('cm-palette-style');
+    assert.ok(style, 'palette stylesheet is injected');
+    assert.match(style.textContent, /:root \.cm-preview:hover/);
+    assert.match(style.textContent, /:root \.cm-preview:focus/);
+    assert.equal(style.textContent.includes('#f4f4f4'), false, 'no hard-coded light code background');
+
+    // No row is highlighted until the user navigates or clicks.
+    assert.equal(find(document.body, (node) => classed(node, 'is-active')), null);
+
+    const overlay = find(document.body, (node) => classed(node, 'cm-overlay'));
+    overlay.dispatch('keydown', { key: 'ArrowDown' });
+    assert.equal(
+        find(document.body, (node) => classed(node, 'is-active')).children[0].textContent,
+        'ffmpeg compress'
+    );
+    overlay.dispatch('keydown', { key: 'ArrowUp' });
+    assert.equal(
+        find(document.body, (node) => classed(node, 'is-active')).children[0].textContent,
+        'git commit'
+    );
+    overlay.dispatch('keydown', { key: 'ArrowDown' });
+    assert.equal(
+        find(document.body, (node) => classed(node, 'is-active')).children[0].textContent,
+        'ffmpeg compress'
+    );
+
+    findAll(document.body, (node) => classed(node, 'cm-result'))[0].click();
     const preview = await waitFor(() => find(document.body, (node) => classed(node, 'cm-preview')), 'preview');
     assert.equal(preview.value, 'ffmpeg -i "" -c:v libx264');
+    assert.equal(preview.style.background, 'rgb(30, 30, 30)');
+    assert.equal(preview.style.color, 'rgb(212, 212, 212)');
+
+    const probes = findAll(document.body, (node) => classed(node, 'hljs'));
+    assert.ok(probes.length > 0, 'the code theme is probed');
+    assert.ok(probes.every((node) => node.removed), 'probes never stay in the document');
+
+    // Clicking a result keeps it marked as the selected row.
+    assert.equal(
+        find(document.body, (node) => classed(node, 'is-active')).children[0].textContent,
+        'ffmpeg compress'
+    );
 
     const inputControl = findAll(document.body, (node) => classed(node, 'cm-control') && node.placeholder === '-i')[0];
     assert.ok(inputControl, 'path option renders a text control');
@@ -270,6 +320,110 @@ test('palette searches, renders, copies and inserts a command', async () => {
     assert.equal(calls.inserted[0], 'ffmpeg -i "in file.mp4" -c:v libx264');
 
     assert.deepEqual(calls.errors, []);
+});
+
+test('dropdowns hide the native arrow and keep a single themed arrow', async () => {
+    const document = createDom();
+    const enumOption = note({
+        noteId: 'e1',
+        title: 'Codec',
+        labels: { cmType: 'enum', cmValues: 'a,b', cmFlag: '--codec' }
+    });
+    const optionsFolder = note({
+        noteId: 'opts',
+        title: 'Options',
+        labels: { cmOptions: '' },
+        children: [enumOption]
+    });
+    const command = note({
+        noteId: 'demo',
+        title: 'demo',
+        content: 'demo',
+        children: [optionsFolder]
+    });
+    const api = {
+        async runOnBackend() {
+            return {};
+        },
+        async searchForNotes() {
+            return [command];
+        },
+        async searchForNote() {
+            return null;
+        },
+        showError() {}
+    };
+    const context = vm.createContext({
+        api,
+        window: {},
+        document,
+        navigator: { clipboard: { async writeText() {} } },
+        console,
+        setTimeout,
+        clearTimeout,
+        setImmediate
+    });
+    vm.runInContext(buildBundle(), context);
+
+    await waitFor(() => find(document.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(document.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(document.body, (node) => classed(node, 'cm-preview')), 'preview');
+
+    const selects = findAll(document.body, (node) => node.tagName === 'SELECT');
+    assert.ok(selects.length >= 2, 'enum and preset selects render');
+    assert.ok(
+        selects.every((node) => classed(node, 'cm-select')),
+        'every select opts into the single-arrow style'
+    );
+
+    const style = document.getElementById('cm-palette-style');
+    assert.match(style.textContent, /\.cm-control\.cm-select\{[^}]*appearance:none/);
+    assert.match(style.textContent, /\.cm-control\.cm-select\{[^}]*background-image:var\(--select-arrow-svg/);
+});
+
+test('Enter opens the first result even though no row starts selected', async () => {
+    const document = createDom();
+    const first = note({ noteId: 'c1', title: 'ffmpeg compress', content: 'ffmpeg -i ""' });
+    const second = note({ noteId: 'c2', title: 'git commit', content: 'git commit' });
+    const api = {
+        async runOnBackend() {
+            return {};
+        },
+        async searchForNotes() {
+            return [first, second];
+        },
+        async searchForNote() {
+            return null;
+        },
+        showError() {}
+    };
+    const context = vm.createContext({
+        api,
+        window: {},
+        document,
+        navigator: { clipboard: { async writeText() {} } },
+        console,
+        setTimeout,
+        clearTimeout,
+        setImmediate,
+        getComputedStyle() {
+            return { backgroundColor: 'rgb(30, 30, 30)', color: 'rgb(212, 212, 212)' };
+        }
+    });
+    vm.runInContext(buildBundle(), context);
+
+    await waitFor(() => find(document.body, (node) => classed(node, 'cm-result')), 'search results');
+    assert.equal(find(document.body, (node) => classed(node, 'is-active')), null);
+
+    const overlay = find(document.body, (node) => classed(node, 'cm-overlay'));
+    overlay.dispatch('keydown', { key: 'Enter' });
+
+    const preview = await waitFor(() => find(document.body, (node) => classed(node, 'cm-preview')), 'preview');
+    assert.equal(preview.value, 'ffmpeg -i ""');
+    assert.equal(
+        find(document.body, (node) => classed(node, 'is-active')).children[0].textContent,
+        'ffmpeg compress'
+    );
 });
 
 test('a second open reuses the existing palette instead of stacking overlays', async () => {

@@ -844,7 +844,8 @@ const CSS = [
     '.cm-body{display:flex;min-height:0;flex:1;}',
     '.cm-list{width:280px;flex-shrink:0;overflow-y:auto;border-right:1px solid var(--main-border-color,#ddd);padding:6px;}',
     '.cm-result{display:block;width:100%;text-align:left;padding:8px 10px;border:0;border-radius:6px;background:transparent;color:inherit;cursor:pointer;}',
-    '.cm-result:hover,.cm-result.is-active{background:var(--accented-background-color,#eef2ff);}',
+    '.cm-result:hover{background:var(--hover-item-background-color,#0000001a);color:var(--hover-item-text-color,inherit);}',
+    '.cm-result.is-active{background:var(--accented-background-color,#eef2ff);box-shadow:inset 3px 0 0 var(--link-color,#4f8cff);}',
     '.cm-result-title{font-weight:600;}',
     '.cm-result-desc{opacity:.7;font-size:12px;margin-top:2px;}',
     '.cm-detail{flex:1;min-width:0;overflow-y:auto;padding:14px 16px;}',
@@ -855,7 +856,15 @@ const CSS = [
     '.cm-row-label{flex:0 0 180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
     '.cm-row .cm-control{flex:1;}',
     '.cm-control{padding:6px 8px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--input-background-color,#fafafa);color:inherit;font:inherit;}',
-    '.cm-preview{width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid var(--main-border-color,#ccc);background:var(--code-background-color,#f4f4f4);color:inherit;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;resize:vertical;}',
+    // Native <select> draws its own arrow while Trilium adds a themed one on hover/focus, so a
+    // select would show two. Hide the native control and keep a single themed arrow in every state.
+    ':root .cm-control.cm-select{appearance:none;-webkit-appearance:none;background-color:var(--input-background-color);background-image:var(--select-arrow-svg,url(\'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="none" stroke="%23888888" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m2 5 6 6 6-6"/></svg>\'));background-position:right 0.75rem center;background-size:15px 20px;background-repeat:no-repeat;padding-inline-end:calc(15px + 1.5rem);}',
+    ':root .cm-control.cm-select:hover{background-color:var(--input-hover-background);color:var(--input-hover-color,inherit);}',
+    ':root .cm-control.cm-select:focus{background-color:var(--select-focus-background);color:var(--select-focus-text-color,inherit);}',
+    // `:root` outranks Trilium's global `textarea:hover` / `textarea:focus` rules, which would
+    // otherwise repaint the preview with the input colours as soon as the pointer or caret enters.
+    ':root .cm-preview{width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid var(--main-border-color,#ccc);background:var(--input-background-color);color:inherit;font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:13px;resize:vertical;}',
+    ':root .cm-preview:hover,:root .cm-preview:focus{background:var(--input-background-color);color:inherit;}',
     '.cm-warnings{display:flex;flex-direction:column;gap:4px;margin-top:6px;}',
     '.cm-warning{color:#b45309;font-size:12px;}',
     '.cm-actions{display:flex;gap:8px;margin:12px 0;}',
@@ -894,6 +903,51 @@ function el(tag, className, text) {
         node.textContent = String(text);
     }
     return node;
+}
+
+/**
+ * Trilium code blocks borrow their colours from the active highlight.js theme, which is not
+ * exposed as a CSS variable. Probe a hidden `.hljs` element to read the exact background and
+ * foreground the current theme gives a code block, so the preview matches it in any theme.
+ * Returns null when the stylesheet or `getComputedStyle` is unavailable.
+ */
+function codeBlockTheme() {
+    let resolveStyle = null;
+    if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
+        resolveStyle = function (node) {
+            return window.getComputedStyle(node);
+        };
+    } else if (typeof getComputedStyle === 'function') {
+        resolveStyle = function (node) {
+            return getComputedStyle(node);
+        };
+    }
+    if (!resolveStyle || typeof document === 'undefined' || !document.body) {
+        return null;
+    }
+
+    let probe = null;
+    try {
+        probe = document.createElement('code');
+        probe.className = 'hljs';
+        probe.style.position = 'absolute';
+        probe.style.visibility = 'hidden';
+        probe.style.pointerEvents = 'none';
+        document.body.appendChild(probe);
+        const computed = resolveStyle(probe);
+        const background = computed ? String(computed.backgroundColor || '') : '';
+        const color = computed ? String(computed.color || '') : '';
+        if (!background || background === 'transparent' || background === 'rgba(0, 0, 0, 0)') {
+            return null;
+        }
+        return { background: background, color: color };
+    } catch (ignored) {
+        return null;
+    } finally {
+        if (probe && typeof probe.remove === 'function') {
+            probe.remove();
+        }
+    }
 }
 
 function openPalette(controller) {
@@ -1054,7 +1108,11 @@ function openPalette(controller) {
         if (!state.items.length) {
             return;
         }
-        state.active = (state.active + delta + state.items.length) % state.items.length;
+        if (state.active < 0) {
+            state.active = delta > 0 ? 0 : state.items.length - 1;
+        } else {
+            state.active = (state.active + delta + state.items.length) % state.items.length;
+        }
         renderList();
         const activeRow = list.children[state.active];
         if (activeRow && typeof activeRow.scrollIntoView === 'function') {
@@ -1063,17 +1121,20 @@ function openPalette(controller) {
     }
 
     function pickActive() {
-        if (state.active < 0 || !state.items[state.active]) {
+        // Enter still opens the best match when nothing has been highlighted yet, but the
+        // list keeps no selected row until the user navigates or clicks.
+        const index = state.active >= 0 ? state.active : (state.items.length ? 0 : -1);
+        if (index < 0 || !state.items[index]) {
             return;
         }
-        selectItem(state.items[state.active]).catch(notify);
+        selectItem(state.items[index]).catch(notify);
     }
 
     async function runSearch() {
         try {
             const items = await Promise.resolve(controller.search(searchInput.value));
             state.items = Array.isArray(items) ? items : [];
-            state.active = state.items.length ? 0 : -1;
+            state.active = -1;
             renderList();
         } catch (error) {
             notify(error);
@@ -1090,9 +1151,20 @@ function openPalette(controller) {
         }, 120);
     }
 
+    function markActive(item) {
+        const index = state.items.findIndex(function (entry) {
+            return entry.noteId === item.noteId;
+        });
+        if (index >= 0 && index !== state.active) {
+            state.active = index;
+            renderList();
+        }
+    }
+
     async function selectItem(item) {
         state.current = item;
         state.edited = false;
+        markActive(item);
         try {
             const loaded = await controller.load(item.noteId);
             state.definition = loaded.definition;
@@ -1146,7 +1218,9 @@ function openPalette(controller) {
             });
         }
 
-        control.className = option.type === 'boolean' ? '' : 'cm-control';
+        control.className = option.type === 'boolean'
+            ? ''
+            : 'cm-control' + (option.type === 'enum' ? ' cm-select' : '');
         row.appendChild(control);
         if (inferred) {
             row.appendChild(el('span', 'cm-badge', 'inferred'));
@@ -1279,7 +1353,7 @@ function openPalette(controller) {
 
         const row = el('div', 'cm-row');
         const select = document.createElement('select');
-        select.className = 'cm-control';
+        select.className = 'cm-control cm-select';
         state.presetSelect = select;
         row.appendChild(select);
         row.appendChild(button('Load', loadPreset));
@@ -1340,6 +1414,13 @@ function openPalette(controller) {
         preview.className = 'cm-preview';
         preview.spellcheck = false;
         preview.rows = 4;
+        const codeTheme = codeBlockTheme();
+        if (codeTheme) {
+            preview.style.background = codeTheme.background;
+            if (codeTheme.color) {
+                preview.style.color = codeTheme.color;
+            }
+        }
         preview.addEventListener('input', function () {
             state.edited = true;
         });
@@ -1423,7 +1504,7 @@ function openPalette(controller) {
         flagInput.placeholder = '--flag (empty = positional)';
 
         const typeSelect = document.createElement('select');
-        typeSelect.className = 'cm-control';
+        typeSelect.className = 'cm-control cm-select';
         Model.TYPES.forEach(function (type) {
             const entry = document.createElement('option');
             entry.value = type;
