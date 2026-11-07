@@ -514,48 +514,74 @@ function flagsFromToken(token) {
     return { flags: [dash + bare], metavar: attached, negated: false };
 }
 
-function isMetavarToken(token) {
+function isMetavarToken(token, allowLowercase) {
     if (token === '') {
         return false;
     }
     if (OPENERS.indexOf(token.charAt(0)) !== -1) {
         return true;
     }
-    return /^[A-Z][A-Za-z0-9_]*$/.test(token) && token.indexOf('-') === -1;
+    if (/^[A-Z][A-Za-z0-9_]*$/.test(token) && token.indexOf('-') === -1) {
+        return true;
+    }
+    // ffmpeg and other tools print lowercase single-word metavars: `-i url`,
+    // `-crf crf`. Only accept them when a 2+ gap already proved a description
+    // follows, so `-y overwrite output files` keeps its prose as the help.
+    if (allowLowercase) {
+        return /^[a-z][a-z0-9_.-]*$/.test(token);
+    }
+    return false;
 }
 
-/** Walk leading flag tokens, then one optional metavar; the rest is prose. */
-function readTokens(tokens) {
+function isSeparatorToken(token) {
+    return token === ',' || token === '|' || token === '/' || token === ';';
+}
+
+/**
+ * Walk leading flag tokens and their metavars; the rest is prose.
+ * Supports `-q QUEUE, --queue QUEUE` and `-m, --message <message>` by
+ * continuing after a metavar when another flag follows.
+ */
+function readTokens(tokens, allowLowercaseMetavar) {
     const flags = [];
     let metavar = '';
     let negated = false;
     let index = 0;
+    let awaitingMetavar = false;
     while (index < tokens.length) {
-        const parsed = flagsFromToken(tokens[index]);
-        if (!parsed) {
-            break;
+        const token = tokens[index];
+        if (isSeparatorToken(token)) {
+            index += 1;
+            continue;
         }
-        for (const flag of parsed.flags) {
-            if (flags.indexOf(flag) === -1) {
-                flags.push(flag);
+        const parsed = flagsFromToken(token);
+        if (parsed) {
+            for (const flag of parsed.flags) {
+                if (flags.indexOf(flag) === -1) {
+                    flags.push(flag);
+                }
             }
+            if (metavar === '' && parsed.metavar !== '') {
+                metavar = parsed.metavar;
+            }
+            negated = negated || parsed.negated;
+            awaitingMetavar = true;
+            index += 1;
+            continue;
         }
-        if (metavar === '' && parsed.metavar !== '') {
-            metavar = parsed.metavar;
+        if (awaitingMetavar && isMetavarToken(token, allowLowercaseMetavar)) {
+            metavar = metavar === '' ? token : metavar;
+            awaitingMetavar = false;
+            index += 1;
+            continue;
         }
-        negated = negated || parsed.negated;
-        index += 1;
-    }
-    const startedWithFlag = flags.length > 0;
-    if (index < tokens.length && startedWithFlag && isMetavarToken(tokens[index])) {
-        metavar = metavar === '' ? tokens[index] : metavar;
-        index += 1;
+        break;
     }
     return { flags: flags, metavar: metavar, negated: negated, rest: tokens.slice(index) };
 }
 
 function readSpecText(text) {
-    return readTokens(tokenize(text));
+    return readTokens(tokenize(text), false);
 }
 
 function enumValuesFrom(spec, description) {
@@ -617,11 +643,21 @@ function inferType(metavar, help) {
     })) {
         return 'number';
     }
+    // `-crf crf ... (default 23)` and numeric ranges are numeric even when the
+    // metavar itself says nothing.
+    const defaultValue = extractDefaultValue(help);
+    if (defaultValue !== '' && /^[-+]?\d+(?:\.\d+)?$/.test(defaultValue)) {
+        return 'number';
+    }
+    if (/\b(?:from|between)\s+[-+]?\d/i.test(String(help == null ? '' : help))) {
+        return 'number';
+    }
     return 'string';
 }
 
 const DEFAULT_PATTERNS = [
     /\(\s*defaults?\s*[:=]\s*([^()]*)\)/i,
+    /\(\s*defaults?\s+(?!to\b)([^()]+?)\)/i,
     /\bdefaults?\s+to\s+(?:(?:(\d+(?:\.\d+)?|\S+)|"([^"]*)"|'([^']*)'|`([^`]*)`))((?:[ \t]+[^\s,.;:](?:[^\s,.;:]*))*)/i,
     /\bdefault\s*[:=]\s*(\S[^(]*?)(?=\s+when\b|\s+(?:can|must|may|is|to|only|or|if)\b|[.,;]|\s*$)/i
 ];
@@ -837,7 +873,7 @@ function readHelpLine(line) {
         description = line.slice(separator.index + separator[0].length).trim();
     }
 
-    const parsed = readTokens(tokenize(spec));
+    const parsed = readTokens(tokenize(spec), description !== '');
     if (parsed.flags.length === 0) {
         return null;
     }
@@ -1348,9 +1384,27 @@ function parseExamples(html, base) {
     return out.slice(0, MAX_EXAMPLES);
 }
 
+/**
+ * Usage note stored as a code note -> one example per non-empty line.
+ * @param {string} text
+ * @returns {Array<string>}
+ */
+function parseExampleLines(text) {
+    const out = [];
+    String(text == null ? '' : text).split(/\r?\n/).forEach(function (line) {
+        const trimmed = line.trim();
+        if (trimmed === '' || trimmed.charAt(0) === '#' || trimmed.slice(0, 2) === '//') {
+            return;
+        }
+        addExample(out, trimmed);
+    });
+    return out.slice(0, MAX_EXAMPLES);
+}
+
 module.exports = {
     parseToolNote,
-    parseExamples
+    parseExamples,
+    parseExampleLines
 };
 
 });
@@ -2619,11 +2673,14 @@ function openPalette(controller) {
     newToolButton.type = 'button';
     const importButton = el('button', 'cm-button', 'Import options');
     importButton.type = 'button';
+    const addOptionButton = el('button', 'cm-button', 'Add option');
+    addOptionButton.type = 'button';
     const toolsButton = el('button', 'cm-button', 'Tools folder');
     toolsButton.type = 'button';
     const statusEl = el('span', 'cm-status', '');
     footer.appendChild(newToolButton);
     footer.appendChild(importButton);
+    footer.appendChild(addOptionButton);
     footer.appendChild(toolsButton);
     footer.appendChild(statusEl);
 
@@ -3591,6 +3648,119 @@ function openPalette(controller) {
         setSource('paste');
     }
 
+    function openAddOption() {
+        if (!state.current) {
+            notify(new Error('Select a tool first.'));
+            return;
+        }
+
+        function field(labelText, control) {
+            const row = el('label', 'cm-row');
+            row.appendChild(el('span', 'cm-base-label', labelText));
+            control.className = 'cm-control' + (control.tagName === 'SELECT' ? ' cm-select' : '');
+            row.appendChild(control);
+            return row;
+        }
+
+        const labelInput = document.createElement('input');
+        labelInput.type = 'text';
+        labelInput.placeholder = 'Option label, e.g. Output file';
+
+        const flagInput = document.createElement('input');
+        flagInput.type = 'text';
+        flagInput.placeholder = 'Flag, e.g. --output (empty = positional)';
+
+        const helpInput = document.createElement('input');
+        helpInput.type = 'text';
+        helpInput.placeholder = 'What is this option for?';
+
+        const typeSelect = document.createElement('select');
+        Model.TYPES.forEach(function (type) {
+            const entry = document.createElement('option');
+            entry.value = type;
+            entry.textContent = type;
+            typeSelect.appendChild(entry);
+        });
+
+        const defaultInput = document.createElement('input');
+        defaultInput.type = 'text';
+        defaultInput.placeholder = 'Default value (optional)';
+
+        const valuesInput = document.createElement('input');
+        valuesInput.type = 'text';
+        valuesInput.placeholder = 'Enum values, comma separated (optional)';
+
+        const orderInput = document.createElement('input');
+        orderInput.type = 'number';
+        orderInput.placeholder = '100';
+        orderInput.value = '100';
+
+        const requiredInput = document.createElement('input');
+        requiredInput.type = 'checkbox';
+        const requiredRow = el('label', 'cm-row');
+        requiredRow.appendChild(el('span', 'cm-base-label', 'Required'));
+        requiredRow.appendChild(requiredInput);
+
+        const add = el('button', 'cm-button', 'Add');
+        add.type = 'button';
+        add.addEventListener('click', function () {
+            Promise.resolve()
+                .then(function () {
+                    const label = labelInput.value.trim();
+                    if (!label) {
+                        throw new Error('Option label is required.');
+                    }
+                    const values = valuesInput.value.split(',')
+                        .map(function (entry) { return entry.trim(); })
+                        .filter(function (entry) { return entry !== ''; });
+                    const order = Number(orderInput.value);
+                    return controller.addOption(state.current.noteId, {
+                        label: label,
+                        flag: flagInput.value.trim(),
+                        help: helpInput.value.trim(),
+                        type: typeSelect.value,
+                        values: values,
+                        defaultValue: defaultInput.value,
+                        required: Boolean(requiredInput.checked),
+                        order: isFinite(order) ? order : 100
+                    });
+                })
+                .then(function () {
+                    closeModal();
+                    setStatus('Option added.');
+                    return controller.refresh();
+                })
+                .then(runSearch)
+                .then(function () {
+                    return selectItem(state.current);
+                })
+                .catch(notify);
+        });
+
+        const closeButton2 = el('button', 'cm-button', 'Close');
+        closeButton2.type = 'button';
+        closeButton2.addEventListener('click', closeModal);
+
+        const bodyNode = el('div', '');
+        bodyNode.appendChild(el('div', 'cm-note', 'The option is stored as a note under the tool\'s Options folder.'));
+        bodyNode.appendChild(field('Label', labelInput));
+        bodyNode.appendChild(field('Flag', flagInput));
+        bodyNode.appendChild(field('Help', helpInput));
+        bodyNode.appendChild(field('Type', typeSelect));
+        bodyNode.appendChild(field('Default', defaultInput));
+        bodyNode.appendChild(field('Values', valuesInput));
+        bodyNode.appendChild(field('Order', orderInput));
+        bodyNode.appendChild(requiredRow);
+
+        const actionsNode = el('div', 'cm-inline');
+        actionsNode.appendChild(add);
+        actionsNode.appendChild(closeButton2);
+
+        modalShell('Add an option to "' + state.current.title + '"', bodyNode, actionsNode);
+        state.modalKind = 'option';
+        labelInput.focus();
+    }
+
     function openToolsFolder() {
         const bodyNode = el('div', '');
         const info = el('div', 'cm-note', 'Loading…');
@@ -3703,6 +3873,7 @@ function openPalette(controller) {
     closeButton.addEventListener('click', close);
     newToolButton.addEventListener('click', toggleNewTool);
     importButton.addEventListener('click', openImport);
+    addOptionButton.addEventListener('click', openAddOption);
     toolsButton.addEventListener('click', openToolsFolder);
     overlay.addEventListener('click', function (event) {
         if (event.target === overlay) {
@@ -4054,7 +4225,9 @@ async function load(noteId) {
     const installText = await readNoteText(installNote);
     const usageHtml = usageNote ? await usageNote.getContent() : '';
     const helpText = await readNoteText(helpNote);
-    const usageExamples = Sections.parseExamples(usageHtml, labels[Model.LABELS.base] || Model.deriveBase(note.title));
+    const usageExamples = usageNote && usageNote.type === 'code'
+        ? Sections.parseExampleLines(usageHtml)
+        : Sections.parseExamples(usageHtml, labels[Model.LABELS.base] || Model.deriveBase(note.title));
 
     const definition = Model.buildTool({
         noteId: note.noteId,

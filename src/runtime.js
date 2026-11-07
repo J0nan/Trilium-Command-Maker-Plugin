@@ -314,7 +314,9 @@ async function load(noteId) {
     const installText = await readNoteText(installNote);
     const usageHtml = usageNote ? await usageNote.getContent() : '';
     const helpText = await readNoteText(helpNote);
-    const usageExamples = Sections.parseExamples(usageHtml, labels[Model.LABELS.base] || Model.deriveBase(note.title));
+    const usageExamples = usageNote && usageNote.type === 'code'
+        ? Sections.parseExampleLines(usageHtml)
+        : Sections.parseExamples(usageHtml, labels[Model.LABELS.base] || Model.deriveBase(note.title));
 
     const definition = Model.buildTool({
         noteId: note.noteId,

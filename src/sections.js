@@ -170,7 +170,25 @@ function parseExamples(html, base) {
     return out.slice(0, MAX_EXAMPLES);
 }
 
+/**
+ * Usage note stored as a code note -> one example per non-empty line.
+ * @param {string} text
+ * @returns {Array<string>}
+ */
+function parseExampleLines(text) {
+    const out = [];
+    String(text == null ? '' : text).split(/\r?\n/).forEach(function (line) {
+        const trimmed = line.trim();
+        if (trimmed === '' || trimmed.charAt(0) === '#' || trimmed.slice(0, 2) === '//') {
+            return;
+        }
+        addExample(out, trimmed);
+    });
+    return out.slice(0, MAX_EXAMPLES);
+}
+
 module.exports = {
     parseToolNote,
-    parseExamples
+    parseExamples,
+    parseExampleLines
 };

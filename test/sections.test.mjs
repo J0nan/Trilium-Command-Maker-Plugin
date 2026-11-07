@@ -109,3 +109,10 @@ test('parseExamples needs the base token and returns at most 50', () => {
     }
     assert.equal(Sections.parseExamples(many.join(''), 'cmd').length, 50);
 });
+
+test('parseExampleLines reads one example per line from a code Usage note', () => {
+    assert.deepEqual(
+        Sections.parseExampleLines('ffmpeg -i in.mp4 out.mp4\n\n# comment\nffmpeg -i in.mp4 -c:v libx264 out.mp4\n'),
+        ['ffmpeg -i in.mp4 out.mp4', 'ffmpeg -i in.mp4 -c:v libx264 out.mp4']
+    );
+});

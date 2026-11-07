@@ -254,48 +254,74 @@ function flagsFromToken(token) {
     return { flags: [dash + bare], metavar: attached, negated: false };
 }
 
-function isMetavarToken(token) {
+function isMetavarToken(token, allowLowercase) {
     if (token === '') {
         return false;
     }
     if (OPENERS.indexOf(token.charAt(0)) !== -1) {
         return true;
     }
-    return /^[A-Z][A-Za-z0-9_]*$/.test(token) && token.indexOf('-') === -1;
+    if (/^[A-Z][A-Za-z0-9_]*$/.test(token) && token.indexOf('-') === -1) {
+        return true;
+    }
+    // ffmpeg and other tools print lowercase single-word metavars: `-i url`,
+    // `-crf crf`. Only accept them when a 2+ gap already proved a description
+    // follows, so `-y overwrite output files` keeps its prose as the help.
+    if (allowLowercase) {
+        return /^[a-z][a-z0-9_.-]*$/.test(token);
+    }
+    return false;
 }
 
-/** Walk leading flag tokens, then one optional metavar; the rest is prose. */
-function readTokens(tokens) {
+function isSeparatorToken(token) {
+    return token === ',' || token === '|' || token === '/' || token === ';';
+}
+
+/**
+ * Walk leading flag tokens and their metavars; the rest is prose.
+ * Supports `-q QUEUE, --queue QUEUE` and `-m, --message <message>` by
+ * continuing after a metavar when another flag follows.
+ */
+function readTokens(tokens, allowLowercaseMetavar) {
     const flags = [];
     let metavar = '';
     let negated = false;
     let index = 0;
+    let awaitingMetavar = false;
     while (index < tokens.length) {
-        const parsed = flagsFromToken(tokens[index]);
-        if (!parsed) {
-            break;
+        const token = tokens[index];
+        if (isSeparatorToken(token)) {
+            index += 1;
+            continue;
         }
-        for (const flag of parsed.flags) {
-            if (flags.indexOf(flag) === -1) {
-                flags.push(flag);
+        const parsed = flagsFromToken(token);
+        if (parsed) {
+            for (const flag of parsed.flags) {
+                if (flags.indexOf(flag) === -1) {
+                    flags.push(flag);
+                }
             }
+            if (metavar === '' && parsed.metavar !== '') {
+                metavar = parsed.metavar;
+            }
+            negated = negated || parsed.negated;
+            awaitingMetavar = true;
+            index += 1;
+            continue;
         }
-        if (metavar === '' && parsed.metavar !== '') {
-            metavar = parsed.metavar;
+        if (awaitingMetavar && isMetavarToken(token, allowLowercaseMetavar)) {
+            metavar = metavar === '' ? token : metavar;
+            awaitingMetavar = false;
+            index += 1;
+            continue;
         }
-        negated = negated || parsed.negated;
-        index += 1;
-    }
-    const startedWithFlag = flags.length > 0;
-    if (index < tokens.length && startedWithFlag && isMetavarToken(tokens[index])) {
-        metavar = metavar === '' ? tokens[index] : metavar;
-        index += 1;
+        break;
     }
     return { flags: flags, metavar: metavar, negated: negated, rest: tokens.slice(index) };
 }
 
 function readSpecText(text) {
-    return readTokens(tokenize(text));
+    return readTokens(tokenize(text), false);
 }
 
 function enumValuesFrom(spec, description) {
@@ -357,11 +383,21 @@ function inferType(metavar, help) {
     })) {
         return 'number';
     }
+    // `-crf crf ... (default 23)` and numeric ranges are numeric even when the
+    // metavar itself says nothing.
+    const defaultValue = extractDefaultValue(help);
+    if (defaultValue !== '' && /^[-+]?\d+(?:\.\d+)?$/.test(defaultValue)) {
+        return 'number';
+    }
+    if (/\b(?:from|between)\s+[-+]?\d/i.test(String(help == null ? '' : help))) {
+        return 'number';
+    }
     return 'string';
 }
 
 const DEFAULT_PATTERNS = [
     /\(\s*defaults?\s*[:=]\s*([^()]*)\)/i,
+    /\(\s*defaults?\s+(?!to\b)([^()]+?)\)/i,
     /\bdefaults?\s+to\s+(?:(?:(\d+(?:\.\d+)?|\S+)|"([^"]*)"|'([^']*)'|`([^`]*)`))((?:[ \t]+[^\s,.;:](?:[^\s,.;:]*))*)/i,
     /\bdefault\s*[:=]\s*(\S[^(]*?)(?=\s+when\b|\s+(?:can|must|may|is|to|only|or|if)\b|[.,;]|\s*$)/i
 ];
@@ -577,7 +613,7 @@ function readHelpLine(line) {
         description = line.slice(separator.index + separator[0].length).trim();
     }
 
-    const parsed = readTokens(tokenize(spec));
+    const parsed = readTokens(tokenize(spec), description !== '');
     if (parsed.flags.length === 0) {
         return null;
     }

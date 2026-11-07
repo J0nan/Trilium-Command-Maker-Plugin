@@ -237,11 +237,14 @@ function openPalette(controller) {
     newToolButton.type = 'button';
     const importButton = el('button', 'cm-button', 'Import options');
     importButton.type = 'button';
+    const addOptionButton = el('button', 'cm-button', 'Add option');
+    addOptionButton.type = 'button';
     const toolsButton = el('button', 'cm-button', 'Tools folder');
     toolsButton.type = 'button';
     const statusEl = el('span', 'cm-status', '');
     footer.appendChild(newToolButton);
     footer.appendChild(importButton);
+    footer.appendChild(addOptionButton);
     footer.appendChild(toolsButton);
     footer.appendChild(statusEl);
 
@@ -1209,6 +1212,119 @@ function openPalette(controller) {
         setSource('paste');
     }
 
+    function openAddOption() {
+        if (!state.current) {
+            notify(new Error('Select a tool first.'));
+            return;
+        }
+
+        function field(labelText, control) {
+            const row = el('label', 'cm-row');
+            row.appendChild(el('span', 'cm-base-label', labelText));
+            control.className = 'cm-control' + (control.tagName === 'SELECT' ? ' cm-select' : '');
+            row.appendChild(control);
+            return row;
+        }
+
+        const labelInput = document.createElement('input');
+        labelInput.type = 'text';
+        labelInput.placeholder = 'Option label, e.g. Output file';
+
+        const flagInput = document.createElement('input');
+        flagInput.type = 'text';
+        flagInput.placeholder = 'Flag, e.g. --output (empty = positional)';
+
+        const helpInput = document.createElement('input');
+        helpInput.type = 'text';
+        helpInput.placeholder = 'What is this option for?';
+
+        const typeSelect = document.createElement('select');
+        Model.TYPES.forEach(function (type) {
+            const entry = document.createElement('option');
+            entry.value = type;
+            entry.textContent = type;
+            typeSelect.appendChild(entry);
+        });
+
+        const defaultInput = document.createElement('input');
+        defaultInput.type = 'text';
+        defaultInput.placeholder = 'Default value (optional)';
+
+        const valuesInput = document.createElement('input');
+        valuesInput.type = 'text';
+        valuesInput.placeholder = 'Enum values, comma separated (optional)';
+
+        const orderInput = document.createElement('input');
+        orderInput.type = 'number';
+        orderInput.placeholder = '100';
+        orderInput.value = '100';
+
+        const requiredInput = document.createElement('input');
+        requiredInput.type = 'checkbox';
+        const requiredRow = el('label', 'cm-row');
+        requiredRow.appendChild(el('span', 'cm-base-label', 'Required'));
+        requiredRow.appendChild(requiredInput);
+
+        const add = el('button', 'cm-button', 'Add');
+        add.type = 'button';
+        add.addEventListener('click', function () {
+            Promise.resolve()
+                .then(function () {
+                    const label = labelInput.value.trim();
+                    if (!label) {
+                        throw new Error('Option label is required.');
+                    }
+                    const values = valuesInput.value.split(',')
+                        .map(function (entry) { return entry.trim(); })
+                        .filter(function (entry) { return entry !== ''; });
+                    const order = Number(orderInput.value);
+                    return controller.addOption(state.current.noteId, {
+                        label: label,
+                        flag: flagInput.value.trim(),
+                        help: helpInput.value.trim(),
+                        type: typeSelect.value,
+                        values: values,
+                        defaultValue: defaultInput.value,
+                        required: Boolean(requiredInput.checked),
+                        order: isFinite(order) ? order : 100
+                    });
+                })
+                .then(function () {
+                    closeModal();
+                    setStatus('Option added.');
+                    return controller.refresh();
+                })
+                .then(runSearch)
+                .then(function () {
+                    return selectItem(state.current);
+                })
+                .catch(notify);
+        });
+
+        const closeButton2 = el('button', 'cm-button', 'Close');
+        closeButton2.type = 'button';
+        closeButton2.addEventListener('click', closeModal);
+
+        const bodyNode = el('div', '');
+        bodyNode.appendChild(el('div', 'cm-note', 'The option is stored as a note under the tool\'s Options folder.'));
+        bodyNode.appendChild(field('Label', labelInput));
+        bodyNode.appendChild(field('Flag', flagInput));
+        bodyNode.appendChild(field('Help', helpInput));
+        bodyNode.appendChild(field('Type', typeSelect));
+        bodyNode.appendChild(field('Default', defaultInput));
+        bodyNode.appendChild(field('Values', valuesInput));
+        bodyNode.appendChild(field('Order', orderInput));
+        bodyNode.appendChild(requiredRow);
+
+        const actionsNode = el('div', 'cm-inline');
+        actionsNode.appendChild(add);
+        actionsNode.appendChild(closeButton2);
+
+        modalShell('Add an option to "' + state.current.title + '"', bodyNode, actionsNode);
+        state.modalKind = 'option';
+        labelInput.focus();
+    }
+
     function openToolsFolder() {
         const bodyNode = el('div', '');
         const info = el('div', 'cm-note', 'Loading…');
@@ -1321,6 +1437,7 @@ function openPalette(controller) {
     closeButton.addEventListener('click', close);
     newToolButton.addEventListener('click', toggleNewTool);
     importButton.addEventListener('click', openImport);
+    addOptionButton.addEventListener('click', openAddOption);
     toolsButton.addEventListener('click', openToolsFolder);
     overlay.addEventListener('click', function (event) {
         if (event.target === overlay) {

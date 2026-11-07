@@ -112,6 +112,9 @@ get in the way when you read the tool manually.
 | --- | --- | --- |
 | `Install` | text | installation steps/commands |
 | `Usage` | text | examples; every code block becomes a one-click example in the palette |
+
+> A `Usage` note stored as a **code** note also works: every non-empty line is
+> treated as one example.
 | `Help` | code (`text/x-sh`) | paste the output of `tool --help` here |
 
 The palette reads all three: examples can be used or copied, the help output and
@@ -176,7 +179,9 @@ a local file. It understands:
 3. **Markdown table** — `| Flag | Help | Type |` rows.
 
 Nothing is written until you parse and confirm: a preview lists every detected
-option with a checkbox.
+option with a checkbox. For a single option, use **Add option** in the palette
+footer; it writes the same option note with the label, flag and help string you
+type.
 
 ## Legacy commands
 

@@ -557,6 +557,39 @@ test('a second open reuses the existing palette instead of stacking overlays', a
     assert.equal(overlays.length, 1);
 });
 
+test('palette can add a single option with a help string', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+
+    findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'Add option')[0].click();
+    const modal = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-modal')), 'add option modal');
+
+    find(modal, (node) => node.placeholder === 'Option label, e.g. Output file').value = 'Output file';
+    find(modal, (node) => String(node.placeholder || '').indexOf('Flag, e.g.') === 0).value = '-o';
+    find(modal, (node) => node.placeholder === 'What is this option for?').value = 'Write output to a file.';
+    find(modal, (node) => node.tagName === 'SELECT').value = 'path';
+    find(modal, (node) => node.placeholder === 'Default value (optional)').value = 'out.mp4';
+    find(modal, (node) => node.tagName === 'INPUT' && node.type === 'number').value = '70';
+
+    findAll(modal, (node) => node.tagName === 'BUTTON' && node.textContent === 'Add')[0].click();
+    await waitFor(() => env.calls.backend.filter((call) => call.action === 'addOption').length > 0, 'add option action');
+    const call = env.calls.backend.filter((entry) => entry.action === 'addOption')[0];
+    assert.equal(call.toolId, 't1');
+    assert.equal(call.option.label, 'Output file');
+    assert.equal(call.option.flag, '-o');
+    assert.equal(call.option.help, 'Write output to a file.');
+    assert.equal(call.option.type, 'path');
+    assert.equal(call.option.defaultValue, 'out.mp4');
+    assert.equal(call.option.order, 70);
+    assert.deepEqual(env.calls.errors, []);
+});
+
 test('dropdowns hide the native arrow and keep a single themed arrow', async () => {
     const dom = createDom();
     const fixture = buildFixture();

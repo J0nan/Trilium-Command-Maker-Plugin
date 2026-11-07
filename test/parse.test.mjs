@@ -522,3 +522,39 @@ test('parsers never throw on odd input', () => {
         }, 'input: ' + String(input));
     }
 });
+
+test('parseHelpText reads real ffmpeg help output with lowercase metavars', () => {
+    const result = Parse.parseHelpText([
+        'Main options:',
+        '-i url              input file url (specify multiple input files)',
+        '-y                  overwrite output files',
+        '-c codec            codec name ("copy" to copy stream)',
+        '-c:v codec          force video codec (\'copy\' to copy stream)',
+        '-crf crf            select the quality for constant quality mode (from -1 to 51) (default 23)'
+    ].join('\n'));
+    assert.deepEqual(result.warnings, []);
+    assert.deepEqual(result.options.map((option) => option.flag), ['-i', '-y', '-c', '-c:v', '-crf']);
+    assert.equal(result.options[0].type, 'string');
+    assert.equal(result.options[1].type, 'boolean');
+    assert.equal(result.options[4].type, 'number');
+    assert.equal(result.options[4].defaultValue, '23');
+});
+
+test('parseHelpText keeps the long flag of an argparse option pair', () => {
+    const result = Parse.parseHelpText([
+        'options:',
+        '  -q QUEUE, --queue QUEUE',
+        '                        set the queue'
+    ].join('\n'));
+    assert.deepEqual(result.warnings, []);
+    assert.equal(result.options.length, 1);
+    assert.deepEqual(result.options[0].aliases, ['-q', '--queue']);
+    assert.equal(result.options[0].flag, '--queue');
+    assert.equal(result.options[0].help, 'set the queue');
+});
+
+test('parseHelpText extracts parenthesised defaults without a colon', () => {
+    const result = Parse.parseHelpText('-b bufsize   buffer size (default 200000)');
+    assert.equal(result.options.length, 1);
+    assert.equal(result.options[0].defaultValue, '200000');
+});
