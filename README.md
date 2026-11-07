@@ -151,10 +151,10 @@ is the readable label and whose attributes describe the flag:
 | `#cmQuote` | `none`, `single`, `double` (emitted segments) | `none` |
 | `#cmSep` | `space` or `=` (`--flag=value`) | `space` |
 
-Required options show a red **Required** badge and a red left edge in the
-palette, and produce a warning until they have a value. Set one with
-`#cmRequired=true`; the **Add option** modal and the import preview can set it
-for you.
+Required options are marked with a red `*` after the label, with a
+"Fields marked * are required" legend above the options, and produce a warning
+until they have a value. Set one with `#cmRequired=true`; the **Add option** modal
+and the import preview can set it for you.
 
 The option note's content is a good place for a longer explanation; the palette
 shows `#cmDoc` inline and keeps the full note one click away.

@@ -58,9 +58,8 @@ const CSS = [
     '.cm-base-label{flex:0 0 110px;opacity:.75;}',
     '.cm-options{display:flex;flex-direction:column;gap:4px;}',
     '.cm-option{display:flex;align-items:flex-start;gap:12px;padding:6px 8px;border-radius:6px;}',
-    '.cm-option.cm-option-required{box-shadow:inset 3px 0 0 #b91c1c;}',
-    '.cm-required-badge{font-size:10px;text-transform:uppercase;letter-spacing:.04em;padding:1px 6px;border-radius:999px;background:#b91c1c;color:#fff;white-space:nowrap;}',
-    '.cm-required-hint{color:#b91c1c;font-weight:600;text-transform:none;letter-spacing:0;margin-left:6px;}',
+    '.cm-required-star{color:#b91c1c;font-weight:700;margin-left:2px;}',
+    '.cm-required-legend{font-size:12px;opacity:.7;margin:2px 0 6px;}',
     '.cm-option:hover{background:var(--hover-item-background-color,#00000010);}',
     '.cm-opt-main{flex:1;min-width:0;}',
     '.cm-opt-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}',
@@ -556,14 +555,14 @@ function openPalette(controller) {
     }
 
     function optionRow(option, inferred) {
-        const row = el('div', 'cm-option' + (inferred ? ' cm-option-inferred' : '') + (option.required ? ' cm-option-required' : ''));
+        const row = el('div', 'cm-option' + (inferred ? ' cm-option-inferred' : ''));
         const main = el('div', 'cm-opt-main');
         const headRow = el('div', 'cm-opt-head');
         headRow.appendChild(el('span', 'cm-opt-title', option.title));
         if (option.required) {
-            const badge = el('span', 'cm-required-badge', 'Required');
-            badge.title = 'This option must have a value.';
-            headRow.appendChild(badge);
+            const star = el('span', 'cm-required-star', '*');
+            star.title = 'Required';
+            headRow.appendChild(star);
         }
         if (option.flag) {
             headRow.appendChild(el('code', 'cm-opt-flag', option.flag));
@@ -872,7 +871,7 @@ function openPalette(controller) {
             return option.required;
         }).length;
         if (requiredCount > 0) {
-            detail.appendChild(el('div', 'cm-required-hint', requiredCount + ' required — marked with a red badge.'));
+            detail.appendChild(el('div', 'cm-required-legend', 'Fields marked * are required.'));
         }
         const filter = document.createElement('input');
         filter.type = 'search';
@@ -1424,7 +1423,7 @@ function openPalette(controller) {
         bodyNode.appendChild(field('Values', valuesInput));
         bodyNode.appendChild(field('Order', orderInput));
         bodyNode.appendChild(requiredRow);
-        bodyNode.appendChild(el('div', 'cm-note', 'Required options show a red badge in the palette and warn until they have a value.'));
+        bodyNode.appendChild(el('div', 'cm-note', 'Required options get a red * in the palette and warn until they have a value.'));
 
         const actionsNode = el('div', 'cm-inline');
         actionsNode.appendChild(add);

@@ -417,11 +417,15 @@ test('palette lists tools, shows option help, examples, help, copy/insert and pr
     assert.ok(optionsIndex >= 0, 'the options heading is rendered');
     assert.ok(presetIndex < optionsIndex, 'the preset selector comes before the options');
 
-    const requiredBadge = find(dom.body, (node) => classed(node, 'cm-required-badge'));
-    assert.ok(requiredBadge, 'a required option shows a badge');
-    assert.equal(requiredBadge.textContent, 'Required');
-    assert.ok(find(dom.body, (node) => classed(node, 'cm-option-required')), 'the required row is marked');
-    assert.match(find(dom.body, (node) => classed(node, 'cm-required-hint')).textContent, /1 required/);
+    const requiredStar = find(dom.body, (node) => classed(node, 'cm-required-star'));
+    assert.ok(requiredStar, 'a required option shows an asterisk');
+    assert.equal(requiredStar.textContent, '*');
+    assert.match(
+        find(dom.body, (node) => classed(node, 'cm-required-legend')).textContent,
+        /marked \*/,
+        'the legend explains the asterisk'
+    );
+    assert.equal(find(dom.body, (node) => classed(node, 'cm-required-badge')), null, 'no badge');
 
     const example = find(dom.body, (node) => classed(node, 'cm-example-text'));
     assert.equal(example.textContent, 'ffmpeg -i in.mp4 out.mp4');
