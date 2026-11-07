@@ -406,6 +406,17 @@ test('palette lists tools, shows option help, examples, help, copy/insert and pr
     assert.ok(helpTexts.indexOf('Input file to read.') !== -1, 'option help string is rendered');
     assert.ok(helpTexts.indexOf('Video encoder.') !== -1, 'enum help string is rendered');
 
+    const detail = find(dom.body, (node) => classed(node, 'cm-detail'));
+    const ordered = [];
+    walk(detail, (node) => ordered.push(node));
+    const presetIndex = ordered.findIndex((node) => classed(node, 'cm-presets'));
+    const optionsIndex = ordered.findIndex((node) => {
+        return classed(node, 'cm-section') && /^Options \(/.test(String(node.textContent || ''));
+    });
+    assert.ok(presetIndex >= 0, 'the preset block is rendered');
+    assert.ok(optionsIndex >= 0, 'the options heading is rendered');
+    assert.ok(presetIndex < optionsIndex, 'the preset selector comes before the options');
+
     const requiredBadge = find(dom.body, (node) => classed(node, 'cm-required-badge'));
     assert.ok(requiredBadge, 'a required option shows a badge');
     assert.equal(requiredBadge.textContent, 'Required');

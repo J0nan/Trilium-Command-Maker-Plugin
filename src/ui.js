@@ -865,6 +865,7 @@ function openPalette(controller) {
         }
 
         detail.appendChild(baseRow());
+        detail.appendChild(presetBlock());
 
         detail.appendChild(el('div', 'cm-section', 'Options (' + definition.options.length + ')'));
         const requiredCount = definition.options.filter(function (option) {
@@ -951,8 +952,6 @@ function openPalette(controller) {
         if (examples) {
             detail.appendChild(examples);
         }
-
-        detail.appendChild(presetBlock());
 
         const help = foldBlock('Help output', state.loaded ? state.loaded.helpText : '');
         if (help) {
