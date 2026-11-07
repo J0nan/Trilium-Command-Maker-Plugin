@@ -40,6 +40,9 @@ __def("render", function (module, exports, __require) {
 const PLACEHOLDER_RE = /\\?\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
 const PLACEHOLDER_SOURCE_RE = /\\?\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
 
+/** Value-map key for the free-text arguments inserted right after the base. */
+const EXTRA_KEY = 'cm:extra';
+
 const QUOTERS = {
     none(value) {
         return value;
@@ -228,14 +231,22 @@ function renderCommand(definition, values) {
         }
     }
 
-    const parts = [substituted.trim()].concat(segments).filter(function (part) {
-        return part !== '';
-    });
+    const parts = [substituted.trim()];
+    const extra = valueMap[EXTRA_KEY];
+    if (!isEmpty(extra)) {
+        parts.push(String(extra).trim());
+    }
+    for (const segment of segments) {
+        if (segment) {
+            parts.push(segment);
+        }
+    }
 
-    return { command: parts.join(' '), warnings: warnings };
+    return { command: parts.filter(function (part) { return part !== ''; }).join(' '), warnings: warnings };
 }
 
 module.exports = {
+    EXTRA_KEY,
     slugify,
     quote,
     isEmpty,
@@ -246,28 +257,1140 @@ module.exports = {
     renderCommand
 };
 });
+__def("parse", function (module, exports, __require) {
+'use strict';
+
+/**
+ * Pure option importers (S7): plain `--help` output, a JSON options file or a
+ * markdown table all become canonical options. No Trilium API, no DOM, no
+ * external dependencies.
+ *
+ * A canonical option looks like:
+ * {
+ *   label: 'Input file', flag: '--input', aliases: ['-i', '--input'],
+ *   help: 'Input file to read.', type: 'path', values: [], defaultValue: '',
+ *   required: false, mode: 'flag', placeholder: 'input', order: 10
+ * }
+ *
+ * Every parser returns { options, warnings } and never throws: whatever it
+ * cannot understand becomes a warning the palette can show in the preview.
+ *
+ * Types come from Model's set: a help line with no metavar is a boolean; a
+ * JSON or table entry that carries no type at all falls back to 'string',
+ * matching Model.optionFromNote.
+ */
+
+const Render = __require("render");
+
+const TYPES = ['boolean', 'path', 'number', 'enum', 'string'];
+const PATH_TOKENS = ['PATH', 'FILE', 'DIR', 'FOLDER'];
+const NUMBER_TOKENS = ['N', 'NUM', 'NUMBER', 'INT', 'INTEGER', 'COUNT', 'SIZE', 'SECONDS'];
+
+const NAMED_ENTITIES = {
+    nbsp: ' ',
+    amp: '&',
+    lt: '<',
+    gt: '>',
+    quot: '"',
+    apos: "'",
+    en: '\u2013',
+    em: '\u2014',
+    ndash: '\u2013',
+    mdash: '\u2014',
+    lsquo: '\u2018',
+    rsquo: '\u2019',
+    ldquo: '\u201c',
+    rdquo: '\u201d',
+    hellip: '\u2026',
+    middot: '\u00b7',
+    bull: '\u2022',
+    copy: '\u00a9',
+    reg: '\u00ae',
+    deg: '\u00b0'
+};
+
+const ENTITY_RE = /&(#[xX][0-9a-fA-F]+|#\d+|[A-Za-z][A-Za-z0-9]*);/g;
+const COMMENT_RE = /<!--[\s\S]*?-->/g;
+const PRE_RE = /<pre\b[^>]*>([\s\S]*?)<\/pre\s*>/gi;
+/** Tags whose end means "start a new line" in plain text. */
+const BLOCK_BREAK_RE = /<br\s*\/?>|<\/p\s*>|<\/li\s*>|<\/h[1-6]\s*>|<\/pre\s*>|<\/tr\s*>/gi;
+const TAG_RE = /<[^>]*>/g;
+/** 2+ spaces (or a tab) separate an option spec from its description. */
+const GAP_RE = /\t| {2,}/;
+/** `: ` or an em dash also start a description. */
+const LEADING_SEPARATOR_RE = /[:\u2014]\s+/;
+
+const TOKEN_FLAG_RE = /^(-{1,2})(?:\[(no-|on-)?\])?([A-Za-z0-9][A-Za-z0-9:._+@%~-]*)$/;
+const OPENERS = '<[({';
+const CLOSERS = '>])}';
+/** A help block header ends in a colon: "Options:", "Main arguments:". */
+const SECTION_HEADER_RE = /^[A-Za-z][A-Za-z0-9 ()/,.'\u2019-]*:$/;
+const USAGE_LINE_RE = /^(usage|synopsis|overview|syntax)\b/i;
+
+/** `&mdash;` / `&#8212;` / `&#x2014;` and friends, decoded in one pass. */
+function decodeEntities(text) {
+    return String(text == null ? '' : text).replace(ENTITY_RE, function (match, body) {
+        if (body.charAt(0) === '#') {
+            const isHex = body.charAt(1) === 'x' || body.charAt(1) === 'X';
+            const code = parseInt(isHex ? body.slice(2) : body.slice(1), isHex ? 16 : 10);
+            if (!isFinite(code) || code < 0 || code > 0x10ffff) {
+                return match;
+            }
+            try {
+                return String.fromCodePoint(code);
+            } catch (err) {
+                return match;
+            }
+        }
+        const named = NAMED_ENTITIES[body.toLowerCase()];
+        return named === undefined ? match : named;
+    });
+}
+
+/** Three or more consecutive line breaks become one blank line. */
+function collapseBlankLines(text) {
+    return String(text).replace(/\n{3,}/g, '\n\n');
+}
+
+/** HTML outside `<pre>`: block tags become newlines, the rest becomes prose. */
+function textChunk(html) {
+    const withoutTags = String(html)
+        .replace(COMMENT_RE, ' ')
+        .replace(BLOCK_BREAK_RE, '\n')
+        .replace(TAG_RE, '');
+    const lines = withoutTags.split(/\r?\n/).map(function (line) {
+        return line.replace(/[^\S\n]+/g, ' ').trim();
+    });
+    return collapseBlankLines(decodeEntities(lines.join('\n')));
+}
+
+/** HTML inside `<pre>`: its inner line breaks are kept exactly. */
+function preChunk(inner) {
+    const text = decodeEntities(String(inner).replace(TAG_RE, ''));
+    return text.replace(/^\r?\n/, '').replace(/\s+$/, '') + '\n';
+}
+
+/**
+ * HTML note body -> readable plain text. Blank runs of 3+ lines collapse to
+ * one; `<pre>` content keeps its own line breaks.
+ * @param {string} html
+ * @returns {string}
+ */
+function stripHtml(html) {
+    const source = String(html == null ? '' : html);
+    let out = '';
+    let cursor = 0;
+    PRE_RE.lastIndex = 0;
+    let match = PRE_RE.exec(source);
+    while (match !== null) {
+        out += textChunk(source.slice(cursor, match.index));
+        out += preChunk(match[1]);
+        cursor = match.index + match[0].length;
+        match = PRE_RE.exec(source);
+    }
+    out += textChunk(source.slice(cursor));
+    return out.replace(/^[ \t\n]+/, '').replace(/[\s\n]+$/, '');
+}
+
+function splitList(text) {
+    return String(text == null ? '' : text)
+        .split(',')
+        .map(function (entry) {
+            return entry.trim();
+        })
+        .filter(function (entry) {
+            return entry !== '';
+        });
+}
+
+function uniq(list) {
+    const seen = {};
+    const out = [];
+    for (const value of list) {
+        if (!Object.prototype.hasOwnProperty.call(seen, value)) {
+            seen[value] = true;
+            out.push(value);
+        }
+    }
+    return out;
+}
+
+function bracketDepth(token) {
+    let depth = 0;
+    for (const ch of token) {
+        if (OPENERS.indexOf(ch) !== -1) {
+            depth += 1;
+        } else if (CLOSERS.indexOf(ch) !== -1) {
+            depth -= 1;
+        }
+    }
+    return depth;
+}
+
+/** Whitespace tokens, then split on `,` `|` `;` outside brackets. */
+function tokenize(text) {
+    const out = [];
+    for (const rough of String(text == null ? '' : text).split(/\s+/)) {
+        if (rough === '') {
+            continue;
+        }
+        let depth = 0;
+        let current = '';
+        for (const ch of rough) {
+            if (OPENERS.indexOf(ch) !== -1) {
+                depth += 1;
+            } else if (CLOSERS.indexOf(ch) !== -1) {
+                depth -= 1;
+            }
+            if (depth === 0 && (ch === ',' || ch === '|' || ch === ';')) {
+                if (current !== '') {
+                    out.push(current);
+                    current = '';
+                }
+                continue;
+            }
+            current += ch;
+        }
+        if (current !== '') {
+            out.push(current);
+        }
+    }
+    // Rejoin tokens whose brackets span more than one token: `{a, b, c}`.
+    const merged = [];
+    let pending = '';
+    for (const token of out) {
+        if (pending !== '') {
+            pending += ' ' + token;
+            if (bracketDepth(pending) <= 0) {
+                merged.push(pending);
+                pending = '';
+            }
+            continue;
+        }
+        if (bracketDepth(token) > 0) {
+            pending = token;
+            continue;
+        }
+        merged.push(token);
+    }
+    if (pending !== '') {
+        merged.push(pending);
+    }
+    return merged;
+}
+
+/** One token -> { flags, metavar } or null when it is not a flag. */
+function flagsFromToken(token) {
+    let piece = String(token);
+    // `[--dry-run]`: the flag itself is wrapped in option brackets.
+    if (piece.charAt(0) === '[' && piece.slice(-1) === ']' && piece.charAt(1) === '-') {
+        piece = piece.slice(1, -1);
+    }
+    let match = TOKEN_FLAG_RE.exec(piece);
+    let attached = '';
+    if (!match) {
+        // `--output=FILE`, `--color[=WHEN]`, `--format=(choices)`, `-b:v{a|b}`: the tail is the metavar.
+        const open = piece.search(/[=<[{(]/);
+        if (open !== -1) {
+            attached = piece.slice(open)
+                .replace(/^[=[{\s]+/, '')
+                .replace(/[\])\s]+$/, '')
+                .replace(/=$/, '');
+            piece = piece.slice(0, open);
+        }
+        match = TOKEN_FLAG_RE.exec(piece);
+    }
+    if (!match) {
+        return null;
+    }
+    const dash = match[1];
+    const bare = match[3];
+    if (match[2] === 'no-') {
+        return { flags: [dash + bare, '--no-' + bare], metavar: attached, negated: true };
+    }
+    if (match[2] === 'on-') {
+        return { flags: ['--no-' + bare, dash + bare], metavar: attached, negated: true };
+    }
+    return { flags: [dash + bare], metavar: attached, negated: false };
+}
+
+function isMetavarToken(token) {
+    if (token === '') {
+        return false;
+    }
+    if (OPENERS.indexOf(token.charAt(0)) !== -1) {
+        return true;
+    }
+    return /^[A-Z][A-Za-z0-9_]*$/.test(token) && token.indexOf('-') === -1;
+}
+
+/** Walk leading flag tokens, then one optional metavar; the rest is prose. */
+function readTokens(tokens) {
+    const flags = [];
+    let metavar = '';
+    let negated = false;
+    let index = 0;
+    while (index < tokens.length) {
+        const parsed = flagsFromToken(tokens[index]);
+        if (!parsed) {
+            break;
+        }
+        for (const flag of parsed.flags) {
+            if (flags.indexOf(flag) === -1) {
+                flags.push(flag);
+            }
+        }
+        if (metavar === '' && parsed.metavar !== '') {
+            metavar = parsed.metavar;
+        }
+        negated = negated || parsed.negated;
+        index += 1;
+    }
+    const startedWithFlag = flags.length > 0;
+    if (index < tokens.length && startedWithFlag && isMetavarToken(tokens[index])) {
+        metavar = metavar === '' ? tokens[index] : metavar;
+        index += 1;
+    }
+    return { flags: flags, metavar: metavar, negated: negated, rest: tokens.slice(index) };
+}
+
+function readSpecText(text) {
+    return readTokens(tokenize(text));
+}
+
+function enumValuesFrom(spec, description) {
+    const candidates = [];
+    const shapes = [/\{([^{}]*)\}/g, /\(([^()]*)\)/g, /\[([^[\]]*)\]/g];
+    for (const shape of shapes) {
+        let match = shape.exec(String(spec == null ? '' : spec));
+        while (match !== null) {
+            candidates.push(splitList(match[1].split('|').join(',')));
+            match = shape.exec(String(spec == null ? '' : spec));
+        }
+    }
+    const prose = /\b(?:one of|possible values|valid values)\s*:?\s*([^\n.]+)/i.exec(String(description == null ? '' : description));
+    if (prose) {
+        candidates.push(splitList(prose[1].replace(/^["'`[]/, '').replace(/["'`\]]$/, '')));
+    }
+    for (const candidate of candidates) {
+        if (candidate.length >= 2 && candidate.every(function (value) {
+            return /^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(value);
+        })) {
+            return uniq(candidate);
+        }
+    }
+    return [];
+}
+
+function metavarTokens(metavar) {
+    return String(metavar == null ? '' : metavar)
+        .replace(/[-_]+/g, ' ')
+        .split(/[^A-Za-z0-9]+/)
+        .filter(function (token) {
+            return token !== '';
+        })
+        .map(function (token) {
+            return token.toUpperCase();
+        });
+}
+
+/**
+ * Best-effort option type from a metavar and its description.
+ * @returns {'boolean'|'path'|'number'|'enum'|'string'}
+ */
+function inferType(metavar, help) {
+    const met = String(metavar == null ? '' : metavar).trim();
+    if (enumValuesFrom(met, help).length > 0) {
+        return 'enum';
+    }
+    if (met === '') {
+        return 'boolean';
+    }
+    const tokens = metavarTokens(met);
+    if (tokens.some(function (token) {
+        return PATH_TOKENS.indexOf(token) !== -1;
+    })) {
+        return 'path';
+    }
+    if (tokens.some(function (token) {
+        return NUMBER_TOKENS.indexOf(token) !== -1;
+    })) {
+        return 'number';
+    }
+    return 'string';
+}
+
+const DEFAULT_PATTERNS = [
+    /\(\s*defaults?\s*[:=]\s*([^()]*)\)/i,
+    /\bdefaults?\s+to\s+(?:(?:(\d+(?:\.\d+)?|\S+)|"([^"]*)"|'([^']*)'|`([^`]*)`))((?:[ \t]+[^\s,.;:](?:[^\s,.;:]*))*)/i,
+    /\bdefault\s*[:=]\s*(\S[^(]*?)(?=\s+when\b|\s+(?:can|must|may|is|to|only|or|if)\b|[.,;]|\s*$)/i
+];
+
+/** `(default: X)`, `[default: X]`, `default: X`, `defaults to X`. */
+function extractDefaultValue(text) {
+    const source = String(text == null ? '' : text);
+    const square = /\[\s*defaults?\s*[:=]\s*([^\]]*)\]/i.exec(source);
+    if (square && square[1].trim() !== '') {
+        return square[1].trim();
+    }
+    for (const pattern of DEFAULT_PATTERNS) {
+        const match = pattern.exec(source);
+        if (!match) {
+            continue;
+        }
+        const value = match[1] !== undefined
+            ? String(match[1]) + (match[5] === undefined ? '' : match[5])
+            : (match[2] || match[3] || match[4] || '');
+        const trimmed = value.trim();
+        if (trimmed !== '') {
+            return trimmed;
+        }
+    }
+    return '';
+}
+
+function primaryFlag(flags) {
+    const long = flags.filter(function (flag) {
+        return flag.indexOf('--') === 0;
+    })[0];
+    return long || flags.filter(function (flag) {
+        return flag.length > 1;
+    })[0] || '';
+}
+
+/** `--video-codec` -> `Video codec`. */
+function labelFromFlags(flags) {
+    const words = primaryFlag(flags)
+        .replace(/^-+/, '')
+        .replace(/[-_]+/g, ' ')
+        .replace(/[:=/[\](){}<>,]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (words === '') {
+        return '';
+    }
+    return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** `--video-codec` -> `video_codec`, `-c:v` -> `c_v`, else the label slug. */
+function placeholderFrom(flags, fallback) {
+    const bare = primaryFlag(flags).replace(/^-+/, '').replace(/[=:<>\[\]{}()|]/g, ' ');
+    const slug = Render.slugify(bare);
+    return slug !== '' ? slug : Render.slugify(fallback);
+}
+
+function truthy(value) {
+    if (value === true) {
+        return true;
+    }
+    return ['true', '1', 'yes', 'on'].indexOf(String(value).trim().toLowerCase()) !== -1;
+}
+
+function warning(code, message, extra) {
+    const entry = { code: code, message: message };
+    if (extra && extra.line !== undefined) {
+        entry.line = extra.line;
+    }
+    if (extra && extra.text !== undefined) {
+        entry.text = extra.text;
+    }
+    return entry;
+}
+
+function booleanDefaultFrom(text) {
+    const match = /\bon\b|\byes\b|\benabled\b|\btrue\b/i.exec(String(text == null ? '' : text));
+    return match ? 'true' : '';
+}
+
+/**
+ * Canonical option from an internal source ({ flags, metavar, ... } or a loose
+ * JSON entry via { flag, aliases, ... }). Returns null when no flag is usable.
+ */
+function buildOption(source) {
+    const entry = source || {};
+    let flags = Array.isArray(entry.flags) ? entry.flags.filter(function (flag) {
+        return typeof flag === 'string' && flag.trim() !== '';
+    }).map(function (flag) {
+        return flag.trim();
+    }) : [];
+    let metavar = String(entry.metavar == null ? '' : entry.metavar).trim();
+    let negated = entry.negated === true;
+
+    if (flags.length === 0) {
+        const text = [entry.flag].concat(entry.aliases || [])
+            .filter(function (value) {
+                return value !== undefined && value !== null && String(value).trim() !== '';
+            })
+            .map(function (value) {
+                return String(value).trim();
+            })
+            .join(' ');
+        const parsed = readSpecText(text);
+        flags = parsed.flags;
+        negated = negated || parsed.negated;
+        if (metavar === '') {
+            metavar = parsed.metavar;
+        }
+    }
+    if (flags.length === 0) {
+        return null;
+    }
+
+    const flag = primaryFlag(flags);
+    const help = String(entry.help == null ? '' : entry.help).trim() || String(entry.doc == null ? '' : entry.doc).trim();
+
+    let values = [];
+    const rawValues = entry.values !== undefined && entry.values !== null ? entry.values : entry.enumValues;
+    if (rawValues !== undefined && rawValues !== null && rawValues !== '') {
+        values = Array.isArray(rawValues)
+            ? rawValues.map(function (value) {
+                return String(value).trim();
+            })
+            : splitList(rawValues);
+        values = uniq(values.filter(function (value) {
+            return value !== '';
+        }));
+    }
+    if (values.length === 0) {
+        values = enumValuesFrom(metavar, help);
+    }
+
+    let type = String(entry.type == null ? '' : entry.type).trim().toLowerCase();
+    if (TYPES.indexOf(type) === -1) {
+        type = '';
+    }
+    if (type === '' && values.length > 0) {
+        type = 'enum';
+    }
+    if (type === '') {
+        if (negated) {
+            type = 'boolean';
+        } else if (metavar === '' && entry.fromHelp !== true) {
+            // A JSON or table entry with no `type` and no metavar: same default as Model.optionFromNote.
+            type = 'string';
+        } else {
+            type = inferType(metavar, help);
+        }
+    }
+    if (type === 'boolean') {
+        values = [];
+    }
+
+    const label = String(entry.label == null ? '' : entry.label).trim() || labelFromFlags(flags);
+    let rawDefault = entry.defaultValue !== undefined && entry.defaultValue !== null
+        ? entry.defaultValue
+        : entry['default'];
+    let defaultValue;
+    if (rawDefault === undefined || rawDefault === null || rawDefault === '') {
+        defaultValue = extractDefaultValue(help) || (type === 'boolean' ? booleanDefaultFrom(help) : '');
+    } else if (typeof rawDefault === 'boolean') {
+        defaultValue = rawDefault ? 'true' : '';
+    } else {
+        defaultValue = String(rawDefault).trim();
+    }
+
+    const rawOrder = entry.order === '' || entry.order === undefined || entry.order === null
+        ? NaN
+        : Number(entry.order);
+    const order = isFinite(rawOrder)
+        ? rawOrder
+        : (typeof entry.index === 'number' ? (entry.index + 1) * 10 : 10);
+
+    return {
+        label: label,
+        flag: flag,
+        aliases: flags.slice(),
+        help: help,
+        type: type,
+        values: values,
+        defaultValue: String(defaultValue),
+        required: truthy(entry.required),
+        mode: String(entry.mode == null ? '' : entry.mode).trim().toLowerCase() === 'inline' ? 'inline' : 'flag',
+        placeholder: String(entry.placeholder == null ? '' : entry.placeholder).trim() || placeholderFrom(flags, label),
+        order: order
+    };
+}
+
+/**
+ * Loose JSON entry (or hand-built object) -> canonical option.
+ * @returns {object|null} null when the entry has no usable flag
+ */
+function normalizeOption(entry) {
+    return buildOption(entry);
+}
+
+/**
+ * One trimmed help line -> { flags, metavar, negated, description, loose }.
+ * `loose` marks a line whose flag was followed by prose the parser had to
+ * guess at, which is reported as unparsed. Null when not an option line.
+ */
+function readHelpLine(line) {
+    let spec = line;
+    let description = '';
+    const gap = GAP_RE.exec(line);
+    const separator = LEADING_SEPARATOR_RE.exec(line);
+    if (gap && (!separator || gap.index < separator.index)) {
+        spec = line.slice(0, gap.index);
+        description = line.slice(gap.index + gap[0].length).trim();
+    } else if (separator) {
+        spec = line.slice(0, separator.index);
+        description = line.slice(separator.index + separator[0].length).trim();
+    }
+
+    const parsed = readTokens(tokenize(spec));
+    if (parsed.flags.length === 0) {
+        return null;
+    }
+    const inline = parsed.rest.join(' ');
+    let loose = false;
+    if (inline !== '' && description === '') {
+        description = inline;
+    } else if (inline !== '') {
+        // `-c CODEC extra words   real help`: the spec itself ran on.
+        loose = true;
+    }
+    return {
+        flags: parsed.flags,
+        metavar: parsed.metavar,
+        negated: parsed.negated,
+        description: description,
+        loose: loose
+    };
+}
+
+function pushOption(options, warnings, seen, option, origin) {
+    if (!option) {
+        return;
+    }
+    if (seen[option.flag] !== undefined) {
+        warnings.push(warning('duplicate-flag', 'Option "' + option.flag + '" from ' + origin
+            + ' duplicates the earlier one on ' + seen[option.flag] + '; the first one wins.'));
+        return;
+    }
+    seen[option.flag] = origin;
+    options.push(option);
+}
+
+/**
+ * Parse plain `--help` output into canonical options.
+ * @param {string} text
+ * @returns {{ options: Array, warnings: Array }}
+ */
+function parseHelpText(text) {
+    const options = [];
+    const warnings = [];
+    const seen = {};
+    const lines = String(text == null ? '' : text).split(/\r?\n/);
+    let current = null;
+    let currentIndent = 0;
+
+    for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index].replace(/\t/g, '    ').replace(/\s+$/, '');
+        const trimmed = line.trim();
+        if (trimmed === '' || /^[-=_*]{3,}$/.test(trimmed)) {
+            continue;
+        }
+        const indent = /^ */.exec(line)[0].length;
+
+        if (USAGE_LINE_RE.test(trimmed) || SECTION_HEADER_RE.test(trimmed)) {
+            current = null;
+            continue;
+        }
+
+        if (trimmed.charAt(0) !== '-') {
+            if (current !== null && indent > currentIndent) {
+                current.help = current.help === '' ? trimmed : current.help + ' ' + trimmed;
+                const added = extractDefaultValue(current.help);
+                if (added !== '') {
+                    current.defaultValue = added;
+                }
+            } else {
+                current = null;
+            }
+            continue;
+        }
+
+        const read = readHelpLine(trimmed);
+        if (!read || read.loose) {
+            warnings.push(warning('unparsed-option-line',
+                'Could not parse the option line "' + trimmed + '".', { line: index + 1, text: trimmed }));
+            current = null;
+            continue;
+        }
+        const option = buildOption({
+            flags: read.flags,
+            metavar: read.metavar,
+            negated: read.negated,
+            help: read.description,
+            fromHelp: true,
+            index: options.length
+        });
+        if (!option) {
+            warnings.push(warning('unparsed-option-line',
+                'Could not parse the option line "' + trimmed + '".', { line: index + 1, text: trimmed }));
+            current = null;
+            continue;
+        }
+        pushOption(options, warnings, seen, option, 'line ' + (index + 1));
+        current = option;
+        currentIndent = indent;
+    }
+    return { options: options, warnings: warnings };
+}
+
+/**
+ * Parse a JSON options file: a bare array, `{ "options": [...] }` or
+ * `{ "tool": { "options": [...] } }`.
+ * @param {string} text
+ * @returns {{ options: Array, warnings: Array }}
+ */
+function parseJsonOptions(text) {
+    const warnings = [];
+    const source = String(text == null ? '' : text);
+    if (source.trim() === '') {
+        return { options: [], warnings: [warning('invalid-json', 'The JSON import is empty.')] };
+    }
+    let data;
+    try {
+        data = JSON.parse(source);
+    } catch (err) {
+        return { options: [], warnings: [warning('invalid-json', 'Not valid JSON: ' + String(err && err.message || err))] };
+    }
+
+    let list = null;
+    if (Array.isArray(data)) {
+        list = data;
+    } else if (data && typeof data === 'object') {
+        if (Array.isArray(data.options)) {
+            list = data.options;
+        } else if (data.tool && typeof data.tool === 'object' && Array.isArray(data.tool.options)) {
+            list = data.tool.options;
+        }
+    }
+    if (list === null) {
+        return { options: [], warnings: [warning('invalid-json', 'No options array found in the JSON.')] };
+    }
+
+    const options = [];
+    const seen = {};
+    for (let index = 0; index < list.length; index += 1) {
+        const entry = list[index];
+        const origin = 'entry ' + (index + 1);
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+            warnings.push(warning('invalid-entry', origin + ' is not an object.', { line: index + 1 }));
+            continue;
+        }
+        if (entry.flag === undefined || entry.flag === null || String(entry.flag).trim() === '') {
+            warnings.push(warning('invalid-entry', origin + ' has no flag.', { line: index + 1 }));
+            continue;
+        }
+        const aliases = Array.isArray(entry.aliases)
+            ? entry.aliases.map(function (value) {
+                return String(value);
+            })
+            : (entry.aliases === undefined || entry.aliases === null ? [] : splitList(String(entry.aliases)));
+        const option = buildOption({
+            flag: entry.flag,
+            aliases: aliases,
+            help: entry.help,
+            doc: entry.doc,
+            label: entry.label,
+            type: entry.type,
+            values: entry.values !== undefined ? entry.values : entry.enumValues,
+            defaultValue: entry.defaultValue !== undefined ? entry.defaultValue : entry['default'],
+            required: entry.required,
+            mode: entry.mode,
+            placeholder: entry.placeholder,
+            order: entry.order,
+            index: options.length
+        });
+        if (!option) {
+            warnings.push(warning('invalid-entry', origin + ' has an unusable flag.', { line: index + 1 }));
+            continue;
+        }
+        pushOption(options, warnings, seen, option, origin);
+    }
+    return { options: options, warnings: warnings };
+}
+
+function cleanCell(cell) {
+    return String(cell == null ? '' : cell).trim().replace(/^`+/, '').replace(/`+$/, '')
+        .replace(/^\*+/, '').replace(/\*+$/, '').trim();
+}
+
+function splitRow(line) {
+    let row = line.trim();
+    if (row.charAt(0) === '|') {
+        row = row.slice(1);
+    }
+    if (row.slice(-1) === '|') {
+        row = row.slice(0, -1);
+    }
+    return row.split('|').map(cleanCell);
+}
+
+const FLAG_HEADER_RE = /^(flag|option|switch|argument|arg)\b/i;
+
+function columnHeader(header, pattern) {
+    for (let index = 0; index < header.length; index += 1) {
+        if (pattern.test(header[index])) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+/**
+ * Parse a markdown table of options: first cell flag, second cell help,
+ * optional third cell type. Separator rows are skipped.
+ * @param {string} text
+ * @returns {{ options: Array, warnings: Array }}
+ */
+function parseMarkdownTable(text) {
+    const warnings = [];
+    const source = String(text == null ? '' : text);
+    if (/^\s*<(?:table|tr|thead|tbody)\b/i.test(source)) {
+        warnings.push(warning('no-table', 'HTML tables are not supported; use a markdown table.'));
+        return { options: [], warnings: warnings };
+    }
+    const rows = [];
+    for (const line of source.split(/\r?\n/)) {
+        if (line.trim().charAt(0) !== '|') {
+            continue;
+        }
+        const cells = splitRow(line);
+        const separator = cells.every(function (cell) {
+            return cell === '' || /^:?-{2,}:?$/.test(cell);
+        });
+        if (!separator) {
+            rows.push(cells);
+        }
+    }
+    if (rows.length === 0) {
+        warnings.push(warning('no-table', 'No markdown table rows were found.'));
+        return { options: [], warnings: warnings };
+    }
+
+    const header = rows[0].map(function (cellValue) {
+        return cellValue.toLowerCase();
+    });
+    let flagColumn = columnHeader(header, FLAG_HEADER_RE);
+    let firstDataRow = 1;
+    if (flagColumn === -1) {
+        // A table written without a header row: its first column already holds flags.
+        const probe = readSpecText(rows[0][0] === undefined ? '' : rows[0][0]);
+        if (probe.flags.length > 0) {
+            flagColumn = 0;
+            firstDataRow = 0;
+        }
+    }
+    if (flagColumn === -1) {
+        warnings.push(warning('no-flag-column', 'The table header has no flag column.'));
+        return { options: [], warnings: warnings };
+    }
+    const named = function (pattern) {
+        return firstDataRow === 1 ? columnHeader(header, pattern) : -1;
+    };
+    const helpColumn = named(/^(help|description|doc|summary|meaning)\b/);
+    const typeColumn = named(/^(type|value type)\b/);
+    const labelColumn = named(/^(label|name|title)\b/);
+    const valuesColumn = named(/^(values|enum|allowed values)\b/);
+    const defaultColumn = named(/^(default|default value)\b/);
+    const requiredColumn = named(/^required\b/);
+    const orderColumn = named(/^order\b/);
+    const cell = function (columns, which) {
+        return which === -1 || columns[which] === undefined ? '' : String(columns[which]);
+    };
+
+    const options = [];
+    const seen = {};
+    for (let index = firstDataRow; index < rows.length; index += 1) {
+        const columns = rows[index];
+        const rawFlag = cell(columns, flagColumn);
+        const origin = 'table row ' + (index + 1);
+        if (rawFlag === '') {
+            warnings.push(warning('invalid-entry', origin + ' has no flag.', { line: index + 1 }));
+            continue;
+        }
+        const help = helpColumn === -1 ? cell(columns, flagColumn + 1) : cell(columns, helpColumn);
+        const type = cell(columns, typeColumn);
+        const option = buildOption({
+            flag: rawFlag,
+            help: help,
+            label: cell(columns, labelColumn),
+            type: type,
+            values: cell(columns, valuesColumn),
+            defaultValue: cell(columns, defaultColumn),
+            required: cell(columns, requiredColumn),
+            order: cell(columns, orderColumn),
+            index: options.length
+        });
+        if (!option) {
+            warnings.push(warning('invalid-entry', origin + ' has an unusable flag "' + rawFlag + '".', { line: index + 1 }));
+            continue;
+        }
+        if (typeColumn === -1 && type === '') {
+            const maybeType = cell(columns, flagColumn + 2).toLowerCase();
+            if (TYPES.indexOf(maybeType) !== -1) {
+                option.type = maybeType;
+                if (maybeType !== 'enum') {
+                    option.values = [];
+                }
+            }
+        }
+        pushOption(options, warnings, seen, option, origin);
+    }
+    return { options: options, warnings: warnings };
+}
+
+/**
+ * Detect the import format and parse it.
+ * @param {string} text
+ * @returns {{ format: 'json'|'table'|'help', options: Array, warnings: Array }}
+ */
+function parseImport(text) {
+    const trimmed = String(text == null ? '' : text).trim();
+    if (trimmed.charAt(0) === '{' || trimmed.charAt(0) === '[') {
+        const result = parseJsonOptions(text);
+        return { format: 'json', options: result.options, warnings: result.warnings };
+    }
+    if (trimmed.charAt(0) === '|') {
+        const result = parseMarkdownTable(text);
+        return { format: 'table', options: result.options, warnings: result.warnings };
+    }
+    const result = parseHelpText(text);
+    return { format: 'help', options: result.options, warnings: result.warnings };
+}
+
+module.exports = {
+    TYPES,
+    decodeEntities,
+    stripHtml,
+    inferType,
+    normalizeOption,
+    parseHelpText,
+    parseJsonOptions,
+    parseMarkdownTable,
+    parseImport
+};
+
+});
+__def("sections", function (module, exports, __require) {
+'use strict';
+
+/**
+ * Pure readers for the parts of a tool note the palette shows (S3, S5, S11):
+ * the three H2 sections, their links, and the Usage examples.
+ * No Trilium API, no DOM, no external dependencies.
+ *
+ * parseToolNote(html)  -> { whatIs, officialLinks, usefulLinks, links, sections }
+ * parseExamples(html, base) -> string[]   (at most 50, source order)
+ */
+
+const Parse = __require("parse");
+
+const H2_RE = /<h2\b[^>]*>([\s\S]*?)<\/h2\s*>/gi;
+const ANCHOR_RE = /<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi;
+const HREF_RE = /href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`<>]+))/i;
+const ALLOWED_SCHEME_RE = /^(?:https?|mailto):/i;
+/** `<pre>`, `<p>` and `<li>` blocks, in source order. */
+const BLOCK_RE = /<(pre|p|li)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi;
+
+const WHAT_IS = 'what is';
+const OFFICIAL = 'official links';
+const USEFUL = 'useful links';
+
+const MAX_EXAMPLES = 50;
+
+function trim(value) {
+    return String(value == null ? '' : value).trim();
+}
+
+/** Heading text used for lookup: lowercase, single-spaced, punctuation-free. */
+function normalizeHeading(value) {
+    return trim(value)
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .replace(/[?？:;.,!\u2026]+/g, '')
+        .trim();
+}
+
+/** The exact section key: lowercased, trimmed heading text. */
+function sectionKey(value) {
+    return trim(Parse.stripHtml(String(value == null ? '' : value).replace(/\s+/g, ' '))).toLowerCase();
+}
+
+function sectionBodies(source) {
+    const marks = [];
+    H2_RE.lastIndex = 0;
+    let match = H2_RE.exec(source);
+    while (match !== null) {
+        marks.push({ key: sectionKey(match[1]), bodyStart: match.index + match[0].length, start: match.index });
+        match = H2_RE.exec(source);
+    }
+    return marks.map(function (mark, index) {
+        const end = index + 1 < marks.length ? marks[index + 1].start : source.length;
+        return { key: mark.key, html: source.slice(mark.bodyStart, end) };
+    });
+}
+
+/** Every http(s)/mailto anchor inside a section's HTML. */
+function linksInSection(html, section) {
+    const links = [];
+    const source = String(html == null ? '' : html);
+    ANCHOR_RE.lastIndex = 0;
+    let match = ANCHOR_RE.exec(source);
+    while (match !== null) {
+        const hrefMatch = HREF_RE.exec(match[1]);
+        const href = hrefMatch ? Parse.decodeEntities(trim(hrefMatch[1] || hrefMatch[2] || hrefMatch[3])) : '';
+        if (href !== '' && ALLOWED_SCHEME_RE.test(href)) {
+            const text = Parse.stripHtml(match[2]);
+            links.push({ text: text === '' ? href : text, href: href, section: section });
+        }
+        match = ANCHOR_RE.exec(source);
+    }
+    return links;
+}
+
+function findSectionKey(sections, wanted) {
+    const needle = normalizeHeading(wanted);
+    for (const heading of Object.keys(sections)) {
+        if (normalizeHeading(heading) === needle) {
+            return heading;
+        }
+    }
+    return null;
+}
+
+/**
+ * Tool note HTML -> the three H2 sections, their links and the "What is?" text.
+ * @param {string} html
+ * @returns {{ whatIs: string, officialLinks: Array, usefulLinks: Array, links: Array, sections: object }}
+ */
+function parseToolNote(html) {
+    const source = String(html == null ? '' : html);
+    const sections = {};
+    const rawBodies = {};
+    for (const body of sectionBodies(source)) {
+        const key = body.key === '' ? 'untitled' : body.key;
+        if (Object.prototype.hasOwnProperty.call(sections, key)) {
+            continue;
+        }
+        sections[key] = Parse.stripHtml(body.html);
+        rawBodies[key] = body.html;
+    }
+
+    const officialKey = findSectionKey(sections, OFFICIAL);
+    const usefulKey = findSectionKey(sections, USEFUL);
+    const officialLinks = linksInSection(officialKey === null ? '' : rawBodies[officialKey], 'official');
+    const usefulLinks = linksInSection(usefulKey === null ? '' : rawBodies[usefulKey], 'useful');
+
+    const whatIsKey = findSectionKey(sections, WHAT_IS);
+    return {
+        whatIs: whatIsKey === null ? Parse.stripHtml(source) : trim(sections[whatIsKey]),
+        officialLinks: officialLinks,
+        usefulLinks: usefulLinks,
+        links: officialLinks.concat(usefulLinks),
+        sections: sections
+    };
+}
+
+function firstToken(base) {
+    return trim(base).split(/\s+/)[0] || '';
+}
+
+function addExample(out, text) {
+    if (text === '' || out.indexOf(text) !== -1) {
+        return;
+    }
+    out.push(text);
+}
+
+function looksLikeCommand(text, token) {
+    if (text === '' || /\n/.test(text) || token === '') {
+        return false;
+    }
+    if (/[.!?\u00a1\u00bf]$/.test(text)) {
+        return false;
+    }
+    if (text.slice(0, token.length).toLowerCase() !== token.toLowerCase()) {
+        return false;
+    }
+    return text.length === token.length || /\s/.test(text.charAt(token.length));
+}
+
+/**
+ * Usage note HTML -> example command lines.
+ * Code blocks always count; a single-line `<p>`/`<li>` that starts with the
+ * command name and does not end in a period counts too.
+ * @param {string} html
+ * @param {string} base the tool command, e.g. `ffmpeg` or `git commit`
+ * @returns {Array<string>}
+ */
+function parseExamples(html, base) {
+    const source = String(html == null ? '' : html);
+    const token = firstToken(base);
+    const out = [];
+    BLOCK_RE.lastIndex = 0;
+    let match = BLOCK_RE.exec(source);
+    while (match !== null) {
+        const tag = match[1].toLowerCase();
+        const text = Parse.stripHtml(match[0]);
+        if (text !== '') {
+            if (tag === 'pre') {
+                addExample(out, text);
+            } else if (looksLikeCommand(text, token)) {
+                addExample(out, text);
+            }
+        }
+        match = BLOCK_RE.exec(source);
+    }
+    return out.slice(0, MAX_EXAMPLES);
+}
+
+module.exports = {
+    parseToolNote,
+    parseExamples
+};
+
+});
 __def("model", function (module, exports, __require) {
 'use strict';
 
 /**
- * Turns a plain note snapshot into a command definition.
- * Pure: the runtime is responsible for reading FNote objects and passing
- * { noteId, title, content, labels, optionNotes } snapshots.
+ * Turns a plain tool snapshot into a command definition.
+ * Pure: the runtime reads FNote objects and passes
+ * { noteId, title, category, content, labels, optionNotes, examples } snapshots.
+ *
+ * A tool definition looks like:
+ * {
+ *   noteId, title, category, description, tags, base,
+ *   options: [ option, ... ],
+ *   inferred: [ option, ... ],
+ *   placeholders: [ name, ... ],
+ *   warnings: [ { code, message } ]
+ * }
  */
 
 const Render = __require("render");
 
 const LABELS = {
+    // structure
     root: 'cmRoot',
-    command: 'cmCommand',
-    template: 'cmTemplate',
-    optionTemplate: 'cmOptionTemplate',
+    tools: 'cmTools',
+    category: 'cmCategory',
+    tool: 'cmTool',
+    install: 'cmInstall',
+    usage: 'cmUsage',
+    helpNote: 'cmHelpNote',
     options: 'cmOptions',
+    option: 'cmOption',
     presets: 'cmPresets',
-    preset: 'cmPreset',
+    // tool metadata
     description: 'cmDesc',
     tags: 'cmTags',
     base: 'cmBase',
+    // option metadata
     flag: 'cmFlag',
     mode: 'cmMode',
     placeholder: 'cmPlaceholder',
@@ -277,7 +1400,16 @@ const LABELS = {
     required: 'cmRequired',
     order: 'cmOrder',
     quote: 'cmQuote',
-    separator: 'cmSep'
+    separator: 'cmSep',
+    doc: 'cmDoc',
+    // bookkeeping
+    seeded: 'cmSeeded',
+    migrated: 'cmMigrated',
+    // legacy command/template labels, only used by the legacy importer
+    legacyCommand: 'cmCommand',
+    legacyTemplate: 'cmTemplate',
+    legacyOptionTemplate: 'cmOptionTemplate',
+    legacyPreset: 'cmPreset'
 };
 
 const LABEL_NAMES = Object.keys(LABELS).map(function (key) {
@@ -309,6 +1441,36 @@ function readNumber(labels, name, fallback) {
     return isFinite(parsed) ? parsed : fallback;
 }
 
+function splitValues(value) {
+    return String(value == null ? '' : value)
+        .split(',')
+        .map(function (entry) {
+            return entry.trim();
+        })
+        .filter(function (entry) {
+            return entry !== '';
+        });
+}
+
+/** Default command name for a tool note: its title, safely lowercased. */
+function deriveBase(title) {
+    return String(title == null ? '' : title)
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9._+\- ]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function optionPlaceholder(snapshot, flag, title) {
+    const explicit = readString(snapshot.labels, LABELS.placeholder, '');
+    if (explicit.trim() !== '') {
+        return explicit.trim();
+    }
+    const fromFlag = String(flag || '').replace(/^-+/, '');
+    return Render.slugify(fromFlag !== '' ? fromFlag : title);
+}
+
 function optionFromNote(note) {
     const snapshot = note || {};
     const labels = snapshot.labels || {};
@@ -324,25 +1486,21 @@ function optionFromNote(note) {
         quote = 'none';
     }
 
-    const enumValues = readString(labels, LABELS.enumValues, '')
-        .split(',')
-        .map(function (entry) {
-            return entry.trim();
-        })
-        .filter(function (entry) {
-            return entry !== '';
-        });
+    const enumValues = splitValues(readString(labels, LABELS.enumValues, ''));
 
     const rawDefault = labels[LABELS.defaultValue];
     const defaultValue = rawDefault === undefined || rawDefault === null
         ? (type === 'boolean' ? false : '')
         : String(rawDefault);
 
+    const flag = readString(labels, LABELS.flag, '');
+
     return {
         noteId: snapshot.noteId || null,
         title: title,
-        placeholder: readString(labels, LABELS.placeholder, Render.slugify(title)),
-        flag: readString(labels, LABELS.flag, ''),
+        help: readString(labels, LABELS.doc, '').trim(),
+        placeholder: optionPlaceholder(snapshot, flag, title),
+        flag: flag,
         mode: readString(labels, LABELS.mode, 'flag').trim().toLowerCase() === 'inline' ? 'inline' : 'flag',
         type: type,
         enumValues: enumValues,
@@ -364,13 +1522,14 @@ function sortOptions(left, right) {
     return String(left.noteId) < String(right.noteId) ? -1 : 1;
 }
 
-function buildCommand(note) {
+function buildTool(note) {
     const snapshot = note || {};
     const labels = snapshot.labels || {};
 
-    const base = labels[LABELS.base] !== undefined && labels[LABELS.base] !== null
-        ? String(labels[LABELS.base])
-        : String(snapshot.content || '');
+    const configuredBase = labels[LABELS.base];
+    const base = configuredBase !== undefined && configuredBase !== null && String(configuredBase).trim() !== ''
+        ? String(configuredBase)
+        : deriveBase(snapshot.title);
 
     const optionNotes = Array.isArray(snapshot.optionNotes) ? snapshot.optionNotes : [];
     const options = optionNotes.map(optionFromNote).sort(sortOptions);
@@ -404,6 +1563,7 @@ function buildCommand(note) {
             return {
                 noteId: null,
                 title: name,
+                help: '',
                 placeholder: name,
                 flag: '',
                 mode: 'inline',
@@ -421,19 +1581,23 @@ function buildCommand(note) {
     return {
         noteId: snapshot.noteId || '',
         title: String(snapshot.title || ''),
+        category: String(snapshot.category || ''),
         description: readString(labels, LABELS.description, ''),
         tags: readString(labels, LABELS.tags, ''),
         base: base,
         options: options,
         inferred: inferred,
         placeholders: declared,
-        warnings: warnings
+        warnings: warnings,
+        examples: Array.isArray(snapshot.examples) ? snapshot.examples.slice() : [],
+        searchText: String(snapshot.searchText || '')
     };
 }
 
 function defaultValueMap(definition) {
     const values = {};
     const safeDefinition = definition || {};
+    values[Render.EXTRA_KEY] = '';
     for (const option of safeDefinition.options || []) {
         values[Render.valueKey(option)] = option.defaultValue;
     }
@@ -451,16 +1615,19 @@ function matches(definition, query) {
     const safeDefinition = definition || {};
     const optionText = (safeDefinition.options || [])
         .map(function (option) {
-            return [option.title, option.flag, (option.enumValues || []).join(' ')].join(' ');
+            return [option.title, option.flag, option.help, (option.enumValues || []).join(' ')].join(' ');
         })
         .join(' ');
     const haystack = [
         safeDefinition.title,
         safeDefinition.description,
         safeDefinition.tags,
+        safeDefinition.category,
         safeDefinition.base,
         optionText,
-        (safeDefinition.optionTitles || []).join(' ')
+        (safeDefinition.optionTitles || []).join(' '),
+        (safeDefinition.examples || []).join(' '),
+        safeDefinition.searchText
     ].join(' ').toLowerCase();
 
     return needle.split(/\s+/).every(function (term) {
@@ -468,45 +1635,212 @@ function matches(definition, query) {
     });
 }
 
+/** Content template for a new tool note: exactly the three H2 sections. */
+function toolTemplate() {
+    return [
+        '<h2>What is?</h2>',
+        '<p>Describe what this tool does and when to use it.</p>',
+        '<h2>Official links</h2>',
+        '<p>Add the official documentation, repository or website links here.</p>',
+        '<h2>Useful links</h2>',
+        '<p>Add useful guides, cheat sheets or articles here.</p>'
+    ].join('\n');
+}
+
+/** Starting content for the three standard child notes. */
+function newToolNotes() {
+    return {
+        install: '<p>Add the installation steps or commands for this tool.</p>',
+        usage: '<p>Add examples of commands with this tool. Put each example in a code block.</p>',
+        help: ''
+    };
+}
+
+function seedTools() {
+    return [
+        {
+            category: 'Media',
+            title: 'ffmpeg',
+            base: 'ffmpeg',
+            description: 'Convert, inspect and process audio and video files.',
+            content: [
+                '<h2>What is?</h2>',
+                '<p>ffmpeg is a complete, cross-platform command-line toolkit for converting, recording and streaming audio and video.</p>',
+                '<h2>Official links</h2>',
+                '<ul><li><a href="https://ffmpeg.org/documentation.html">Official documentation</a></li></ul>',
+                '<h2>Useful links</h2>',
+                '<ul><li><a href="https://ffmpeg.org/ffmpeg.html">ffmpeg command reference</a></li></ul>'
+            ].join('\n'),
+            install: '<p><strong>Windows:</strong> <code>winget install Gyan.FFmpeg</code></p><p><strong>macOS:</strong> <code>brew install ffmpeg</code></p><p><strong>Debian/Ubuntu:</strong> <code>sudo apt install ffmpeg</code></p>',
+            usage: [
+                '<p>Compress a video to H.264:</p>',
+                '<pre><code>ffmpeg -i input.mp4 -c:v libx264 -crf 23 output.mp4</code></pre>',
+                '<p>Extract the audio track:</p>',
+                '<pre><code>ffmpeg -i input.mp4 -vn -c:a aac audio.m4a</code></pre>',
+                '<p>Scale to 720p:</p>',
+                '<pre><code>ffmpeg -i input.mp4 -vf scale=1280:-2 output.mp4</code></pre>'
+            ].join('\n'),
+            help: [
+                'Usage: ffmpeg [options] [[infile options] -i infile]... {[outfile options] outfile}...',
+                '',
+                'Main options:',
+                '  -i URL            input file url',
+                '  -y                overwrite output files without asking',
+                '  -c:v CODEC        select the video encoder',
+                '  -c:a CODEC        select the audio encoder',
+                '  -crf N            constant rate factor (quality), lower is better',
+                '  -vf FILTERGRAPH   apply a video filter'
+            ].join('\n'),
+            options: [
+                { label: 'Input file', flag: '-i', type: 'path', doc: 'Input file the command reads from.', order: 10 },
+                { label: 'Video codec', flag: '-c:v', type: 'enum', values: ['libx264', 'libx265', 'libvpx-vp9'], defaultValue: 'libx264', doc: 'Video encoder to use.', order: 20 },
+                { label: 'CRF quality', flag: '-crf', type: 'number', defaultValue: '23', doc: 'Constant Rate Factor; lower values keep more quality.', order: 30 },
+                { label: 'Audio codec', flag: '-c:a', type: 'enum', values: ['aac', 'libopus', 'copy'], doc: 'Audio encoder to use.', order: 40 },
+                { label: 'Video filter', flag: '-vf', type: 'string', doc: 'Video filter graph, for example scale=1280:-2.', order: 50 },
+                { label: 'Overwrite output', flag: '-y', type: 'boolean', doc: 'Overwrite output files without asking.', order: 60 }
+            ]
+        },
+        {
+            category: 'Version control',
+            title: 'git commit',
+            base: 'git commit',
+            description: 'Record staged changes in the current Git repository.',
+            content: [
+                '<h2>What is?</h2>',
+                '<p><code>git commit</code> records the staged changes of the repository as a new commit.</p>',
+                '<h2>Official links</h2>',
+                '<ul><li><a href="https://git-scm.com/docs/git-commit">Official git-commit documentation</a></li></ul>',
+                '<h2>Useful links</h2>',
+                '<ul><li><a href="https://www.conventionalcommits.org/">Conventional Commits</a></li></ul>'
+            ].join('\n'),
+            install: '<p><strong>Windows:</strong> <code>winget install Git.Git</code></p><p><strong>macOS:</strong> <code>brew install git</code></p><p><strong>Debian/Ubuntu:</strong> <code>sudo apt install git</code></p>',
+            usage: [
+                '<p>Commit with a message:</p>',
+                '<pre><code>git commit -m "fix: handle empty input"</code></pre>',
+                '<p>Add all tracked changes and commit:</p>',
+                '<pre><code>git commit -am "chore: update dependencies"</code></pre>',
+                '<p>Amend the last commit without changing its message:</p>',
+                '<pre><code>git commit --amend --no-edit</code></pre>'
+            ].join('\n'),
+            help: [
+                'usage: git commit [-a | --interactive | --patch] [-s] [-v] [-u<mode>] [--amend]',
+                '                  [--dry-run] [(-c | -C | --squash) <commit> | --fixup [(amend|reword):]<commit>]',
+                '                  [-F <file> | -m <msg>] [--reset-author] [--allow-empty]',
+                '',
+                '    -m, --message <message>  use the given message as the commit message',
+                '    -a, --all                commit all changed files',
+                '    --amend                  amend the previous commit',
+                '    --allow-empty            allow recording an empty commit',
+                '    --no-verify              bypass the pre-commit and commit-msg hooks',
+                '    --author <author>        override the author'
+            ].join('\n'),
+            options: [
+                { label: 'Message', flag: '-m', type: 'string', doc: 'Commit message. Repeat the flag to add paragraphs.', order: 10 },
+                { label: 'All changes', flag: '-a', type: 'boolean', doc: 'Stage all tracked changes before committing.', order: 20 },
+                { label: 'Amend last commit', flag: '--amend', type: 'boolean', doc: 'Replace the previous commit instead of creating a new one.', order: 30 },
+                { label: 'Allow empty', flag: '--allow-empty', type: 'boolean', doc: 'Record a commit with no changes.', order: 40 },
+                { label: 'Skip hooks', flag: '--no-verify', type: 'boolean', doc: 'Bypass pre-commit and commit-msg hooks.', order: 50 },
+                { label: 'Author', flag: '--author', type: 'string', doc: 'Override the commit author, for example "Name <mail@example.com>".', order: 60 },
+                { label: 'Date', flag: '--date', type: 'string', doc: 'Override the author date.', order: 70 }
+            ]
+        },
+        {
+            category: 'Network',
+            title: 'curl',
+            base: 'curl',
+            description: 'Transfer data from or to a server with the curl command-line client.',
+            content: [
+                '<h2>What is?</h2>',
+                '<p>curl is a command-line tool for transferring data with URLs. It supports HTTP, HTTPS, FTP and many other protocols.</p>',
+                '<h2>Official links</h2>',
+                '<ul><li><a href="https://curl.se/docs/">Official curl documentation</a></li></ul>',
+                '<h2>Useful links</h2>',
+                '<ul><li><a href="https://curl.se/docs/manpage.html">curl man page</a></li></ul>'
+            ].join('\n'),
+            install: '<p><strong>Windows:</strong> <code>winget install curl.curl</code></p><p><strong>macOS:</strong> <code>brew install curl</code></p><p><strong>Debian/Ubuntu:</strong> <code>sudo apt install curl</code></p>',
+            usage: [
+                '<p>POST JSON:</p>',
+                '<pre><code>curl -X POST -H "Content-Type: application/json" -d "{\\"name\\":\\"value\\"}" https://api.example.com/items</code></pre>',
+                '<p>Download a file, following redirects:</p>',
+                '<pre><code>curl -L -o file.zip https://example.com/file.zip</code></pre>',
+                '<p>Show only the response headers:</p>',
+                '<pre><code>curl -sSI https://example.com</code></pre>'
+            ].join('\n'),
+            help: [
+                'Usage: curl [options...] <url>',
+                '',
+                ' -X, --request <method>      specify request method to use',
+                ' -H, --header <header/@file> pass custom header(s) to server',
+                ' -d, --data <data>           HTTP POST data',
+                ' -o, --output <file>         write to file instead of stdout',
+                ' -L, --location              follow redirects',
+                ' -s, --silent                silent mode',
+                ' -u, --user <user:password>  server user and password',
+                '     --compressed            request compressed response',
+                ' -k, --insecure              allow insecure server connections'
+            ].join('\n'),
+            options: [
+                { label: 'Request method', flag: '-X', type: 'enum', values: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'], doc: 'HTTP request method.', order: 10 },
+                { label: 'Header', flag: '-H', type: 'string', doc: 'Add a request header, for example "Content-Type: application/json".', order: 20 },
+                { label: 'Data', flag: '-d', type: 'string', doc: 'Request body sent to the server.', order: 30 },
+                { label: 'Output file', flag: '-o', type: 'path', doc: 'Write the response body to this file instead of stdout.', order: 40 },
+                { label: 'Follow redirects', flag: '-L', type: 'boolean', doc: 'Follow HTTP redirects.', order: 50 },
+                { label: 'Silent', flag: '-s', type: 'boolean', doc: 'Do not show progress or error messages.', order: 60 },
+                { label: 'Compressed', flag: '--compressed', type: 'boolean', doc: 'Ask the server for a compressed response and decompress it.', order: 70 },
+                { label: 'User', flag: '-u', type: 'string', doc: 'Server credentials as user:password.', order: 80 },
+                { label: 'Insecure', flag: '-k', type: 'boolean', doc: 'Allow insecure TLS connections (skip certificate checks).', order: 90 }
+            ]
+        }
+    ];
+}
+
 module.exports = {
     LABELS,
     LABEL_NAMES,
     TYPES,
     QUOTES,
+    EXTRA_KEY: Render.EXTRA_KEY,
+    deriveBase,
     optionFromNote,
     sortOptions,
-    buildCommand,
+    buildTool,
     defaultValueMap,
-    matches
+    matches,
+    toolTemplate,
+    newToolNotes,
+    seedTools
 };
 });
 __def("backend", function (module, exports, __require) {
 'use strict';
 
 /**
- * Backend operations.
+ * Backend operations for the tools registry.
  *
  * Everything runs through a single `beRun(params)` function because Trilium's
  * `api.runOnBackend` serialises the function by source: inner helpers travel
- * with it, outer helpers would not. `params.labels` carries the attribute names
- * so the schema lives in one place (model.js) instead of being duplicated here.
+ * with it, outer helpers would not. `params.labels` carries the attribute
+ * names from Model.LABELS so the label schema lives in one place instead of
+ * being duplicated here. Consequently `beRun` must never reference a
+ * module-scope binding and dispatches on literal action strings only.
  *
- * Actions: bootstrap | createCommand | addOption | savePreset | deletePreset
+ * Actions: bootstrap | createCategory | createTool | addOption |
+ * importOptions | deleteOption | setToolBase | setToolsRoot | savePreset |
+ * deletePreset | importLegacy
  */
-
-const ACTIONS = {
-    bootstrap: 'bootstrap',
-    createCommand: 'createCommand',
-    addOption: 'addOption',
-    savePreset: 'savePreset',
-    deletePreset: 'deletePreset'
-};
 
 function beRun(params) {
     const options = params || {};
     const labels = options.labels || {};
 
+    function nonEmpty(value) {
+        return value !== undefined && value !== null && String(value).trim() !== '';
+    }
+
     function hasLabel(note, name) {
+        if (!note || !name) {
+            return false;
+        }
         if (typeof note.hasLabel === 'function') {
             return note.hasLabel(name);
         }
@@ -514,102 +1848,298 @@ function beRun(params) {
         return value !== null && value !== undefined;
     }
 
-    function hasRelation(note, name) {
-        if (typeof note.hasRelation === 'function') {
-            return note.hasRelation(name);
+    function isTruthy(value) {
+        if (value === true) {
+            return true;
         }
-        const value = note.getRelationValue(name);
-        return value !== null && value !== undefined;
+        if (value === undefined || value === null) {
+            return false;
+        }
+        const normalised = String(value).trim().toLowerCase();
+        return normalised === 'true' || normalised === '1' || normalised === 'yes' || normalised === 'on';
     }
 
-    function findChild(parent, label) {
+    function requireNote(noteId, message) {
+        const note = api.getNote(noteId);
+        if (!note) {
+            throw new Error(message + ': ' + noteId);
+        }
+        return note;
+    }
+
+    function findChildWithLabel(parent, name) {
         const children = parent.getChildNotes();
         for (let index = 0; index < children.length; index += 1) {
-            if (hasLabel(children[index], label)) {
+            if (hasLabel(children[index], name)) {
                 return children[index];
             }
         }
         return null;
     }
 
-    function findChildByTitle(parent, title) {
-        const children = parent.getChildNotes();
+    function findCategory(toolsRoot, name) {
+        const children = toolsRoot.getChildNotes();
         for (let index = 0; index < children.length; index += 1) {
-            if (children[index].title === title) {
+            if (children[index].title === name && hasLabel(children[index], labels.category)) {
                 return children[index];
             }
         }
         return null;
     }
 
-    function ensureFolder(parent, label, title) {
-        const existing = findChild(parent, label);
+    function ensureCategory(toolsRoot, name) {
+        const existing = findCategory(toolsRoot, name);
         if (existing) {
             return existing;
         }
         const note = api.createNewNote({
-            parentNoteId: parent.noteId,
+            parentNoteId: toolsRoot.noteId,
+            title: name,
+            type: 'text',
+            content: ''
+        }).note;
+        note.setLabel(labels.category, '');
+        return note;
+    }
+
+    function ensureOptionsFolder(toolNote) {
+        const existing = findChildWithLabel(toolNote, labels.options);
+        if (existing) {
+            return existing;
+        }
+        const note = api.createNewNote({
+            parentNoteId: toolNote.noteId,
+            title: 'Options',
+            type: 'text',
+            content: ''
+        }).note;
+        note.setLabel(labels.options, '');
+        return note;
+    }
+
+    function ensurePresetsNote(optionsFolder) {
+        const existing = findChildWithLabel(optionsFolder, labels.presets);
+        if (existing) {
+            return existing;
+        }
+        const note = api.createNewNote({
+            parentNoteId: optionsFolder.noteId,
+            title: 'Presets',
+            type: 'code',
+            mime: 'application/json',
+            content: '{"v":1,"presets":[]}'
+        }).note;
+        note.setLabel(labels.presets, '');
+        return note;
+    }
+
+    /** Validate the tool and make sure its Options folder and Presets note exist. */
+    function presetsLocation(toolId) {
+        const tool = requireNote(toolId, 'Tool note not found');
+        const folder = ensureOptionsFolder(tool);
+        return { tool: tool, folder: folder, presets: ensurePresetsNote(folder) };
+    }
+
+    /** Read the presets JSON note, tolerating missing or invalid content. */
+    function readPresets(note) {
+        let data = null;
+        try {
+            data = JSON.parse(note.getContent() || '');
+        } catch (error) {
+            data = null;
+        }
+        if (!data || typeof data !== 'object' || !Array.isArray(data.presets)) {
+            data = { v: 1, presets: [] };
+        }
+        return data;
+    }
+
+    /** Minimal body for imported tools: exactly the three H2 sections. */
+    function toolHtmlContent() {
+        return [
+            '<h2>What is?</h2>',
+            '<p>Describe what this tool does and when to use it.</p>',
+            '<h2>Official links</h2>',
+            '<p>Add the official documentation, repository or website links here.</p>',
+            '<h2>Useful links</h2>',
+            '<p>Add useful guides, cheat sheets or articles here.</p>'
+        ].join('\n');
+    }
+
+    function childContent(value, fallback) {
+        if (nonEmpty(value)) {
+            return String(value);
+        }
+        return nonEmpty(fallback) ? String(fallback) : '';
+    }
+
+    /** Shared creation path for createTool, bootstrap seeding and the importer. */
+    function createToolNote(toolsRoot, spec, fallbacks) {
+        const safeSpec = spec || {};
+        const safeFallbacks = fallbacks || {};
+        const categoryName = nonEmpty(safeSpec.category) ? String(safeSpec.category) : 'Uncategorized';
+        const title = nonEmpty(safeSpec.title) ? String(safeSpec.title) : 'New tool';
+        const category = ensureCategory(toolsRoot, categoryName);
+        const note = api.createNewNote({
+            parentNoteId: category.noteId,
             title: title,
             type: 'text',
-            content: ''
+            content: nonEmpty(safeSpec.content) ? String(safeSpec.content) : toolHtmlContent()
         }).note;
-        note.setLabel(label, '');
+        note.setLabel(labels.tool, '');
+        if (nonEmpty(safeSpec.base)) {
+            note.setLabel(labels.base, String(safeSpec.base));
+        }
+        if (nonEmpty(safeSpec.description)) {
+            note.setLabel(labels.description, String(safeSpec.description));
+        }
+
+        const install = api.createNewNote({
+            parentNoteId: note.noteId,
+            title: 'Install',
+            type: 'text',
+            content: childContent(safeSpec.install, safeFallbacks.install)
+        }).note;
+        install.setLabel(labels.install, '');
+
+        const usage = api.createNewNote({
+            parentNoteId: note.noteId,
+            title: 'Usage',
+            type: 'text',
+            content: childContent(safeSpec.usage, safeFallbacks.usage)
+        }).note;
+        usage.setLabel(labels.usage, '');
+
+        const help = api.createNewNote({
+            parentNoteId: note.noteId,
+            title: 'Help',
+            type: 'code',
+            mime: 'text/x-sh',
+            content: childContent(safeSpec.help, safeFallbacks.help)
+        }).note;
+        help.setLabel(labels.helpNote, '');
+
+        const folder = ensureOptionsFolder(note);
+        ensurePresetsNote(folder);
+        const specs = Array.isArray(safeSpec.options) ? safeSpec.options : [];
+        for (let index = 0; index < specs.length; index += 1) {
+            createOptionNote(folder, specs[index]);
+        }
         return note;
     }
 
-    function slugify(text) {
-        return String(text == null ? '' : text)
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, '_')
-            .replace(/^_+|_+$/g, '');
-    }
-
-    function createOption(commandNote, spec) {
-        const optionTemplate = api.getNoteWithLabel(labels.optionTemplate);
-        const folder = ensureFolder(commandNote, labels.options, 'Options');
+    /** Create one option note under a tool's Options folder. */
+    function createOptionNote(folder, spec) {
+        const safe = spec || {};
+        const title = nonEmpty(safe.label) ? String(safe.label) : 'Option';
         const note = api.createNewNote({
             parentNoteId: folder.noteId,
-            title: spec.label || 'Option',
+            title: title,
             type: 'text',
-            content: ''
+            content: safe.content == null ? '' : String(safe.content)
         }).note;
-
-        if (optionTemplate && !hasRelation(note, 'template')) {
-            note.setRelation('template', optionTemplate.noteId);
+        note.setLabel(labels.option, '');
+        if (nonEmpty(safe.flag)) {
+            note.setLabel(labels.flag, String(safe.flag));
         }
-        if (spec.flag) {
-            note.setLabel(labels.flag, spec.flag);
+        const doc = safe.help || safe.doc;
+        if (nonEmpty(doc)) {
+            note.setLabel(labels.doc, String(doc));
         }
-        if (spec.type) {
-            note.setLabel(labels.type, spec.type);
+        if (nonEmpty(safe.type)) {
+            note.setLabel(labels.type, String(safe.type));
         }
-        if (spec.mode) {
-            note.setLabel(labels.mode, spec.mode);
+        const enumValues = safe.values !== undefined && safe.values !== null ? safe.values : safe.enumValues;
+        if (Array.isArray(enumValues)) {
+            if (enumValues.length > 0) {
+                note.setLabel(labels.enumValues, enumValues.join(','));
+            }
+        } else if (nonEmpty(enumValues)) {
+            note.setLabel(labels.enumValues, String(enumValues));
         }
-        if (spec.placeholder !== undefined && spec.placeholder !== null) {
-            note.setLabel(labels.placeholder, String(spec.placeholder));
-        } else {
-            note.setLabel(labels.placeholder, slugify(spec.label));
+        let rawDefault = undefined;
+        if (safe.default !== undefined && safe.default !== null) {
+            rawDefault = safe.default;
+        } else if (safe.defaultValue !== undefined && safe.defaultValue !== null) {
+            rawDefault = safe.defaultValue;
         }
-        if (spec.enumValues && spec.enumValues.length) {
-            note.setLabel(labels.enumValues, spec.enumValues.join(','));
+        if (rawDefault !== undefined) {
+            note.setLabel(labels.defaultValue, String(rawDefault));
         }
-        if (spec.defaultValue !== undefined && spec.defaultValue !== null) {
-            note.setLabel(labels.defaultValue, String(spec.defaultValue));
-        }
-        if (spec.quote) {
-            note.setLabel(labels.quote, spec.quote);
-        }
-        if (spec.sep) {
-            note.setLabel(labels.separator, spec.sep);
-        }
-        if (spec.order !== undefined && spec.order !== null) {
-            note.setLabel(labels.order, String(spec.order));
-        }
-        if (spec.required) {
+        if (safe.required) {
             note.setLabel(labels.required, 'true');
         }
+        if (safe.mode === 'inline') {
+            note.setLabel(labels.mode, 'inline');
+        }
+        if (nonEmpty(safe.placeholder)) {
+            note.setLabel(labels.placeholder, String(safe.placeholder));
+        }
+        if (safe.order !== undefined && safe.order !== null && String(safe.order).trim() !== '') {
+            note.setLabel(labels.order, String(safe.order));
+        }
+        if (nonEmpty(safe.quote)) {
+            note.setLabel(labels.quote, String(safe.quote));
+        }
+        if (safe.sep === '=' || safe.separator === '=') {
+            note.setLabel(labels.separator, '=');
+        }
         return note;
+    }
+
+    /** Legacy option notes are stored under a cmOptions-labelled child folder. */
+    function legacyOptionSpecs(commandNote) {
+        const folder = findChildWithLabel(commandNote, labels.options);
+        if (!folder) {
+            return [];
+        }
+        const children = folder.getChildNotes();
+        const specs = [];
+        for (let index = 0; index < children.length; index += 1) {
+            const child = children[index];
+            if (hasLabel(child, labels.legacyOptionTemplate)) {
+                continue;
+            }
+            const spec = { label: child.title };
+            const flag = child.getLabelValue(labels.flag);
+            const type = child.getLabelValue(labels.type);
+            const values = child.getLabelValue(labels.enumValues);
+            const defaultValue = child.getLabelValue(labels.defaultValue);
+            const required = child.getLabelValue(labels.required);
+            const order = child.getLabelValue(labels.order);
+            const quote = child.getLabelValue(labels.quote);
+            const separator = child.getLabelValue(labels.separator);
+            const placeholder = child.getLabelValue(labels.placeholder);
+            if (nonEmpty(flag)) {
+                spec.flag = String(flag);
+            }
+            if (nonEmpty(type)) {
+                spec.type = String(type);
+            }
+            if (nonEmpty(values)) {
+                spec.values = String(values);
+            }
+            if (nonEmpty(defaultValue)) {
+                spec.default = String(defaultValue);
+            }
+            if (isTruthy(required)) {
+                spec.required = true;
+            }
+            if (nonEmpty(order)) {
+                spec.order = String(order);
+            }
+            if (nonEmpty(quote)) {
+                spec.quote = String(quote);
+            }
+            if (nonEmpty(separator)) {
+                spec.separator = String(separator);
+            }
+            if (nonEmpty(placeholder)) {
+                spec.placeholder = String(placeholder);
+            }
+            specs.push(spec);
+        }
+        return specs;
     }
 
     function parentForRoot() {
@@ -627,37 +2157,6 @@ function beRun(params) {
         return api.getTodayNote().noteId;
     }
 
-    function seedCommand(title, base, specs) {
-        const note = api.createNewNote({
-            parentNoteId: api.getNoteWithLabel(labels.root).noteId,
-            title: title,
-            type: 'code',
-            mime: 'text/x-sh',
-            content: base
-        }).note;
-        const template = api.getNoteWithLabel(labels.template);
-        note.setRelation('template', template.noteId);
-        note.setLabel(labels.command, '');
-        note.setLabel(labels.description, '');
-        note.setContent(base);
-        ensureFolder(note, labels.options, 'Options');
-        ensureFolder(note, labels.presets, 'Presets');
-        for (let index = 0; index < specs.length; index += 1) {
-            createOption(note, specs[index]);
-        }
-        return note;
-    }
-
-    function hasSeededCommands(templateId) {
-        const candidates = api.getNotesWithLabel(labels.command);
-        for (let index = 0; index < candidates.length; index += 1) {
-            if (candidates[index].noteId !== templateId) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     function bootstrap() {
         let root = api.getNoteWithLabel(labels.root);
         if (!root) {
@@ -665,151 +2164,220 @@ function beRun(params) {
                 parentNoteId: parentForRoot(),
                 title: 'Command Maker',
                 type: 'text',
-                content: 'Commands live in this subtree. Press Ctrl+Shift+Space to open the palette.'
+                content: 'Command Maker settings. The plugin finds this note through its label.'
             }).note;
             root.setLabel(labels.root, '');
         }
 
-        let template = api.getNoteWithLabel(labels.template);
-        if (!template) {
-            template = api.createNewNote({
+        let toolsRoot = api.getNoteWithLabel(labels.tools);
+        if (!toolsRoot) {
+            toolsRoot = api.createNewNote({
                 parentNoteId: root.noteId,
-                title: 'Command Template',
-                type: 'code',
-                mime: 'text/x-sh',
-                content: 'command goes here'
-            }).note;
-            template.setLabel('template', '');
-            template.setLabel(labels.template, '');
-            template.setLabel(labels.command, '');
-            template.setLabel(labels.description, 'One line describing the command.');
-        }
-
-        let optionTemplate = api.getNoteWithLabel(labels.optionTemplate);
-        if (!optionTemplate) {
-            optionTemplate = api.createNewNote({
-                parentNoteId: root.noteId,
-                title: 'Option Template',
+                title: 'Tools',
                 type: 'text',
-                content: ''
+                content: 'Tool notes live in this folder, grouped by category. Move it anywhere; the label is what matters.'
             }).note;
-            optionTemplate.setLabel('template', '');
-            optionTemplate.setLabel(labels.optionTemplate, '');
-            optionTemplate.setLabel(labels.type, 'string');
-            optionTemplate.setLabel(labels.quote, 'none');
-            optionTemplate.setLabel(labels.order, '100');
+            toolsRoot.setLabel(labels.tools, '');
         }
 
-        const optionsFolder = ensureFolder(template, labels.options, 'Options');
-        if (!hasRelation(optionsFolder, 'child:template')) {
-            optionsFolder.setRelation('child:template', optionTemplate.noteId);
-        }
-        ensureFolder(template, labels.presets, 'Presets');
-
-        if (!hasSeededCommands(template.noteId)) {
-            seedCommand('ffmpeg compress', 'ffmpeg -i "{{input}}"', [
-                { label: 'Input file', flag: '-i', type: 'path', placeholder: 'input', order: 10 },
-                { label: 'Video codec', flag: '-c:v', type: 'enum', enumValues: ['libx264', 'libx265', 'libvpx-vp9'], defaultValue: 'libx264', order: 20 },
-                { label: 'CRF quality', flag: '-crf', type: 'number', defaultValue: '23', order: 30 },
-                { label: 'Overwrite output', flag: '-y', type: 'boolean', order: 40 }
-            ]);
-            seedCommand('git commit', 'git commit -m "{{message}}"', [
-                { label: 'Message', flag: '', type: 'string', placeholder: 'message', order: 10 },
-                { label: 'Amend last commit', flag: '--amend', type: 'boolean', order: 20 },
-                { label: 'Skip hooks', flag: '--no-verify', type: 'boolean', order: 30 }
-            ]);
+        let seeded = false;
+        if (options.seed && !hasLabel(toolsRoot, labels.seeded)) {
+            const specs = Array.isArray(options.seedTools) ? options.seedTools : [];
+            const fallbacks = options.newToolNotes || {};
+            for (let index = 0; index < specs.length; index += 1) {
+                createToolNote(toolsRoot, specs[index], fallbacks);
+            }
+            toolsRoot.setLabel(labels.seeded, '');
+            seeded = true;
         }
 
-        return {
-            rootId: root.noteId,
-            templateId: template.noteId,
-            optionTemplateId: optionTemplate.noteId
-        };
+        return { rootId: root.noteId, toolsRootId: toolsRoot.noteId, seeded: seeded };
     }
 
-    function createCommand() {
-        const root = api.getNoteWithLabel(labels.root);
-        const template = api.getNoteWithLabel(labels.template);
-        if (!root || !template) {
-            throw new Error('Command Maker is not installed. Run the installer first.');
-        }
-        const title = String(options.title || '').trim() || 'New command';
-        const base = String(options.base || 'command goes here');
-        const note = api.createNewNote({
-            parentNoteId: root.noteId,
-            title: title,
-            type: 'code',
-            mime: 'text/x-sh',
-            content: base
-        }).note;
-        note.setRelation('template', template.noteId);
-        note.setLabel(labels.command, '');
-        note.setLabel(labels.description, '');
-        note.setContent(base);
-        ensureFolder(note, labels.options, 'Options');
-        ensureFolder(note, labels.presets, 'Presets');
-        return { noteId: note.noteId };
+    function createCategory() {
+        const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
+        const name = nonEmpty(options.name) ? String(options.name) : 'Uncategorized';
+        return { noteId: ensureCategory(toolsRoot, name).noteId };
+    }
+
+    function createTool() {
+        const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
+        const note = createToolNote(
+            toolsRoot,
+            {
+                category: options.category,
+                title: options.title,
+                base: options.base,
+                description: options.description,
+                content: options.content,
+                install: options.install,
+                usage: options.usage,
+                help: options.help,
+                options: options.options
+            },
+            options.newToolNotes || {}
+        );
+        const folder = findChildWithLabel(note, labels.options);
+        const presets = findChildWithLabel(folder, labels.presets);
+        return { noteId: note.noteId, optionsFolderId: folder.noteId, presetsId: presets.noteId };
     }
 
     function addOption() {
-        const command = api.getNote(options.commandId);
-        if (!command) {
-            throw new Error('Command note not found: ' + options.commandId);
-        }
-        const note = createOption(command, options.option || {});
+        const location = presetsLocation(options.toolId);
+        const note = createOptionNote(location.folder, options.option || {});
         return { noteId: note.noteId };
+    }
+
+    function importOptions() {
+        const location = presetsLocation(options.toolId);
+        const specs = Array.isArray(options.options) ? options.options : [];
+        const noteIds = [];
+        for (let index = 0; index < specs.length; index += 1) {
+            noteIds.push(createOptionNote(location.folder, specs[index]).noteId);
+        }
+        return { created: noteIds.length, noteIds: noteIds };
+    }
+
+    function deleteOption() {
+        const note = requireNote(options.noteId, 'Option note not found');
+        note.deleteNote();
+        return { ok: true };
+    }
+
+    function setToolBase() {
+        const tool = requireNote(options.toolId, 'Tool note not found');
+        if (nonEmpty(options.base)) {
+            tool.setLabel(labels.base, String(options.base));
+        } else if (typeof tool.removeLabel === 'function') {
+            tool.removeLabel(labels.base);
+        } else {
+            tool.setLabel(labels.base, '');
+        }
+        return { ok: true };
+    }
+
+    function setToolsRoot() {
+        const target = requireNote(options.noteId, 'Note not found');
+        if (options.oldToolsRootId && options.oldToolsRootId !== options.noteId) {
+            const old = api.getNote(options.oldToolsRootId);
+            if (old && typeof old.removeLabel === 'function') {
+                old.removeLabel(labels.tools);
+            }
+        }
+        target.setLabel(labels.tools, '');
+        return { ok: true };
     }
 
     function savePreset() {
-        const command = api.getNote(options.commandId);
-        if (!command) {
-            throw new Error('Command note not found: ' + options.commandId);
+        const location = presetsLocation(options.toolId);
+        const data = readPresets(location.presets);
+        const name = nonEmpty(options.name) ? String(options.name) : 'Preset';
+        const values = options.values && typeof options.values === 'object' ? options.values : {};
+        let updated = false;
+        for (let index = 0; index < data.presets.length; index += 1) {
+            const entry = data.presets[index];
+            if (entry && entry.name === name) {
+                entry.values = values;
+                updated = true;
+                break;
+            }
         }
-        const folder = ensureFolder(command, labels.presets, 'Presets');
-        const name = String(options.name || '').trim() || 'Preset';
-        const payload = JSON.stringify({ v: 1, values: options.values || {} });
-        const existing = findChildByTitle(folder, name);
-        if (existing) {
-            existing.setContent(payload);
-            return { noteId: existing.noteId };
+        if (!updated) {
+            data.presets.push({ name: name, values: values });
         }
-        const note = api.createNewNote({
-            parentNoteId: folder.noteId,
-            title: name,
-            type: 'code',
-            mime: 'application/json',
-            content: payload
-        }).note;
-        note.setLabel(labels.preset, '');
-        return { noteId: note.noteId };
+        data.v = 1;
+        location.presets.setContent(JSON.stringify(data));
+        return { noteId: location.presets.noteId };
     }
 
     function deletePreset() {
-        const note = api.getNote(options.noteId);
-        if (!note) {
-            throw new Error('Preset not found: ' + options.noteId);
+        const location = presetsLocation(options.toolId);
+        const data = readPresets(location.presets);
+        const name = String(options.name == null ? '' : options.name);
+        const kept = [];
+        for (let index = 0; index < data.presets.length; index += 1) {
+            const entry = data.presets[index];
+            if (entry && entry.name !== name) {
+                kept.push(entry);
+            }
         }
-        note.deleteNote();
+        data.presets = kept;
+        location.presets.setContent(JSON.stringify(data));
         return { ok: true };
+    }
+
+    function importLegacy() {
+        const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
+        const settings = api.getNoteWithLabel(labels.root);
+        if (settings && hasLabel(settings, labels.migrated)) {
+            return { created: 0, skipped: true };
+        }
+        const fallbacks = options.newToolNotes || {};
+        const categoryName = nonEmpty(options.categoryName) ? String(options.categoryName) : 'Imported';
+        const candidates = api.getNotesWithLabel(labels.legacyCommand);
+        let created = 0;
+        for (let index = 0; index < candidates.length; index += 1) {
+            const note = candidates[index];
+            if (hasLabel(note, labels.legacyTemplate) || hasLabel(note, labels.legacyOptionTemplate)) {
+                continue;
+            }
+            let base = note.getLabelValue(labels.base);
+            if (!nonEmpty(base)) {
+                base = note.getContent();
+            }
+            createToolNote(
+                toolsRoot,
+                {
+                    category: categoryName,
+                    title: note.title,
+                    base: base,
+                    description: note.getLabelValue(labels.description),
+                    content: toolHtmlContent(),
+                    install: fallbacks.install,
+                    usage: fallbacks.usage,
+                    help: fallbacks.help,
+                    options: legacyOptionSpecs(note)
+                },
+                fallbacks
+            );
+            created += 1;
+        }
+        if (settings) {
+            settings.setLabel(labels.migrated, '');
+        }
+        return { created: created };
     }
 
     switch (options.action) {
         case 'bootstrap':
             return bootstrap();
-        case 'createCommand':
-            return createCommand();
+        case 'createCategory':
+            return createCategory();
+        case 'createTool':
+            return createTool();
         case 'addOption':
             return addOption();
+        case 'importOptions':
+            return importOptions();
+        case 'deleteOption':
+            return deleteOption();
+        case 'setToolBase':
+            return setToolBase();
+        case 'setToolsRoot':
+            return setToolsRoot();
         case 'savePreset':
             return savePreset();
         case 'deletePreset':
             return deletePreset();
+        case 'importLegacy':
+            return importLegacy();
         default:
             throw new Error('Unknown action: ' + options.action);
     }
 }
 
-module.exports = { beRun, ACTIONS };
+module.exports = { beRun };
+
 });
 __def("ui", function (module, exports, __require) {
 'use strict';
@@ -820,66 +2388,112 @@ __def("ui", function (module, exports, __require) {
  *
  * The UI is driven by a controller (see runtime.js):
  *   refresh(): Promise<void>
- *   search(query): Promise<Array<{ noteId, title, description }>>
- *   load(noteId): Promise<{ definition, presets }>
+ *   search(query): Array<{ noteId, title, category, description, base }>
+ *   load(noteId): Promise<{ definition, presets, whatIs, links, usageExamples,
+ *                            helpText, installText, ... }>
  *   copy(text): Promise<boolean>
  *   insert(text): void
- *   createCommand(title): Promise<{ noteId }>
- *   addOption(commandId, option): Promise<void>
- *   savePreset(commandId, name, values): Promise<void>
- *   deletePreset(noteId): Promise<void>
+ *   categories(): string[]
+ *   createTool(spec): Promise<{ noteId }>
+ *   importOptions(toolId, options): Promise<{ created }>
+ *   savePreset(toolId, name, values): Promise<void>
+ *   deletePreset(toolId, name): Promise<void>
+ *   setToolBase(toolId, base): Promise<void>
+ *   currentToolsRoot(): Promise<{ noteId, title } | null>
+ *   setToolsRoot(noteId): Promise<void>
+ *   useActiveNoteAsToolsRoot(): Promise<void>
+ *   activeNoteText(): Promise<{ noteId, title, text }>
+ *   openNote(noteId): Promise<void>
  */
 
 const Model = __require("model");
 const Render = __require("render");
+const Parse = __require("parse");
 
 const STYLE_ID = 'cm-palette-style';
 
 const CSS = [
     '.cm-overlay{position:fixed;inset:0;z-index:99999;display:flex;justify-content:center;align-items:flex-start;padding:7vh 16px;background:rgba(0,0,0,.45);}',
-    '.cm-panel{display:flex;flex-direction:column;width:min(960px,100%);max-height:86vh;border-radius:10px;overflow:hidden;background:var(--main-background-color,#fff);color:var(--main-text-color,#222);box-shadow:0 24px 64px rgba(0,0,0,.4);font-size:14px;}',
+    '.cm-panel{position:relative;display:flex;flex-direction:column;width:min(1040px,100%);max-height:86vh;border-radius:10px;overflow:hidden;background:var(--main-background-color,#fff);color:var(--main-text-color,#222);box-shadow:0 24px 64px rgba(0,0,0,.4);font-size:14px;}',
     '.cm-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--main-border-color,#ddd);}',
     '.cm-search{flex:1;padding:8px 10px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--input-background-color,#fafafa);color:inherit;font-size:15px;}',
     '.cm-close{border:0;background:transparent;color:inherit;font-size:16px;cursor:pointer;padding:4px 8px;}',
     '.cm-body{display:flex;min-height:0;flex:1;}',
-    '.cm-list{width:280px;flex-shrink:0;overflow-y:auto;border-right:1px solid var(--main-border-color,#ddd);padding:6px;}',
+    '.cm-list{width:300px;flex-shrink:0;overflow-y:auto;border-right:1px solid var(--main-border-color,#ddd);padding:6px;}',
     '.cm-result{display:block;width:100%;text-align:left;padding:8px 10px;border:0;border-radius:6px;background:transparent;color:inherit;cursor:pointer;}',
     '.cm-result:hover{background:var(--hover-item-background-color,#0000001a);color:var(--hover-item-text-color,inherit);}',
     '.cm-result.is-active{background:var(--accented-background-color,#eef2ff);box-shadow:inset 3px 0 0 var(--link-color,#4f8cff);}',
     '.cm-result-title{font-weight:600;}',
-    '.cm-result-desc{opacity:.7;font-size:12px;margin-top:2px;}',
+    '.cm-result-meta{display:flex;gap:6px;align-items:center;margin-top:2px;}',
+    '.cm-result-desc{opacity:.7;font-size:12px;flex:1;}',
+    '.cm-cat{font-size:11px;padding:1px 6px;border-radius:999px;background:var(--accented-background-color,#eef2ff);opacity:.85;white-space:nowrap;}',
     '.cm-detail{flex:1;min-width:0;overflow-y:auto;padding:14px 16px;}',
-    '.cm-title{margin:0 0 4px;font-size:17px;}',
-    '.cm-subtitle{margin:0 0 12px;opacity:.7;}',
-    '.cm-form{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;}',
-    '.cm-row{display:flex;align-items:center;gap:8px;}',
-    '.cm-row-label{flex:0 0 180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
-    '.cm-row .cm-control{flex:1;}',
-    '.cm-control{padding:6px 8px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--input-background-color,#fafafa);color:inherit;font:inherit;}',
-    // Native <select> draws its own arrow while Trilium adds a themed one on hover/focus, so a
-    // select would show two. Hide the native control and keep a single themed arrow in every state.
+    '.cm-detail-head{margin:0 0 8px;}',
+    '.cm-title{margin:0 0 4px;font-size:18px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}',
+    '.cm-subtitle{margin:0 0 4px;opacity:.75;}',
+    '.cm-section{margin:14px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.06em;opacity:.6;}',
+    '.cm-what{white-space:pre-wrap;margin:0 0 4px;line-height:1.5;}',
+    '.cm-links{display:flex;flex-wrap:wrap;gap:6px 14px;margin:0 0 4px;}',
+    '.cm-link{color:var(--link-color,#4f8cff);text-decoration:none;}',
+    '.cm-link:hover{text-decoration:underline;}',
+    '.cm-base-row{display:flex;gap:6px;align-items:center;margin:0 0 4px;}',
+    '.cm-base-label{flex:0 0 110px;opacity:.75;}',
+    '.cm-options{display:flex;flex-direction:column;gap:4px;}',
+    '.cm-option{display:flex;align-items:flex-start;gap:12px;padding:6px 8px;border-radius:6px;}',
+    '.cm-option:hover{background:var(--hover-item-background-color,#00000010);}',
+    '.cm-opt-main{flex:1;min-width:0;}',
+    '.cm-opt-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}',
+    '.cm-opt-title{font-weight:600;}',
+    '.cm-opt-flag{font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;opacity:.8;background:var(--accented-background-color,#eef2ff);padding:0 5px;border-radius:4px;}',
+    '.cm-opt-help{font-size:12px;opacity:.7;margin-top:2px;line-height:1.4;}',
+    '.cm-opt-control{flex:0 0 210px;max-width:45%;}',
+    '.cm-opt-check{flex:0 0 auto;margin-left:auto;align-self:center;}',
+    '.cm-filter{width:100%;box-sizing:border-box;margin-bottom:4px;}',
+    '.cm-form{display:flex;flex-direction:column;gap:6px;margin-bottom:10px;}',
+    '.cm-control{padding:6px 8px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--input-background-color,#fafafa);color:inherit;font:inherit;box-sizing:border-box;}',
     ':root .cm-control.cm-select{appearance:none;-webkit-appearance:none;background-color:var(--input-background-color);background-image:var(--select-arrow-svg,url(\'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="none" stroke="%23888888" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m2 5 6 6 6-6"/></svg>\'));background-position:right 0.75rem center;background-size:15px 20px;background-repeat:no-repeat;padding-inline-end:calc(15px + 1.5rem);}',
     ':root .cm-control.cm-select:hover{background-color:var(--input-hover-background);color:var(--input-hover-color,inherit);}',
     ':root .cm-control.cm-select:focus{background-color:var(--select-focus-background);color:var(--select-focus-text-color,inherit);}',
-    // `:root` outranks Trilium's global `textarea:hover` / `textarea:focus` rules, which would
-    // otherwise repaint the preview with the input colours as soon as the pointer or caret enters.
     ':root .cm-preview{width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid var(--main-border-color,#ccc);background:var(--input-background-color);color:inherit;font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:13px;resize:vertical;}',
     ':root .cm-preview:hover,:root .cm-preview:focus{background:var(--input-background-color);color:inherit;}',
     '.cm-warnings{display:flex;flex-direction:column;gap:4px;margin-top:6px;}',
     '.cm-warning{color:#b45309;font-size:12px;}',
-    '.cm-actions{display:flex;gap:8px;margin:12px 0;}',
+    '.cm-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0;}',
     '.cm-button{padding:6px 12px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--button-background-color,#fff);color:inherit;cursor:pointer;font:inherit;}',
     '.cm-button:hover{background:var(--accented-background-color,#eef2ff);}',
+    '.cm-button:disabled{opacity:.5;cursor:default;}',
     '.cm-danger{color:#b91c1c;}',
-    '.cm-presets{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--main-border-color,#ddd);padding-top:10px;}',
-    '.cm-section{margin:8px 0 4px;font-size:12px;text-transform:uppercase;letter-spacing:.06em;opacity:.6;}',
+    '.cm-presets,.cm-examples,.cm-fold-block{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--main-border-color,#ddd);padding-top:10px;margin-top:12px;}',
+    '.cm-row{display:flex;align-items:center;gap:8px;}',
     '.cm-empty{opacity:.6;padding:8px;}',
     '.cm-foot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 12px;border-top:1px solid var(--main-border-color,#ddd);}',
-    '.cm-inline{display:flex;gap:6px;align-items:center;flex:1;min-width:220px;}',
+    '.cm-inline{display:flex;flex-wrap:wrap;gap:6px;align-items:center;width:100%;}',
+    '.cm-inline .cm-control{flex:1;min-width:120px;}',
     '.cm-status{margin-left:auto;font-size:12px;opacity:.75;}',
     '.cm-status.is-error{color:#b91c1c;opacity:1;}',
     '.cm-badge{font-size:11px;padding:1px 6px;border-radius:999px;background:var(--accented-background-color,#eef2ff);opacity:.8;}',
-    '@media (max-width:720px){.cm-body{flex-direction:column;}.cm-list{width:auto;max-height:180px;border-right:0;border-bottom:1px solid var(--main-border-color,#ddd);}.cm-row-label{flex-basis:120px;}}'
+    '.cm-example{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:6px;}',
+    '.cm-example:hover{background:var(--hover-item-background-color,#00000010);}',
+    '.cm-example-text{flex:1;min-width:0;font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;overflow-wrap:anywhere;}',
+    '.cm-fold summary{cursor:pointer;font-size:12px;text-transform:uppercase;letter-spacing:.06em;opacity:.7;}',
+    '.cm-pre{margin:8px 0 0;padding:10px;border-radius:8px;background:var(--input-background-color,#fafafa);border:1px solid var(--main-border-color,#ddd);font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;white-space:pre-wrap;overflow-x:auto;}',
+    '.cm-modal{position:absolute;inset:0;display:flex;justify-content:center;align-items:flex-start;padding:6vh 16px;background:rgba(0,0,0,.45);border-radius:10px;z-index:2;}',
+    '.cm-modal-panel{display:flex;flex-direction:column;width:min(760px,100%);max-height:80vh;border-radius:10px;overflow:hidden;background:var(--main-background-color,#fff);color:inherit;box-shadow:0 20px 48px rgba(0,0,0,.4);}',
+    '.cm-modal-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--main-border-color,#ddd);}',
+    '.cm-modal-title{flex:1;font-weight:600;}',
+    '.cm-modal-body{overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;}',
+    '.cm-modal-actions{display:flex;flex-wrap:wrap;gap:8px;padding:10px 12px;border-top:1px solid var(--main-border-color,#ddd);}',
+    '.cm-tabs{display:flex;gap:6px;flex-wrap:wrap;}',
+    '.cm-tab{padding:4px 10px;border-radius:999px;border:1px solid var(--main-border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font:inherit;font-size:12px;}',
+    '.cm-tab.is-active{background:var(--accented-background-color,#eef2ff);border-color:var(--link-color,#4f8cff);}',
+    '.cm-import-list{display:flex;flex-direction:column;gap:2px;max-height:36vh;overflow-y:auto;border:1px solid var(--main-border-color,#ddd);border-radius:8px;padding:6px;}',
+    '.cm-import-row{display:flex;gap:8px;align-items:flex-start;padding:4px 6px;border-radius:6px;}',
+    '.cm-import-row:hover{background:var(--hover-item-background-color,#00000010);}',
+    '.cm-import-main{flex:1;min-width:0;}',
+    '.cm-import-flag{font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;}',
+    '.cm-import-help{font-size:12px;opacity:.7;}',
+    '.cm-note{font-size:12px;opacity:.7;}',
+    '@media (max-width:720px){.cm-body{flex-direction:column;}.cm-list{width:auto;max-height:180px;border-right:0;border-bottom:1px solid var(--main-border-color,#ddd);}.cm-opt-control{flex-basis:150px;}}'
 ].join('\n');
 
 let instance = null;
@@ -905,12 +2519,6 @@ function el(tag, className, text) {
     return node;
 }
 
-/**
- * Trilium code blocks borrow their colours from the active highlight.js theme, which is not
- * exposed as a CSS variable. Probe a hidden `.hljs` element to read the exact background and
- * foreground the current theme gives a code block, so the preview matches it in any theme.
- * Returns null when the stylesheet or `getComputedStyle` is unavailable.
- */
 function codeBlockTheme() {
     let resolveStyle = null;
     if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
@@ -966,14 +2574,24 @@ function openPalette(controller) {
         items: [],
         active: -1,
         current: null,
+        loaded: null,
         definition: null,
         presets: [],
         values: {},
         edited: false,
+        optionRows: [],
         previewEl: null,
         warningsEl: null,
         presetSelect: null,
-        presetName: null
+        presetName: null,
+        footerRow: null,
+        modal: null,
+        modalKind: '',
+        importSource: 'paste',
+        importText: '',
+        importParsed: null,
+        importRows: [],
+        importNoteTitle: ''
     };
 
     const overlay = el('div', 'cm-overlay');
@@ -983,7 +2601,7 @@ function openPalette(controller) {
     const searchInput = document.createElement('input');
     searchInput.type = 'search';
     searchInput.className = 'cm-search';
-    searchInput.placeholder = 'Search commands…';
+    searchInput.placeholder = 'Search tools…';
     const closeButton = el('button', 'cm-close', '✕');
     closeButton.type = 'button';
     closeButton.title = 'Close (Esc)';
@@ -997,24 +2615,28 @@ function openPalette(controller) {
     body.appendChild(detail);
 
     const footer = el('div', 'cm-foot');
-    const newCommandButton = el('button', 'cm-button', 'New command');
-    newCommandButton.type = 'button';
-    const addOptionButton = el('button', 'cm-button', 'Add option');
-    addOptionButton.type = 'button';
+    const newToolButton = el('button', 'cm-button', 'New tool');
+    newToolButton.type = 'button';
+    const importButton = el('button', 'cm-button', 'Import options');
+    importButton.type = 'button';
+    const toolsButton = el('button', 'cm-button', 'Tools folder');
+    toolsButton.type = 'button';
     const statusEl = el('span', 'cm-status', '');
-    footer.appendChild(newCommandButton);
-    footer.appendChild(addOptionButton);
+    footer.appendChild(newToolButton);
+    footer.appendChild(importButton);
+    footer.appendChild(toolsButton);
     footer.appendChild(statusEl);
+
+    const modalHost = el('div', '');
 
     panel.appendChild(head);
     panel.appendChild(body);
     panel.appendChild(footer);
+    panel.appendChild(modalHost);
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
 
     let searchTimer = null;
-    let newCommandRow = null;
-    let addOptionRow = null;
 
     function setStatus(message, isError) {
         statusEl.textContent = message || '';
@@ -1045,7 +2667,19 @@ function openPalette(controller) {
         return node;
     }
 
+    function closeModal() {
+        if (!state.modal) {
+            return;
+        }
+        state.modal.remove();
+        state.modal = null;
+        state.modalKind = '';
+        state.importParsed = null;
+        state.importRows = [];
+    }
+
     function close() {
+        closeModal();
         if (searchTimer) {
             clearTimeout(searchTimer);
             searchTimer = null;
@@ -1061,7 +2695,11 @@ function openPalette(controller) {
     function onKeyDown(event) {
         if (event.key === 'Escape') {
             event.preventDefault();
-            close();
+            if (state.modal) {
+                closeModal();
+            } else {
+                close();
+            }
             return;
         }
         if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
@@ -1087,15 +2725,22 @@ function openPalette(controller) {
     function renderList() {
         list.textContent = '';
         if (!state.items.length) {
-            list.appendChild(el('div', 'cm-empty', 'No commands match.'));
+            list.appendChild(el('div', 'cm-empty', 'No tools match.'));
             return;
         }
         state.items.forEach(function (item, index) {
             const row = el('button', 'cm-result' + (index === state.active ? ' is-active' : ''));
             row.type = 'button';
             row.appendChild(el('div', 'cm-result-title', item.title));
+            const meta = el('div', 'cm-result-meta');
+            if (item.category) {
+                meta.appendChild(el('span', 'cm-cat', item.category));
+            }
             if (item.description) {
-                row.appendChild(el('div', 'cm-result-desc', item.description));
+                meta.appendChild(el('div', 'cm-result-desc', item.description));
+            }
+            if (meta.children.length) {
+                row.appendChild(meta);
             }
             row.addEventListener('click', function () {
                 selectItem(item).catch(notify);
@@ -1121,8 +2766,6 @@ function openPalette(controller) {
     }
 
     function pickActive() {
-        // Enter still opens the best match when nothing has been highlighted yet, but the
-        // list keeps no selected row until the user navigates or clicks.
         const index = state.active >= 0 ? state.active : (state.items.length ? 0 : -1);
         if (index < 0 || !state.items[index]) {
             return;
@@ -1167,23 +2810,27 @@ function openPalette(controller) {
         markActive(item);
         try {
             const loaded = await controller.load(item.noteId);
+            state.loaded = loaded;
             state.definition = loaded.definition;
             state.presets = loaded.presets || [];
             state.values = Model.defaultValueMap(state.definition);
             renderDetail();
             setStatus('');
         } catch (error) {
+            state.loaded = null;
             state.definition = null;
             renderDetail();
             notify(error);
         }
     }
 
-    function optionRow(option, inferred) {
-        const row = el('label', 'cm-row' + (inferred ? ' cm-row-inferred' : ''));
-        const key = Render.valueKey(option);
-        row.appendChild(el('span', 'cm-row-label', option.title + (option.required ? ' *' : '')));
+    function setValue(key, value) {
+        state.values[key] = value;
+        updatePreview(false);
+    }
 
+    function optionControl(option) {
+        const key = Render.valueKey(option);
         let control;
         if (option.type === 'boolean') {
             control = document.createElement('input');
@@ -1192,13 +2839,14 @@ function openPalette(controller) {
             control.addEventListener('change', function () {
                 setValue(key, control.checked);
             });
+            control.className = 'cm-opt-check';
         } else if (option.type === 'enum') {
             control = document.createElement('select');
             const empty = document.createElement('option');
             empty.value = '';
             empty.textContent = '—';
             control.appendChild(empty);
-            option.enumValues.forEach(function (value) {
+            (option.enumValues || []).forEach(function (value) {
                 const entry = document.createElement('option');
                 entry.value = value;
                 entry.textContent = value;
@@ -1208,6 +2856,7 @@ function openPalette(controller) {
             control.addEventListener('change', function () {
                 setValue(key, control.value);
             });
+            control.className = 'cm-control cm-select cm-opt-control';
         } else {
             control = document.createElement('input');
             control.type = option.type === 'number' ? 'number' : 'text';
@@ -1216,21 +2865,37 @@ function openPalette(controller) {
             control.addEventListener('input', function () {
                 setValue(key, control.value);
             });
+            control.className = 'cm-control cm-opt-control';
         }
-
-        control.className = option.type === 'boolean'
-            ? ''
-            : 'cm-control' + (option.type === 'enum' ? ' cm-select' : '');
-        row.appendChild(control);
-        if (inferred) {
-            row.appendChild(el('span', 'cm-badge', 'inferred'));
-        }
-        return row;
+        control.setAttribute('aria-label', option.title);
+        return control;
     }
 
-    function setValue(key, value) {
-        state.values[key] = value;
-        updatePreview(false);
+    function optionRow(option, inferred) {
+        const row = el('div', 'cm-option' + (inferred ? ' cm-option-inferred' : ''));
+        const main = el('div', 'cm-opt-main');
+        const headRow = el('div', 'cm-opt-head');
+        headRow.appendChild(el('span', 'cm-opt-title', option.title + (option.required ? ' *' : '')));
+        if (option.flag) {
+            headRow.appendChild(el('code', 'cm-opt-flag', option.flag));
+        }
+        if (inferred) {
+            headRow.appendChild(el('span', 'cm-badge', 'inferred'));
+        }
+        main.appendChild(headRow);
+        if (option.help) {
+            main.appendChild(el('div', 'cm-opt-help', option.help));
+        }
+        row.appendChild(main);
+        row.appendChild(optionControl(option));
+        row.__cmSearch = [
+            option.title,
+            option.flag,
+            option.help,
+            (option.enumValues || []).join(' ')
+        ].join(' ').toLowerCase();
+        state.optionRows.push(row);
+        return row;
     }
 
     function renderWarnings(warnings) {
@@ -1268,18 +2933,14 @@ function openPalette(controller) {
         }
         state.presets.forEach(function (preset) {
             const entry = document.createElement('option');
-            entry.value = preset.noteId;
-            entry.textContent = preset.title;
+            entry.value = preset.name;
+            entry.textContent = preset.name;
             state.presetSelect.appendChild(entry);
         });
     }
 
-    async function copy() {
-        if (!state.previewEl) {
-            return;
-        }
-        const text = state.previewEl.value;
-        if (!text.trim()) {
+    async function copyTextToClipboard(text) {
+        if (!String(text || '').trim()) {
             notify(new Error('Nothing to copy.'));
             return;
         }
@@ -1289,6 +2950,13 @@ function openPalette(controller) {
         } else {
             notify(new Error('Could not write to the clipboard.'));
         }
+    }
+
+    async function copy() {
+        if (!state.previewEl) {
+            return;
+        }
+        await copyTextToClipboard(state.previewEl.value);
     }
 
     function insert() {
@@ -1303,10 +2971,10 @@ function openPalette(controller) {
         }
     }
 
-    async function loadPreset() {
-        const noteId = state.presetSelect ? state.presetSelect.value : '';
+    function loadPreset() {
+        const name = state.presetSelect ? state.presetSelect.value : '';
         const preset = state.presets.filter(function (entry) {
-            return entry.noteId === noteId;
+            return entry.name === name;
         })[0];
         if (!preset) {
             notify(new Error('Pick a preset first.'));
@@ -1329,19 +2997,21 @@ function openPalette(controller) {
         }
         await controller.savePreset(state.definition.noteId, name, state.values);
         const loaded = await controller.load(state.definition.noteId);
+        state.loaded = loaded;
         state.presets = loaded.presets || [];
         renderDetail();
         setStatus('Preset saved.');
     }
 
     async function deletePreset() {
-        const noteId = state.presetSelect ? state.presetSelect.value : '';
-        if (!noteId) {
+        const name = state.presetSelect ? state.presetSelect.value : '';
+        if (!name) {
             notify(new Error('Pick a preset first.'));
             return;
         }
-        await controller.deletePreset(noteId);
+        await controller.deletePreset(state.definition.noteId, name);
         const loaded = await controller.load(state.definition.noteId);
+        state.loaded = loaded;
         state.presets = loaded.presets || [];
         renderDetail();
         setStatus('Preset deleted.');
@@ -1374,46 +3044,171 @@ function openPalette(controller) {
         return block;
     }
 
+    function examplesBlock() {
+        if (!state.loaded || !(state.loaded.usageExamples || []).length) {
+            return null;
+        }
+        const block = el('div', 'cm-examples');
+        block.appendChild(el('div', 'cm-section', 'Examples'));
+        state.loaded.usageExamples.forEach(function (example) {
+            const row = el('div', 'cm-example');
+            row.appendChild(el('code', 'cm-example-text', example));
+            row.appendChild(button('Use', function () {
+                if (state.previewEl) {
+                    state.previewEl.value = example;
+                    state.edited = true;
+                }
+            }));
+            row.appendChild(button('Copy', function () {
+                return copyTextToClipboard(example);
+            }));
+            block.appendChild(row);
+        });
+        return block;
+    }
+
+    function linksBlock() {
+        if (!state.loaded || !state.loaded.links.length) {
+            return null;
+        }
+        const block = el('div', 'cm-links');
+        state.loaded.links.forEach(function (link) {
+            const anchor = document.createElement('a');
+            anchor.className = 'cm-link';
+            anchor.textContent = link.text;
+            anchor.href = link.href;
+            anchor.target = '_blank';
+            anchor.rel = 'noreferrer';
+            block.appendChild(anchor);
+        });
+        return block;
+    }
+
+    function foldBlock(title, text, className) {
+        if (!text) {
+            return null;
+        }
+        const details = document.createElement('details');
+        details.className = 'cm-fold-block';
+        const summary = document.createElement('summary');
+        summary.textContent = title;
+        details.appendChild(summary);
+        const pre = el('pre', 'cm-pre' + (className ? ' ' + className : ''), text);
+        details.appendChild(pre);
+        return details;
+    }
+
+    function baseRow() {
+        const row = el('div', 'cm-base-row');
+        row.appendChild(el('span', 'cm-base-label', 'Base command'));
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'cm-control';
+        input.value = state.definition.base;
+        input.setAttribute('aria-label', 'Base command');
+        input.addEventListener('change', function () {
+            const value = input.value.trim();
+            Promise.resolve()
+                .then(function () {
+                    return controller.setToolBase(state.definition.noteId, value);
+                })
+                .then(function () {
+                    state.definition.base = value || Model.deriveBase(state.definition.title);
+                    state.values = Object.assign(Model.defaultValueMap(state.definition), state.values);
+                    renderDetail();
+                    setStatus('Base command updated.');
+                })
+                .catch(notify);
+        });
+        row.appendChild(input);
+        return row;
+    }
+
     function renderDetail() {
         detail.textContent = '';
         state.previewEl = null;
         state.warningsEl = null;
         state.presetSelect = null;
         state.presetName = null;
+        state.optionRows = [];
 
         if (!state.definition) {
-            detail.appendChild(el('div', 'cm-empty', 'Pick a command from the list.'));
+            detail.appendChild(el('div', 'cm-empty', 'Pick a tool from the list.'));
             return;
         }
 
         const definition = state.definition;
         const header = el('div', 'cm-detail-head');
-        header.appendChild(el('h2', 'cm-title', definition.title));
+        const title = el('h2', 'cm-title');
+        title.appendChild(el('span', '', definition.title));
+        if (definition.category) {
+            title.appendChild(el('span', 'cm-cat', definition.category));
+        }
+        header.appendChild(title);
         if (definition.description) {
             header.appendChild(el('p', 'cm-subtitle', definition.description));
         }
         detail.appendChild(header);
 
+        if (state.loaded && state.loaded.whatIs) {
+            detail.appendChild(el('div', 'cm-section', 'What is?'));
+            detail.appendChild(el('p', 'cm-what', state.loaded.whatIs));
+        }
+
+        const links = linksBlock();
+        if (links) {
+            detail.appendChild(links);
+        }
+
+        detail.appendChild(baseRow());
+
+        detail.appendChild(el('div', 'cm-section', 'Options (' + definition.options.length + ')'));
+        const filter = document.createElement('input');
+        filter.type = 'search';
+        filter.className = 'cm-control cm-filter';
+        filter.placeholder = 'Filter options…';
+        filter.addEventListener('input', function () {
+            const needle = String(filter.value || '').trim().toLowerCase();
+            state.optionRows.forEach(function (row) {
+                const match = needle === '' || String(row.__cmSearch || '').indexOf(needle) !== -1;
+                row.style.display = match ? '' : 'none';
+            });
+        });
+        detail.appendChild(filter);
+
         const form = el('div', 'cm-form');
+        const optionsBlock = el('div', 'cm-options');
         if (!definition.options.length && !definition.inferred.length) {
-            form.appendChild(el('div', 'cm-empty', 'This command has no options yet. Use "Add option".'));
+            optionsBlock.appendChild(el('div', 'cm-empty', 'This tool has no options yet. Use "Import options" or add option notes under Options.'));
         }
         definition.options.forEach(function (option) {
-            form.appendChild(optionRow(option, false));
+            optionsBlock.appendChild(optionRow(option, false));
         });
         if (definition.inferred.length) {
-            form.appendChild(el('div', 'cm-section', 'Placeholders without an option'));
+            optionsBlock.appendChild(el('div', 'cm-section', 'Placeholders without an option'));
             definition.inferred.forEach(function (option) {
-                form.appendChild(optionRow(option, true));
+                optionsBlock.appendChild(optionRow(option, true));
             });
         }
+        form.appendChild(optionsBlock);
         detail.appendChild(form);
+
+        detail.appendChild(el('div', 'cm-section', 'Extra arguments'));
+        const extra = document.createElement('input');
+        extra.type = 'text';
+        extra.className = 'cm-control';
+        extra.placeholder = 'Positional arguments or subcommands, inserted after the base';
+        extra.value = state.values[Render.EXTRA_KEY] === undefined ? '' : String(state.values[Render.EXTRA_KEY]);
+        extra.addEventListener('input', function () {
+            setValue(Render.EXTRA_KEY, extra.value);
+        });
+        detail.appendChild(extra);
 
         detail.appendChild(el('div', 'cm-section', 'Command'));
         const preview = document.createElement('textarea');
         preview.className = 'cm-preview';
         preview.spellcheck = false;
-        preview.rows = 4;
+        preview.rows = 3;
         const codeTheme = codeBlockTheme();
         if (codeTheme) {
             preview.style.background = codeTheme.background;
@@ -1437,35 +3232,97 @@ function openPalette(controller) {
             state.edited = false;
             updatePreview(true);
         }));
+        actions.appendChild(button('Open note', function () {
+            return controller.openNote(definition.noteId);
+        }));
         detail.appendChild(actions);
 
+        const examples = examplesBlock();
+        if (examples) {
+            detail.appendChild(examples);
+        }
+
         detail.appendChild(presetBlock());
+
+        const help = foldBlock('Help output', state.loaded ? state.loaded.helpText : '');
+        if (help) {
+            detail.appendChild(help);
+        }
+        const install = foldBlock('Install', state.loaded ? state.loaded.installText : '');
+        if (install) {
+            detail.appendChild(install);
+        }
+
         updatePreview(true);
     }
 
-    function toggleNewCommand() {
-        if (newCommandRow) {
-            newCommandRow.remove();
-            newCommandRow = null;
+    function clearFooterRow() {
+        if (state.footerRow) {
+            state.footerRow.remove();
+            state.footerRow = null;
+        }
+    }
+
+    function toggleNewTool() {
+        if (state.footerRow) {
+            clearFooterRow();
             return;
         }
         const row = el('div', 'cm-inline');
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'cm-control';
-        input.placeholder = 'New command name (e.g. docker run)';
+        const titleInput = document.createElement('input');
+        titleInput.type = 'text';
+        titleInput.className = 'cm-control';
+        titleInput.placeholder = 'Tool name (e.g. docker)';
+
+        const categorySelect = document.createElement('select');
+        categorySelect.className = 'cm-control cm-select';
+        const categories = controller.categories();
+        categories.forEach(function (name) {
+            const option = document.createElement('option');
+            option.value = name;
+            option.textContent = name;
+            categorySelect.appendChild(option);
+        });
+        const newCategoryOption = document.createElement('option');
+        newCategoryOption.value = '__new__';
+        newCategoryOption.textContent = 'New category…';
+        categorySelect.appendChild(newCategoryOption);
+        if (!categories.length) {
+            categorySelect.value = '__new__';
+        }
+
+        const newCategoryInput = document.createElement('input');
+        newCategoryInput.type = 'text';
+        newCategoryInput.className = 'cm-control';
+        newCategoryInput.placeholder = 'New category name';
+        newCategoryInput.style.display = categorySelect.value === '__new__' ? '' : 'none';
+        categorySelect.addEventListener('change', function () {
+            newCategoryInput.style.display = categorySelect.value === '__new__' ? '' : 'none';
+        });
+
+        const baseInput = document.createElement('input');
+        baseInput.type = 'text';
+        baseInput.className = 'cm-control';
+        baseInput.placeholder = 'Base command (optional, defaults to the name)';
+
         const create = button('Create', async function () {
-            const title = input.value.trim();
+            const title = titleInput.value.trim();
             if (!title) {
-                notify(new Error('Command name is required.'));
+                notify(new Error('Tool name is required.'));
                 return;
             }
-            const created = await controller.createCommand(title);
-            if (newCommandRow) {
-                newCommandRow.remove();
-                newCommandRow = null;
+            let category = categorySelect.value === '__new__' ? newCategoryInput.value.trim() : categorySelect.value;
+            if (categorySelect.value === '__new__' && !category) {
+                notify(new Error('Category name is required.'));
+                return;
             }
-            await controller.refresh();
+            const created = await controller.createTool({
+                title: title,
+                category: category,
+                base: baseInput.value.trim(),
+                description: ''
+            });
+            clearFooterRow();
             await runSearch();
             const item = state.items.filter(function (entry) {
                 return entry.noteId === created.noteId;
@@ -1473,79 +3330,380 @@ function openPalette(controller) {
             if (item) {
                 await selectItem(item);
             }
-            setStatus('Command created.');
+            setStatus('Tool created.');
         });
-        row.appendChild(input);
+
+        row.appendChild(titleInput);
+        row.appendChild(categorySelect);
+        row.appendChild(newCategoryInput);
+        row.appendChild(baseInput);
         row.appendChild(create);
         footer.appendChild(row);
-        newCommandRow = row;
-        input.focus();
+        state.footerRow = row;
+        titleInput.focus();
     }
 
-    function toggleAddOption() {
-        if (!state.definition) {
-            notify(new Error('Select a command first.'));
-            return;
+    function readFileText(file) {
+        if (file && typeof file.text === 'function') {
+            return Promise.resolve(file.text());
         }
-        if (addOptionRow) {
-            addOptionRow.remove();
-            addOptionRow = null;
-            return;
-        }
-        const row = el('div', 'cm-inline');
-        const labelInput = document.createElement('input');
-        labelInput.type = 'text';
-        labelInput.className = 'cm-control';
-        labelInput.placeholder = 'Option label';
-
-        const flagInput = document.createElement('input');
-        flagInput.type = 'text';
-        flagInput.className = 'cm-control';
-        flagInput.placeholder = '--flag (empty = positional)';
-
-        const typeSelect = document.createElement('select');
-        typeSelect.className = 'cm-control cm-select';
-        Model.TYPES.forEach(function (type) {
-            const entry = document.createElement('option');
-            entry.value = type;
-            entry.textContent = type;
-            typeSelect.appendChild(entry);
-        });
-
-        const add = button('Add', async function () {
-            const label = labelInput.value.trim();
-            if (!label) {
-                notify(new Error('Option label is required.'));
+        return new Promise(function (resolve, reject) {
+            if (typeof FileReader === 'undefined') {
+                reject(new Error('This browser cannot read local files.'));
                 return;
             }
-            await controller.addOption(state.definition.noteId, {
-                label: label,
-                flag: flagInput.value.trim(),
-                type: typeSelect.value
-            });
-            if (addOptionRow) {
-                addOptionRow.remove();
-                addOptionRow = null;
+            const reader = new FileReader();
+            reader.onload = function () {
+                resolve(String(reader.result || ''));
+            };
+            reader.onerror = function () {
+                reject(new Error('Could not read the selected file.'));
+            };
+            reader.readAsText(file);
+        });
+    }
+
+    function modalShell(title, bodyNode, actionsNode) {
+        closeModal();
+        const modal = el('div', 'cm-modal');
+        const modalPanel = el('div', 'cm-modal-panel');
+        const modalHead = el('div', 'cm-modal-head');
+        modalHead.appendChild(el('span', 'cm-modal-title', title));
+        const closeModalButton = el('button', 'cm-close', '✕');
+        closeModalButton.type = 'button';
+        closeModalButton.addEventListener('click', closeModal);
+        modalHead.appendChild(closeModalButton);
+        const modalBody = el('div', 'cm-modal-body');
+        modalBody.appendChild(bodyNode);
+        const modalActions = el('div', 'cm-modal-actions');
+        modalActions.appendChild(actionsNode);
+        modalPanel.appendChild(modalHead);
+        modalPanel.appendChild(modalBody);
+        modalPanel.appendChild(modalActions);
+        modal.appendChild(modalPanel);
+        modal.addEventListener('click', function (event) {
+            if (event.target === modal) {
+                closeModal();
             }
-            if (state.current) {
-                await selectItem(state.current);
-            }
-            setStatus('Option added. Edit its attributes to set enum values, defaults and order.');
+        });
+        modalHost.appendChild(modal);
+        state.modal = modal;
+        return { modal: modal, body: modalBody, actions: modalActions };
+    }
+
+    function openImport() {
+        if (!state.current) {
+            notify(new Error('Select a tool first.'));
+            return;
+        }
+        const sourceRow = el('div', 'cm-tabs');
+        const tabPaste = el('button', 'cm-tab is-active', 'Paste text');
+        const tabNote = el('button', 'cm-tab', 'Active note');
+        const tabFile = el('button', 'cm-tab', 'File');
+        [tabPaste, tabNote, tabFile].forEach(function (tab) {
+            tab.type = 'button';
+        });
+        sourceRow.appendChild(tabPaste);
+        sourceRow.appendChild(tabNote);
+        sourceRow.appendChild(tabFile);
+
+        const hint = el('div', 'cm-note', 'Paste "--help" output, a JSON options file, or a markdown table. Nothing is written until you import.');
+
+        const textArea = document.createElement('textarea');
+        textArea.className = 'cm-control cm-preview';
+        textArea.rows = 12;
+        textArea.placeholder = '--help output, JSON or a markdown table…';
+
+        const notePreview = document.createElement('div', 'cm-note', '');
+        const readNoteButton = el('button', 'cm-button', 'Read active note');
+        readNoteButton.type = 'button';
+        readNoteButton.style.display = 'none';
+
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.className = 'cm-control';
+        fileInput.accept = '.txt,.json,.md,.markdown,.log,.help,.text';
+        fileInput.style.display = 'none';
+
+        const parseButton = el('button', 'cm-button', 'Parse');
+        parseButton.type = 'button';
+        const importSelected = el('button', 'cm-button', 'Import selected');
+        importSelected.type = 'button';
+        importSelected.disabled = true;
+        const closeButton2 = el('button', 'cm-button', 'Close');
+        closeButton2.type = 'button';
+        closeButton2.addEventListener('click', closeModal);
+
+        const warnings = el('div', 'cm-warnings', '');
+        const previewList = el('div', 'cm-import-list', '');
+
+        function setSource(source) {
+            state.importSource = source;
+            tabPaste.classList.toggle('is-active', source === 'paste');
+            tabNote.classList.toggle('is-active', source === 'note');
+            tabFile.classList.toggle('is-active', source === 'file');
+            textArea.style.display = source === 'paste' ? '' : 'none';
+            readNoteButton.style.display = source === 'note' ? '' : 'none';
+            notePreview.style.display = source === 'note' && notePreview.textContent ? '' : 'none';
+            fileInput.style.display = source === 'file' ? '' : 'none';
+        }
+
+        tabPaste.addEventListener('click', function () { setSource('paste'); });
+        tabNote.addEventListener('click', function () { setSource('note'); });
+        tabFile.addEventListener('click', function () { setSource('file'); });
+
+        readNoteButton.addEventListener('click', function () {
+            Promise.resolve()
+                .then(function () {
+                    return controller.activeNoteText();
+                })
+                .then(function (note) {
+                    state.importText = note.text;
+                    notePreview.textContent = 'Read "' + note.title + '" (' + note.text.length + ' characters).';
+                    notePreview.style.display = '';
+                    setStatus('Note read.');
+                })
+                .catch(notify);
         });
 
-        row.appendChild(labelInput);
-        row.appendChild(flagInput);
-        row.appendChild(typeSelect);
-        row.appendChild(add);
-        footer.appendChild(row);
-        addOptionRow = row;
-        labelInput.focus();
+        fileInput.addEventListener('change', function () {
+            const file = fileInput.files && fileInput.files[0];
+            if (!file) {
+                return;
+            }
+            Promise.resolve()
+                .then(function () {
+                    return readFileText(file);
+                })
+                .then(function (text) {
+                    state.importText = text;
+                    notePreview.textContent = 'Read "' + (file.name || 'file') + '" (' + text.length + ' characters).';
+                    notePreview.style.display = '';
+                    setStatus('File read.');
+                })
+                .catch(notify);
+        });
+
+        function collectText() {
+            if (state.importSource === 'paste') {
+                return textArea.value;
+            }
+            return state.importText;
+        }
+
+        function renderImportPreview() {
+            warnings.textContent = '';
+            previewList.textContent = '';
+            state.importRows = [];
+            if (!state.importParsed) {
+                importSelected.disabled = true;
+                return;
+            }
+            (state.importParsed.warnings || []).forEach(function (warning) {
+                warnings.appendChild(el('div', 'cm-warning', warning.message || warning.code));
+            });
+            const options = state.importParsed.options || [];
+            if (!options.length) {
+                previewList.appendChild(el('div', 'cm-empty', 'No options found. Check the format and try again.'));
+                importSelected.disabled = true;
+                return;
+            }
+            options.forEach(function (option, index) {
+                const row = el('label', 'cm-import-row');
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.checked = true;
+                checkbox.addEventListener('change', function () {
+                    state.importRows[index].checked = checkbox.checked;
+                    importSelected.disabled = !state.importRows.some(function (entry) {
+                        return entry.checked;
+                    });
+                });
+                row.appendChild(checkbox);
+                const main = el('div', 'cm-import-main');
+                const flag = el('div', 'cm-import-flag', option.flag + (option.type ? '  (' + option.type + ')' : ''));
+                main.appendChild(flag);
+                if (option.help) {
+                    main.appendChild(el('div', 'cm-import-help', option.help));
+                }
+                row.appendChild(main);
+                previewList.appendChild(row);
+                state.importRows.push({ option: option, checked: true });
+            });
+            importSelected.disabled = false;
+        }
+
+        parseButton.addEventListener('click', function () {
+            const text = collectText();
+            if (!String(text || '').trim()) {
+                notify(new Error('Nothing to parse. Paste help output, read the active note or choose a file.'));
+                return;
+            }
+            try {
+                state.importParsed = Parse.parseImport(text);
+                renderImportPreview();
+                setStatus('Parsed ' + (state.importParsed.options || []).length + ' option(s).');
+            } catch (error) {
+                notify(error);
+            }
+        });
+
+        importSelected.addEventListener('click', function () {
+            Promise.resolve()
+                .then(function () {
+                    const selected = state.importRows
+                        .filter(function (entry) { return entry.checked; })
+                        .map(function (entry) { return entry.option; });
+                    if (!selected.length) {
+                        throw new Error('Select at least one option.');
+                    }
+                    return controller.importOptions(state.current.noteId, selected);
+                })
+                .then(function (result) {
+                    closeModal();
+                    setStatus('Imported ' + (result && result.created ? result.created : 'the selected') + ' option(s).');
+                    return controller.refresh();
+                })
+                .then(runSearch)
+                .then(function () {
+                    return selectItem(state.current);
+                })
+                .catch(notify);
+        });
+
+        const bodyNode = el('div', '');
+        bodyNode.appendChild(sourceRow);
+        bodyNode.appendChild(hint);
+        bodyNode.appendChild(textArea);
+        bodyNode.appendChild(readNoteButton);
+        bodyNode.appendChild(notePreview);
+        bodyNode.appendChild(fileInput);
+        bodyNode.appendChild(warnings);
+        bodyNode.appendChild(previewList);
+
+        const actionsNode = el('div', 'cm-inline');
+        actionsNode.appendChild(parseButton);
+        actionsNode.appendChild(importSelected);
+        actionsNode.appendChild(closeButton2);
+
+        modalShell('Import options into "' + state.current.title + '"', bodyNode, actionsNode);
+        state.modalKind = 'import';
+        setSource('paste');
+    }
+
+    function openToolsFolder() {
+        const bodyNode = el('div', '');
+        const info = el('div', 'cm-note', 'Loading…');
+        bodyNode.appendChild(info);
+
+        const active = el('button', 'cm-button', 'Use the active note');
+        active.type = 'button';
+        const openFolder = el('button', 'cm-button', 'Open Tools folder');
+        openFolder.type = 'button';
+        openFolder.disabled = true;
+        const importLegacy = el('button', 'cm-button', 'Import legacy commands');
+        importLegacy.type = 'button';
+
+        const idRow = el('div', 'cm-row');
+        const idInput = document.createElement('input');
+        idInput.type = 'text';
+        idInput.className = 'cm-control';
+        idInput.placeholder = 'Note ID of an existing folder';
+        const useId = el('button', 'cm-button', 'Use this note ID');
+        useId.type = 'button';
+        idRow.appendChild(idInput);
+        idRow.appendChild(useId);
+        bodyNode.appendChild(idRow);
+
+        let root = null;
+        Promise.resolve()
+            .then(function () {
+                return controller.currentToolsRoot();
+            })
+            .then(function (found) {
+                root = found;
+                info.textContent = found
+                    ? 'Current Tools folder: "' + found.title + '" (' + found.noteId + ').'
+                    : 'No Tools folder yet.';
+                openFolder.disabled = !found;
+            })
+            .catch(notify);
+
+        active.addEventListener('click', function () {
+            Promise.resolve()
+                .then(function () {
+                    return controller.useActiveNoteAsToolsRoot();
+                })
+                .then(function () {
+                    closeModal();
+                    setStatus('Tools folder updated to the active note.');
+                })
+                .then(runSearch)
+                .catch(notify);
+        });
+
+        openFolder.addEventListener('click', function () {
+            if (!root) {
+                return;
+            }
+            Promise.resolve()
+                .then(function () {
+                    return controller.openNote(root.noteId);
+                })
+                .catch(notify);
+        });
+
+        importLegacy.addEventListener('click', function () {
+            Promise.resolve()
+                .then(function () {
+                    return controller.importLegacy();
+                })
+                .then(function (result) {
+                    closeModal();
+                    setStatus(result && result.created
+                        ? 'Imported ' + result.created + ' legacy command(s).'
+                        : 'No legacy commands to import.');
+                })
+                .then(runSearch)
+                .catch(notify);
+        });
+
+        useId.addEventListener('click', function () {
+            const noteId = idInput.value.trim();
+            if (!noteId) {
+                notify(new Error('Enter a note ID.'));
+                return;
+            }
+            Promise.resolve()
+                .then(function () {
+                    return controller.setToolsRoot(noteId);
+                })
+                .then(function () {
+                    closeModal();
+                    setStatus('Tools folder updated.');
+                })
+                .then(runSearch)
+                .catch(notify);
+        });
+
+        const actionsNode = el('div', 'cm-inline');
+        actionsNode.appendChild(active);
+        actionsNode.appendChild(openFolder);
+        actionsNode.appendChild(importLegacy);
+        const closeButton2 = el('button', 'cm-button', 'Close');
+        closeButton2.type = 'button';
+        closeButton2.addEventListener('click', closeModal);
+        actionsNode.appendChild(closeButton2);
+
+        modalShell('Tools folder', bodyNode, actionsNode);
+        state.modalKind = 'tools';
     }
 
     searchInput.addEventListener('input', onSearchInput);
     closeButton.addEventListener('click', close);
-    newCommandButton.addEventListener('click', toggleNewCommand);
-    addOptionButton.addEventListener('click', toggleAddOption);
+    newToolButton.addEventListener('click', toggleNewTool);
+    importButton.addEventListener('click', openImport);
+    toolsButton.addEventListener('click', openToolsFolder);
     overlay.addEventListener('click', function (event) {
         if (event.target === overlay) {
             close();
@@ -1584,16 +3742,31 @@ __def("runtime", function (module, exports, __require) {
 
 /**
  * Trilium runtime glue: reads FNote objects into plain snapshots, keeps a
- * command index for fast fuzzy search, and exposes actions to the palette.
+ * tool index for fast search, and exposes actions to the palette.
+ *
+ * Structure the runtime expects:
+ *   Tools/                 #cmTools (any path)
+ *     Category/            #cmCategory
+ *       Tool/              #cmTool  (three H2 sections in its content)
+ *         Install          #cmInstall
+ *         Usage            #cmUsage
+ *         Help             #cmHelpNote
+ *         Options/         #cmOptions
+ *           Option         #cmOption
+ *           Presets        #cmPresets (JSON)
  */
 
 const Model = __require("model");
 const Backend = __require("backend");
+const Sections = __require("sections");
+const Parse = __require("parse");
 const UI = __require("ui");
 
 let index = [];
-let notesById = new Map();
+let entriesById = new Map();
 let bootstrapPromise = null;
+let bootstrapApi = null;
+let bootstrapInfo = null;
 
 function getApi() {
     return typeof api !== 'undefined' ? api : null;
@@ -1618,16 +3791,38 @@ function readLabels(note) {
     return labels;
 }
 
+function hasLabel(note, name) {
+    if (!note) {
+        return false;
+    }
+    try {
+        if (typeof note.hasLabel === 'function') {
+            return note.hasLabel(name);
+        }
+        const value = note.getLabelValue(name);
+        return value !== null && value !== undefined;
+    } catch (error) {
+        return false;
+    }
+}
+
 async function childWithLabel(note, label) {
+    if (!note) {
+        return null;
+    }
     const children = await note.getChildNotes();
     for (const child of children) {
-        let value = null;
-        try {
-            value = child.getLabelValue(label);
-        } catch (error) {
-            value = null;
+        if (hasLabel(child, label)) {
+            return child;
         }
-        if (value !== null && value !== undefined) {
+    }
+    return null;
+}
+
+async function childByTitle(note, title) {
+    const children = await note.getChildNotes();
+    for (const child of children) {
+        if (child.title === title) {
             return child;
         }
     }
@@ -1635,165 +3830,273 @@ async function childWithLabel(note, label) {
 }
 
 function ensureBootstrap() {
-    if (bootstrapPromise) {
+    const apiRef = getApi();
+    if (bootstrapPromise && bootstrapApi === apiRef) {
         return bootstrapPromise;
     }
-    const apiRef = getApi();
     if (!apiRef) {
         return Promise.reject(new Error('Trilium api is not available.'));
     }
+    bootstrapApi = apiRef;
     bootstrapPromise = Promise.resolve(
         apiRef.runOnBackend(Backend.beRun, [{
-            action: Backend.ACTIONS.bootstrap,
-            labels: Model.LABELS
+            action: 'bootstrap',
+            labels: Model.LABELS,
+            seed: true,
+            seedTools: Model.seedTools(),
+            newToolNotes: Model.newToolNotes()
         }])
-    ).catch(function (error) {
+    ).then(function (result) {
+        bootstrapInfo = result || null;
+        return result;
+    }).catch(function (error) {
         bootstrapPromise = null;
+        bootstrapApi = null;
         throw error;
     });
     return bootstrapPromise;
 }
 
-async function readOptionTitles(note) {
-    const optionsNote = await childWithLabel(note, Model.LABELS.options);
-    if (!optionsNote) {
-        return [];
+async function resolveToolsRoot() {
+    const apiRef = getApi();
+    try {
+        const found = await apiRef.searchForNote('#' + Model.LABELS.tools);
+        if (found) {
+            return found;
+        }
+    } catch (error) {
+        // fall through to the bootstrap result
     }
-    const children = await optionsNote.getChildNotes();
-    return children.map(function (child) {
-        return child.title;
-    });
+    if (bootstrapInfo && bootstrapInfo.toolsRootId) {
+        try {
+            return await apiRef.getNote(bootstrapInfo.toolsRootId);
+        } catch (error) {
+            return null;
+        }
+    }
+    return null;
 }
 
-/**
- * The base string lives in the note content (code note, raw text) unless
- * #cmBase overrides it. It must be indexed here: search has to match the
- * command text, not just the title.
- */
-async function readBase(note, labels) {
-    if (labels && labels[Model.LABELS.base] !== undefined) {
-        return String(labels[Model.LABELS.base]);
+async function readOptionSnapshots(toolNote) {
+    const folder = await childWithLabel(toolNote, Model.LABELS.options);
+    if (!folder) {
+        return [];
     }
-    try {
-        return String(await note.getContent());
-    } catch (error) {
-        return '';
+    const children = await folder.getChildNotes();
+    const snapshots = [];
+    for (const child of children) {
+        if (hasLabel(child, Model.LABELS.option)) {
+            snapshots.push({
+                noteId: child.noteId,
+                title: child.title,
+                labels: readLabels(child)
+            });
+        }
     }
+    return snapshots;
+}
+
+function optionSearchText(snapshots) {
+    return snapshots.map(function (snapshot) {
+        const labels = snapshot.labels || {};
+        return [
+            snapshot.title,
+            labels[Model.LABELS.flag],
+            labels[Model.LABELS.doc],
+            labels[Model.LABELS.enumValues]
+        ].join(' ');
+    }).join(' ');
 }
 
 async function refresh() {
     await ensureBootstrap();
     const apiRef = getApi();
-    const notes = await apiRef.searchForNotes('#' + Model.LABELS.command);
-
-    let templateId = null;
-    try {
-        const template = await apiRef.searchForNote('#' + Model.LABELS.template);
-        templateId = template ? template.noteId : null;
-    } catch (error) {
-        templateId = null;
-    }
+    const toolsRoot = await resolveToolsRoot();
+    const notes = await apiRef.searchForNotes('#' + Model.LABELS.tool);
 
     const nextIndex = [];
     const nextById = new Map();
+
     for (const note of notes) {
-        if (templateId && note.noteId === templateId) {
+        if (hasLabel(note, Model.LABELS.legacyTemplate)) {
             continue;
         }
         const labels = readLabels(note);
-        let optionTitles = [];
+        let category = '';
         try {
-            optionTitles = await readOptionTitles(note);
+            const parents = note.getParentNotes();
+            if (parents && parents.length) {
+                category = parents[0].title;
+            }
         } catch (error) {
-            optionTitles = [];
+            category = '';
         }
-        nextById.set(note.noteId, note);
+
+        let optionSnapshots = [];
+        try {
+            optionSnapshots = await readOptionSnapshots(note);
+        } catch (error) {
+            optionSnapshots = [];
+        }
+
+        let whatIs = '';
+        try {
+            const parsed = Sections.parseToolNote(await note.getContent());
+            whatIs = parsed.whatIs;
+        } catch (error) {
+            whatIs = '';
+        }
+
+        const entry = {
+            noteId: note.noteId,
+            title: note.title,
+            category: category,
+            labels: labels,
+            note: note,
+            optionSnapshots: optionSnapshots,
+            searchText: [labels[Model.LABELS.description], whatIs].join(' ')
+        };
+
+        nextById.set(note.noteId, entry);
         nextIndex.push({
             noteId: note.noteId,
             title: note.title,
-            labels: labels,
-            base: await readBase(note, labels),
-            optionTitles: optionTitles
+            category: category,
+            description: labels[Model.LABELS.description] || '',
+            base: labels[Model.LABELS.base] || Model.deriveBase(note.title),
+            optionCount: optionSnapshots.length,
+            optionTitles: optionSnapshots.map(function (snapshot) {
+                return snapshot.title;
+            })
         });
     }
 
     index = nextIndex;
-    notesById = nextById;
+    entriesById = nextById;
     return index;
 }
 
 function search(query) {
     return index.filter(function (item) {
+        const entry = entriesById.get(item.noteId);
         return Model.matches({
             title: item.title,
-            description: item.labels[Model.LABELS.description] || '',
-            tags: item.labels[Model.LABELS.tags] || '',
-            base: item.base || item.labels[Model.LABELS.base] || '',
+            category: item.category,
+            description: item.description,
+            base: item.base,
             options: [],
-            optionTitles: item.optionTitles || []
+            optionTitles: item.optionTitles,
+            searchText: entry ? entry.searchText + ' ' + optionSearchText(entry.optionSnapshots) : ''
         }, query);
     });
 }
 
-async function readPresets(presetsNote) {
-    const children = await presetsNote.getChildNotes();
-    const presets = [];
-    for (const child of children) {
-        let marker = null;
-        try {
-            marker = child.getLabelValue(Model.LABELS.preset);
-        } catch (error) {
-            marker = null;
-        }
-        if (marker === null || marker === undefined) {
-            continue;
-        }
-        let values = {};
-        try {
-            const parsed = JSON.parse(await child.getContent());
-            values = parsed && parsed.values ? parsed.values : {};
-        } catch (error) {
-            values = {};
-        }
-        presets.push({ noteId: child.noteId, title: child.title, values: values });
+function readPresetsContent(content) {
+    let data = null;
+    try {
+        data = JSON.parse(String(content || ''));
+    } catch (error) {
+        data = null;
     }
-    return presets;
+    if (!data || typeof data !== 'object' || !Array.isArray(data.presets)) {
+        return [];
+    }
+    return data.presets
+        .filter(function (entry) {
+            return entry && typeof entry.name === 'string';
+        })
+        .map(function (entry) {
+            return {
+                name: entry.name,
+                values: entry.values && typeof entry.values === 'object' ? entry.values : {}
+            };
+        });
 }
 
-async function load(noteId) {
-    const note = notesById.get(noteId);
+async function readNoteText(note) {
     if (!note) {
-        throw new Error('Command not found. Reopen the palette.');
+        return '';
     }
-    const labels = readLabels(note);
-
     let content = '';
     try {
         content = await note.getContent();
     } catch (error) {
-        content = '';
+        return '';
     }
+    if (note.type === 'code') {
+        return String(content || '');
+    }
+    return Parse.stripHtml(content);
+}
 
+async function load(noteId) {
+    const entry = entriesById.get(noteId);
+    if (!entry) {
+        throw new Error('Tool not found. Reopen the palette.');
+    }
+    const note = entry.note;
+    const labels = entry.labels;
+
+    let toolContent = '';
+    try {
+        toolContent = await note.getContent();
+    } catch (error) {
+        toolContent = '';
+    }
+    const parsed = Sections.parseToolNote(toolContent);
+
+    const installNote = await childWithLabel(note, Model.LABELS.install) || await childByTitle(note, 'Install');
+    const usageNote = await childWithLabel(note, Model.LABELS.usage) || await childByTitle(note, 'Usage');
+    const helpNote = await childWithLabel(note, Model.LABELS.helpNote) || await childByTitle(note, 'Help');
     const optionsNote = await childWithLabel(note, Model.LABELS.options);
-    const presetsNote = await childWithLabel(note, Model.LABELS.presets);
-    const optionNotes = optionsNote ? await optionsNote.getChildNotes() : [];
+    const presetsNote = optionsNote ? await childWithLabel(optionsNote, Model.LABELS.presets) : null;
 
-    const definition = Model.buildCommand({
+    const installText = await readNoteText(installNote);
+    const usageHtml = usageNote ? await usageNote.getContent() : '';
+    const helpText = await readNoteText(helpNote);
+    const usageExamples = Sections.parseExamples(usageHtml, labels[Model.LABELS.base] || Model.deriveBase(note.title));
+
+    const definition = Model.buildTool({
         noteId: note.noteId,
         title: note.title,
-        content: content,
+        category: entry.category,
+        content: toolContent,
         labels: labels,
-        optionNotes: optionNotes.map(function (optionNote) {
-            return {
-                noteId: optionNote.noteId,
-                title: optionNote.title,
-                labels: readLabels(optionNote)
-            };
-        })
+        optionNotes: entry.optionSnapshots,
+        examples: usageExamples,
+        searchText: entry.searchText
     });
 
-    const presets = presetsNote ? await readPresets(presetsNote) : [];
-    return { definition: definition, presets: presets };
+    let presets = [];
+    if (presetsNote) {
+        try {
+            presets = readPresetsContent(await presetsNote.getContent());
+        } catch (error) {
+            presets = [];
+        }
+    }
+
+    let toolNotePath = '';
+    try {
+        toolNotePath = note.getBestNotePathString();
+    } catch (error) {
+        toolNotePath = '';
+    }
+
+    return {
+        definition: definition,
+        presets: presets,
+        whatIs: parsed.whatIs,
+        links: parsed.links,
+        officialLinks: parsed.officialLinks,
+        usefulLinks: parsed.usefulLinks,
+        usageExamples: usageExamples,
+        helpText: helpText,
+        installText: installText,
+        optionsFolderId: optionsNote ? optionsNote.noteId : null,
+        presetsNoteId: presetsNote ? presetsNote.noteId : null,
+        toolNotePath: toolNotePath
+    };
 }
 
 async function copyText(text) {
@@ -1835,6 +4138,27 @@ function backendAction(action, extra) {
     return apiRef.runOnBackend(Backend.beRun, [params]);
 }
 
+function toolsRootId() {
+    if (!bootstrapInfo || !bootstrapInfo.toolsRootId) {
+        throw new Error('Tools folder is not available yet. Reopen the palette.');
+    }
+    return bootstrapInfo.toolsRootId;
+}
+
+async function setToolsRootAction(noteId) {
+    const current = await resolveToolsRoot();
+    await backendAction('setToolsRoot', {
+        noteId: noteId,
+        oldToolsRootId: current ? current.noteId : null
+    });
+    bootstrapPromise = null;
+    bootstrapInfo = null;
+    index = [];
+    entriesById = new Map();
+    await refresh();
+    return { noteId: noteId };
+}
+
 function controller() {
     return {
         refresh: refresh,
@@ -1842,21 +4166,116 @@ function controller() {
         load: load,
         copy: copyText,
         insert: insertText,
-        createCommand(title) {
-            return backendAction(Backend.ACTIONS.createCommand, { title: title });
+
+        categories() {
+            const seen = [];
+            for (const item of index) {
+                if (item.category && seen.indexOf(item.category) === -1) {
+                    seen.push(item.category);
+                }
+            }
+            seen.sort();
+            return seen;
         },
-        addOption(commandId, option) {
-            return backendAction(Backend.ACTIONS.addOption, { commandId: commandId, option: option });
-        },
-        savePreset(commandId, name, values) {
-            return backendAction(Backend.ACTIONS.savePreset, {
-                commandId: commandId,
-                name: name,
-                values: values
+
+        async createTool(spec) {
+            const notes = Model.newToolNotes();
+            const created = await backendAction('createTool', {
+                toolsRootId: toolsRootId(),
+                category: spec.category,
+                title: spec.title,
+                base: spec.base,
+                description: spec.description,
+                content: Model.toolTemplate(),
+                install: notes.install,
+                usage: notes.usage,
+                help: notes.help
             });
+            await refresh();
+            return created;
         },
-        deletePreset(noteId) {
-            return backendAction(Backend.ACTIONS.deletePreset, { noteId: noteId });
+
+        addOption(toolId, option) {
+            return backendAction('addOption', { toolId: toolId, option: option });
+        },
+
+        importOptions(toolId, options) {
+            return backendAction('importOptions', { toolId: toolId, options: options || [] });
+        },
+
+        deleteOption(noteId) {
+            return backendAction('deleteOption', { noteId: noteId });
+        },
+
+        setToolBase(toolId, base) {
+            return backendAction('setToolBase', { toolId: toolId, base: base });
+        },
+
+        savePreset(toolId, name, values) {
+            return backendAction('savePreset', { toolId: toolId, name: name, values: values });
+        },
+
+        deletePreset(toolId, name) {
+            return backendAction('deletePreset', { toolId: toolId, name: name });
+        },
+
+        async importLegacy() {
+            const created = await backendAction('importLegacy', {
+                toolsRootId: toolsRootId(),
+                categoryName: 'Imported',
+                newToolNotes: Model.newToolNotes()
+            });
+            await refresh();
+            return created;
+        },
+
+        async currentToolsRoot() {
+            const root = await resolveToolsRoot();
+            return root ? { noteId: root.noteId, title: root.title } : null;
+        },
+
+        setToolsRoot(noteId) {
+            return setToolsRootAction(noteId);
+        },
+
+        async useActiveNoteAsToolsRoot() {
+            const apiRef = getApi();
+            const active = apiRef.getActiveContextNote();
+            if (!active) {
+                throw new Error('No active note to use as the Tools folder.');
+            }
+            return setToolsRootAction(active.noteId);
+        },
+
+        async activeNoteText() {
+            const apiRef = getApi();
+            const active = apiRef.getActiveContextNote();
+            if (!active) {
+                throw new Error('No active note.');
+            }
+            const text = await readNoteText(active);
+            return { noteId: active.noteId, title: active.title, text: text };
+        },
+
+        async noteText(noteId) {
+            const apiRef = getApi();
+            const note = await apiRef.getNote(noteId);
+            if (!note) {
+                throw new Error('Note not found: ' + noteId);
+            }
+            const text = await readNoteText(note);
+            return { noteId: note.noteId, title: note.title, text: text };
+        },
+
+        openNote(noteId) {
+            const apiRef = getApi();
+            return Promise.resolve(apiRef.getNote(noteId)).then(function (note) {
+                if (!note) {
+                    throw new Error('Note not found: ' + noteId);
+                }
+                const path = note.getBestNotePathString();
+                return apiRef.activateNote(path);
+            });
         }
     };
 }

@@ -17,6 +17,8 @@ test('build produces a valid bundle and installer', () => {
     const installer = fs.readFileSync(path.join(root, 'dist', 'install.js'), 'utf8');
 
     assert.ok(bundle.includes('__def("render"'), 'render module is registered');
+    assert.ok(bundle.includes('__def("parse"'), 'parse module is registered');
+    assert.ok(bundle.includes('__def("sections"'), 'sections module is registered');
     assert.ok(bundle.includes('__def("runtime"'), 'runtime module is registered');
     assert.ok(bundle.includes('__require("runtime")'), 'entry requires runtime');
     assert.ok(installer.includes('createOrUpdateLauncher'), 'installer registers a launcher');
@@ -29,7 +31,7 @@ test('build produces a valid bundle and installer', () => {
 
 test('every src module is reachable from the entry point', () => {
     const bundle = fs.readFileSync(path.join(root, 'dist', 'command-maker.js'), 'utf8');
-    for (const name of ['render', 'model', 'backend', 'ui', 'runtime']) {
+    for (const name of ['render', 'parse', 'sections', 'model', 'backend', 'ui', 'runtime']) {
         assert.ok(bundle.includes('__def("' + name + '"'), name + ' is bundled');
     }
 });

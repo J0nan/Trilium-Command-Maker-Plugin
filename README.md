@@ -1,11 +1,13 @@
 # Command Maker for Trilium
 
-A TriliumNext plugin that turns notes into a command palette: search a command, fill in its options, get a runnable string you can edit, copy, insert, or save as a preset.
+A TriliumNext plugin that turns your CLI tool notes into a command palette: search a tool,
+read what it does, fill in its documented options, and get a runnable command you can edit,
+copy, insert, or save as a preset.
 
-Built for TriliumNext ≥ 0.101 (templates, launcher API, frontend scripts).
+Built for TriliumNext ≥ 0.101 (launcher API, frontend scripts).
 
 ```
-Ctrl+Shift+Space  →  search  →  fill options  →  command  →  copy / insert / preset
+Ctrl+Shift+Space  →  search a tool  →  read help  →  fill options  →  command  →  copy / insert
 ```
 
 ## Install
@@ -20,15 +22,14 @@ The installer is idempotent. It creates:
 
 | Note | Purpose |
 | --- | --- |
-| `Command Maker` (`#cmRoot`) | holds the templates and your commands |
-| `Command Template` (`#template`, `#cmTemplate`, `#cmCommand`) | the template new commands come from |
-| `Option Template` (`#template`, `#cmOptionTemplate`) | defaults for new option notes |
+| `Command Maker` (`#cmRoot`) | settings note: holds the plugin and the shortcut override |
+| `Tools` (`#cmTools`) | data root: categories and tool notes live here |
 | `Command Maker.js` (`#cmPlugin`) | the plugin runtime |
-| two example commands | `ffmpeg compress`, `git commit` |
 
 It also registers a launcher (`Command Maker`, `Ctrl+Shift+Space`) through
 `api.createOrUpdateLauncher`, so no attribute editing and no `#widget` label are
-required. The shortcut can be changed afterwards — see below.
+required. The first time the palette opens it seeds three documented examples:
+`ffmpeg` (Media), `git commit` (Version control) and `curl` (Network).
 
 ### Changing the keyboard shortcut
 
@@ -47,7 +48,7 @@ Re-running the installer **preserves** the shortcut you set. Resolution order:
 
 | Priority | Source |
 | --- | --- |
-| 1 | `#cmShortcut` on the `Command Maker` root note (empty value = no shortcut) |
+| 1 | `#cmShortcut` on the `Command Maker` settings note (empty value = no shortcut) |
 | 2 | `#keyboardShortcut` already present on the launcher |
 | 3 | `ctrl+shift+space` (default for a fresh install) |
 
@@ -60,62 +61,74 @@ So to pin a shortcut that survives reinstalls, add `#cmShortcut=ctrl+alt+k` to t
 Create a **JS frontend** code note and paste [`dist/command-maker.js`](dist/command-maker.js).
 Add the label `#cmPlugin`, then either create a launcher pointing at it
 (Global menu → Configure launchbar → script launcher) or give it an
-`#executeButton`. On first open the plugin bootstraps its own note tree.
+`#executeButton`. On first open the plugin creates the settings note and the
+`Tools` folder if they do not exist.
 
-## Using it
-
-- **Search** filters command notes by title, description, tags, base command
-  (note content or `#cmBase`) and option names. `ArrowUp` / `ArrowDown` / `Enter`.
-- **Options** render as checkboxes (boolean), selects (enum), number inputs and
-  text inputs. Required options are marked `*`.
-- **Command** is an editable code box. Editing it stops the generator from
-  overwriting your changes; `Regenerate` restores the generated text.
-- **Copy** uses the clipboard API with a legacy fallback. `Ctrl+Enter` copies.
-  **Insert** appends the command to the active note's editor.
-- **Presets** save the current value map under the command. Loading a preset
-  restores every value.
-
-## Command notes
-
-A command is a note that inherits `#cmCommand`. It is a **code note** (`text/x-sh`)
-so its content is the raw base string; options are child notes under an `Options`
-folder.
+## Structure
 
 ```
-Command Maker/
-├── Command Template/          #template #cmTemplate #cmCommand
-│   ├── Options/               #cmOptions  (~child:template → Option Template)
-│   └── Presets/               #cmPresets
-├── Option Template/           #template #cmOptionTemplate
-└── ffmpeg compress/           #cmCommand
-    ├── Options/
-    │   ├── Input file         #cmFlag=-i   #cmPlaceholder=input #cmType=path
-    │   ├── Video codec        #cmFlag=-c:v #cmType=enum #cmValues=libx264,libx265 #cmDefault=libx264
-    │   ├── CRF quality        #cmFlag=-crf #cmType=number #cmDefault=23
-    │   └── Overwrite output   #cmFlag=-y   #cmType=boolean
-    └── Presets/
+Tools/                              #cmTools  (move it anywhere, the label follows)
+├── Media/                          #cmCategory
+│   └── ffmpeg/                     #cmTool
+│       ├── Install                 #cmInstall   text
+│       ├── Usage                   #cmUsage     text (examples in code blocks)
+│       ├── Help                    #cmHelpNote  code (text/x-sh)
+│       └── Options/                #cmOptions
+│           ├── Input file          #cmOption #cmFlag=-i #cmDoc=...
+│           └── Presets             #cmPresets  JSON
+└── Version control/
+    └── git commit/                 #cmTool
+        └── ...
 ```
 
-Base string of that command: `ffmpeg -i "{{input}}"`.
+The `Tools` folder is found by its `#cmTools` label, so you can drag it to another
+path and the plugin keeps working. Use **Tools folder → Use the active note** in
+the palette (or add `#cmTools` to any folder manually) to pick a different root.
 
-### Attribute reference
+### Tool notes
 
-Command notes:
+A tool note is a normal **text** note. Its content is meant to be read and edited
+by you, with exactly three H2 sections:
 
-| Attribute | Meaning |
-| --- | --- |
-| `#cmDesc` | subtitle shown in search results |
-| `#cmTags` | extra search terms |
-| `#cmBase` | base string; overrides the note content |
-| `#cmCommand` | marks the note as a command (inherited from the template) |
+```markdown
+## What is?
+Describe what the tool does and when to use it.
 
-Option notes:
+## Official links
+Add the official documentation, repository or website links here.
+
+## Useful links
+Add useful guides, cheat sheets or articles here.
+```
+
+The palette renders the "What is?" text and makes the links from the other two
+sections clickable. Everything you add above the `Options` folder is yours to
+organize; the technical notes are confined to that one folder so they do not
+get in the way when you read the tool manually.
+
+### The three standard children
+
+| Note | Type | Use |
+| --- | --- | --- |
+| `Install` | text | installation steps/commands |
+| `Usage` | text | examples; every code block becomes a one-click example in the palette |
+| `Help` | code (`text/x-sh`) | paste the output of `tool --help` here |
+
+The palette reads all three: examples can be used or copied, the help output and
+install steps are shown in collapsible sections, and an example can be loaded
+straight into the command preview.
+
+### Option notes
+
+Options live under the tool's `Options` folder. Each option is a note whose title
+is the readable label and whose attributes describe the flag:
 
 | Attribute | Meaning | Default |
 | --- | --- | --- |
 | `#cmFlag` | flag text, e.g. `--input`; empty means positional | empty |
+| `#cmDoc` | help string shown next to the flag | empty |
 | `#cmMode` | `flag` or `inline` | `flag` |
-| `#cmPlaceholder` | token name | slug of the title |
+| `#cmPlaceholder` | token name | slug of the flag/title |
 | `#cmType` | `string`, `path`, `number`, `boolean`, `enum` | `string` |
 | `#cmValues` | enum values, comma separated | — |
 | `#cmDefault` | initial value | empty / `false` |
@@ -124,31 +137,61 @@ Option notes:
 | `#cmQuote` | `none`, `single`, `double` (flag segments only) | `none` |
 | `#cmSep` | `space` or `=` (`--flag=value`) | `space` |
 
-### Flags and placeholders together
+The option note's content is a good place for a longer explanation; the palette
+shows `#cmDoc` inline and keeps the full note one click away.
 
-Both mechanisms coexist:
+### Command assembly
 
-1. One value, one channel — an option is either appended as a flag or
-   substituted into a placeholder, never both.
-2. If the base string contains `{{name}}` for an option, that option is
-   substituted inline even if its mode is `flag`. This prevents the same value
-   from being emitted twice.
-3. A placeholder with no backing option becomes an **inferred** text field in
-   the palette.
-4. `\{{name}}` emits a literal `{{name}}`.
-5. Inline substitution is verbatim: quoting inside the base string is yours.
-   `#cmQuote` only applies to emitted flag segments.
+The command is:
 
-Values are rendered left to right: the substituted base first, then flag
-segments ordered by `#cmOrder` (ties broken by title).
+```
+<base> <extra arguments> <selected option flags, ordered by #cmOrder>
+```
+
+- The base comes from `#cmBase` on the tool note. If it is empty, the tool title is
+  lowercased (`Git commit` → `git commit`). You can edit it from the palette and it
+  is saved back to the tool note.
+- "Extra arguments" is a free-text field for positional arguments or subcommands,
+  inserted right after the base.
+- Placeholders still work in the base: `{{name}}` is substituted from the option
+  with that placeholder, or becomes an inferred text field when no option exists.
+  `\{{name}}` emits a literal `{{name}}`.
+
+### Presets
+
+A preset saves the current value map. Presets are stored in one JSON note inside
+the tool's `Options` folder, so they never clutter the tool note.
+
+## Importing options
+
+**Import options** accepts three sources: pasted text, the currently open note, or
+a local file. It understands:
+
+1. **`--help` output** — GNU/POSIX style, including `-m, --message <message>`,
+   `--output=FILE`, `--[no-]color`, ffmpeg-style single-dash flags, continuation
+   lines, `(default: …)`, `{a,b,c}` / `one of: a, b` enums.
+2. **JSON** — an array, `{ "options": [...] }` or `{ "tool": { "options": [...] } }`
+   with `flag`, `help`, `label`, `type`, `values`, `default`, `required`, `mode`,
+   `placeholder`, `order`.
+3. **Markdown table** — `| Flag | Help | Type |` rows.
+
+Nothing is written until you parse and confirm: a preview lists every detected
+option with a checkbox.
+
+## Legacy commands
+
+Older versions stored commands as `#cmCommand` notes with an `Options` folder.
+Those notes are left untouched. Use **Tools folder → Import legacy commands** to
+copy them into `Tools/Imported` as tool entries. The import runs once per install
+(`#cmMigrated` on the settings note).
 
 ## Design notes
 
-- `src/render.js` and `src/model.js` are pure and unit tested. `src/ui.js` is
-  plain DOM — no JSX compile step, no Preact coupling.
-- `src/backend.js` exposes a single serialisable backend entry point
-  (`beRun(params)`) because `api.runOnBackend` sends the function source, and
-  inner helpers travel with it while outer helpers would not.
+- `src/model.js`, `src/render.js`, `src/parse.js` and `src/sections.js` are pure and
+  unit tested. `src/ui.js` is plain DOM — no JSX compile step, no Preact coupling.
+- `src/backend.js` exposes a single serialisable entry point (`beRun(params)`)
+  because `api.runOnBackend` sends the function source, and inner helpers travel
+  with it while outer helpers would not.
 - The frontend note MIME is `application/javascript;env=frontend`.
 - `dist/` is committed because it is the artifact users import.
 
@@ -156,7 +199,7 @@ segments ordered by `#cmOrder` (ties broken by title).
 
 ```bash
 npm run build     # src/ → dist/command-maker.js + dist/install.js
-npm test          # unit tests for model, renderer and build
+npm test          # unit tests for model, parser, sections, renderer, backend, UI
 npm run check     # both
 ```
 
@@ -164,14 +207,13 @@ No dependencies, no network access, Node 20+.
 
 ## Limitations
 
-- A command note must be a code note (`text/x-sh`) for its content to be used as
-  the base string; text notes return HTML, so use `#cmBase` there.
+- The palette indexes tools on open. Large trees make the first open slower.
 - Shell quoting targets POSIX shells. For PowerShell, set `#cmQuote=none` and
   quote inside the base string.
 - Inserting into the editor relies on `api.addTextToActiveContextEditor`. If a
   Trilium build does not expose it, the action reports the problem instead of
   silently copying.
-- Enum values live in `#cmValues`; adding them from the palette is not
-  implemented — edit the option note.
-- The palette indexes commands on open; large subtrees make the first open
-  slower.
+- The `--help` parser is a heuristic. Always review the preview before importing;
+  JSON or a markdown table is the deterministic option.
+- Help output is stored as text. Very long outputs are kept in the note but only
+  the palette's collapsible section renders them.

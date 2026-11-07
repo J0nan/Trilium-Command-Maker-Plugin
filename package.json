@@ -2,7 +2,7 @@
   "name": "trilium-command-maker",
   "version": "0.1.0",
   "private": true,
-  "description": "Trilium plugin: search command notes, fill their options, and get a runnable command string.",
+  "description": "Trilium plugin: turn CLI tool notes into a command palette with documented options, examples and help output.",
   "license": "MIT",
   "scripts": {
     "build": "node tools/build.mjs",

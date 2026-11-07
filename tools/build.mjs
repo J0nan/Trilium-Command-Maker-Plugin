@@ -8,7 +8,7 @@ const distDir = path.join(root, 'dist');
 
 // Dependency order does not matter: modules are registered first and executed
 // lazily on first require.
-const MODULES = ['render', 'model', 'backend', 'ui', 'runtime'];
+const MODULES = ['render', 'parse', 'sections', 'model', 'backend', 'ui', 'runtime'];
 const REQUIRE_RE = /require\(\s*['"]\.\/([\w-]+)(?:\.js)?['"]\s*\)/g;
 
 function inlineRequires(code) {

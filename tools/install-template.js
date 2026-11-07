@@ -14,6 +14,7 @@
 var BUNDLE = __BUNDLE__;
 
 var ROOT_LABEL = 'cmRoot';
+var TOOLS_LABEL = 'cmTools';
 var PLUGIN_LABEL = 'cmPlugin';
 var LAUNCHER_ID = 'commandmaker';
 var SHORTCUT_LABEL = 'cmShortcut';
@@ -78,9 +79,22 @@ if (!root) {
         parentNoteId: parentId,
         title: 'Command Maker',
         type: 'text',
-        content: 'Press Ctrl+Shift+Space to open the command palette.'
+        content: 'Command Maker settings. The plugin finds this note through its label.'
     }).note;
     root.setLabel(ROOT_LABEL, '');
+}
+
+// The Tools folder is the data root. It can be dragged anywhere in the tree;
+// the label is what the plugin follows. Categories and tools live inside it.
+var toolsRoot = api.getNoteWithLabel(TOOLS_LABEL);
+if (!toolsRoot) {
+    toolsRoot = api.createNewNote({
+        parentNoteId: root.noteId,
+        title: 'Tools',
+        type: 'text',
+        content: 'Tool notes live here, grouped by category. Move this folder anywhere you like; the plugin follows its label.'
+    }).note;
+    toolsRoot.setLabel(TOOLS_LABEL, '');
 }
 
 var shortcut = resolveShortcut(root);
