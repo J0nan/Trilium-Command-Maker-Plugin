@@ -1,8 +1,6 @@
 # Command Maker for Trilium
 
-A TriliumNext plugin that turns notes into a command palette: search a command,
-fill in its options, get a runnable string you can edit, copy, insert, or save
-as a preset.
+A TriliumNext plugin that turns notes into a command palette: search a command, fill in its options, get a runnable string you can edit, copy, insert, or save as a preset.
 
 Built for TriliumNext ≥ 0.101 (templates, launcher API, frontend scripts).
 

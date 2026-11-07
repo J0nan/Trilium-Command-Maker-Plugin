@@ -9,6 +9,7 @@
 const Render = require('./render');
 
 const LABELS = {
+    root: 'cmRoot',
     command: 'cmCommand',
     template: 'cmTemplate',
     optionTemplate: 'cmOptionTemplate',

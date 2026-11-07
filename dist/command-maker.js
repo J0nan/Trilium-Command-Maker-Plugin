@@ -258,6 +258,7 @@ __def("model", function (module, exports, __require) {
 const Render = __require("render");
 
 const LABELS = {
+    root: 'cmRoot',
     command: 'cmCommand',
     template: 'cmTemplate',
     optionTemplate: 'cmOptionTemplate',

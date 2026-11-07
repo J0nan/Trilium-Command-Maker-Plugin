@@ -18,6 +18,9 @@ function makeNote(title) {
         children,
         deleted: false,
         setLabel(name, value) {
+            if (typeof name !== 'string' || name.trim() === '') {
+                throw new Error('setLabel called with a missing label name');
+            }
             labels[name] = value;
         },
         getLabelValue(name) {
@@ -59,6 +62,9 @@ function createApi() {
 
     return {
         getNoteWithLabel(name) {
+            if (typeof name !== 'string' || name.trim() === '') {
+                throw new Error('getNoteWithLabel called with a missing label name');
+            }
             for (const note of notes.values()) {
                 if (note.hasLabel(name)) {
                     return note;
@@ -67,6 +73,9 @@ function createApi() {
             return null;
         },
         getNotesWithLabel(name) {
+            if (typeof name !== 'string' || name.trim() === '') {
+                throw new Error('getNotesWithLabel called with a missing label name');
+            }
             return Array.from(notes.values()).filter((note) => note.hasLabel(name));
         },
         getNote(noteId) {
