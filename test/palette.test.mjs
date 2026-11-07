@@ -376,6 +376,9 @@ test('palette lists tools, shows option help, examples, help, copy/insert and pr
     assert.ok(style, 'palette stylesheet is injected');
     assert.match(style.textContent, /:root \.cm-preview:hover/);
     assert.match(style.textContent, /\.cm-opt-help/);
+    assert.match(style.textContent, /\.cm-result-desc\{[^}]*min-width:0/);
+    assert.match(style.textContent, /\.cm-result-desc\{[^}]*white-space:nowrap/);
+    assert.match(style.textContent, /\.cm-result-desc\{[^}]*text-overflow:ellipsis/);
     assert.equal(style.textContent.includes('#f4f4f4'), false, 'no hard-coded light code background');
 
     const versionButton = find(dom.body, (node) => classed(node, 'cm-version'));

@@ -2953,7 +2953,7 @@ const CSS = [
     '.cm-result.is-active{background:var(--accented-background-color,#eef2ff);box-shadow:inset 3px 0 0 var(--link-color,#4f8cff);}',
     '.cm-result-title{font-weight:600;}',
     '.cm-result-meta{display:flex;gap:6px;align-items:center;margin-top:2px;}',
-    '.cm-result-desc{opacity:.7;font-size:12px;flex:1;}',
+    '.cm-result-desc{opacity:.7;font-size:12px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
     '.cm-cat{font-size:11px;padding:1px 6px;border-radius:999px;background:var(--accented-background-color,#eef2ff);opacity:.85;white-space:nowrap;}',
     '.cm-detail{flex:1;min-width:0;overflow-y:auto;padding:14px 16px;}',
     '.cm-detail-head{margin:0 0 8px;}',
