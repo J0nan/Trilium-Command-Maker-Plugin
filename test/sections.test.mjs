@@ -144,7 +144,7 @@ test('sanitizeNoteHtml keeps readable formatting and removes unsafe markup', () 
     assert.match(clean, /<strong>winget<\/strong>/);
     assert.match(clean, /<ul><li>One<\/li><li>Two<\/li><\/ul>/);
     assert.match(clean, /<pre><code>winget install Tool<\/code><\/pre>/);
-    assert.match(clean, /<a href="https:\/\/example.com" target="_blank" rel="noreferrer">Docs<\/a>/);
+    assert.match(clean, /<a href="https:\/\/example.com" target="_blank" rel="noopener noreferrer">Docs<\/a>/);
     assert.match(clean, /<div>Text<\/div>/);
     assert.equal(clean.includes('script'), false);
     assert.equal(clean.includes('alert(1)'), false, 'script and event contents are removed');
@@ -183,8 +183,8 @@ test('sanitizeNoteHtml only keeps safe link targets', () => {
 
     assert.ok(clean.indexOf('<a>bad</a>') !== -1);
     assert.ok(clean.indexOf('<a>relative</a>') !== -1);
-    assert.match(clean, /<a href="mailto:team@example.org" target="_blank" rel="noreferrer">team<\/a>/);
-    assert.match(clean, /<a href="https:\/\/x.test\/\?a=1&amp;b=2" target="_blank" rel="noreferrer">link<\/a>/);
+    assert.match(clean, /<a href="mailto:team@example.org" target="_blank" rel="noopener noreferrer">team<\/a>/);
+    assert.match(clean, /<a href="https:\/\/x.test\/\?a=1&amp;b=2" target="_blank" rel="noopener noreferrer">link<\/a>/);
     assert.equal(clean.includes('javascript:'), false);
     assert.equal(clean.includes('title='), false);
 });

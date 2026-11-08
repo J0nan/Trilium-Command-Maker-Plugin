@@ -394,7 +394,7 @@ function inferType(metavar, help) {
 const DEFAULT_PATTERNS = [
     /\(\s*defaults?\s*[:=]\s*([^()]*)\)/i,
     /\(\s*defaults?\s+(?!to\b)([^()]+?)\)/i,
-    /\bdefaults?\s+to\s+(?:(?:(\d+(?:\.\d+)?|\S+)|"([^"]*)"|'([^']*)'|`([^`]*)`))((?:[ \t]+[^\s,.;:](?:[^\s,.;:]*))*)/i,
+    /\bdefaults?\s+to\s+(?:(?:(\d+(?:\.\d+)?|\S+)|"([^"]*)"|'([^']*)'|`([^`]*)`))((?:[ \t]+[^\s,.;:]+)*)/i,
     /\bdefault\s*[:=]\s*(\S[^(]*?)(?=\s+when\b|\s+(?:can|must|may|is|to|only|or|if)\b|[.,;]|\s*$)/i
 ];
 

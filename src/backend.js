@@ -150,8 +150,9 @@ function beRun(params) {
 
     /**
      * Tool-file presets -> the JSON stored in the Presets note. Mirrors the
-     * frontend reader: entries need a name, values keep own primitive keys
-     * only, so a hand-edited file can never smuggle __proto__ into the note.
+     * frontend reader: entries need a name and values keep own primitive keys
+     * only, so a hand-edited file or a script call can never smuggle
+     * __proto__ or a nested object into the note.
      */
     function sanitisePresets(raw) {
         const out = [];
@@ -169,7 +170,8 @@ function beRun(params) {
                         continue;
                     }
                     const value = entry.values[key];
-                    if (value === null || typeof value === 'object' || typeof value === 'function') {
+                    const type = typeof value;
+                    if (type !== 'string' && type !== 'number' && type !== 'boolean') {
                         continue;
                     }
                     values[key] = value;
@@ -230,6 +232,20 @@ function beRun(params) {
         return nonEmpty(fallback) ? String(fallback) : '';
     }
 
+    /**
+     * Delete every note a failed multi-step action created, newest first. Only
+     * notes recorded by track() are touched, never a note that already existed.
+     */
+    function rollbackNotes(batch) {
+        for (let index = batch.length - 1; index >= 0; index -= 1) {
+            try {
+                batch[index].deleteNote();
+            } catch (ignored) {
+                // Best effort: the original failure is the one to report.
+            }
+        }
+    }
+
     /** Shared creation path for createTool, bootstrap seeding and the importer. */
     function createToolNote(toolsRoot, spec, fallbacks) {
         const batch = [];
@@ -238,13 +254,7 @@ function beRun(params) {
         try {
             return createToolNoteNotes(toolsRoot, spec, fallbacks);
         } catch (error) {
-            for (let index = batch.length - 1; index >= 0; index -= 1) {
-                try {
-                    batch[index].deleteNote();
-                } catch (ignored) {
-                    // Best effort: the original failure is the one to report.
-                }
-            }
+            rollbackNotes(batch);
             throw error;
         } finally {
             rollbackBatch = previousBatch;
@@ -524,17 +534,29 @@ function beRun(params) {
         }
         const noteIds = [];
         let skipped = 0;
-        for (let index = 0; index < specs.length; index += 1) {
-            const spec = specs[index] || {};
-            const flag = spec.flag;
-            if (nonEmpty(flag) && seenFlags.has(String(flag))) {
-                skipped += 1;
-                continue;
+        // One failed creation must not leave a half-imported option list
+        // behind, so every note this action creates is rolled back on error.
+        const batch = [];
+        const previousBatch = rollbackBatch;
+        rollbackBatch = batch;
+        try {
+            for (let index = 0; index < specs.length; index += 1) {
+                const spec = specs[index] || {};
+                const flag = spec.flag;
+                if (nonEmpty(flag) && seenFlags.has(String(flag))) {
+                    skipped += 1;
+                    continue;
+                }
+                if (nonEmpty(flag)) {
+                    seenFlags.add(String(flag));
+                }
+                noteIds.push(createOptionNote(location.folder, spec).noteId);
             }
-            if (nonEmpty(flag)) {
-                seenFlags.add(String(flag));
-            }
-            noteIds.push(createOptionNote(location.folder, spec).noteId);
+        } catch (error) {
+            rollbackNotes(batch);
+            throw error;
+        } finally {
+            rollbackBatch = previousBatch;
         }
         return { created: noteIds.length, skipped: skipped, capped: all.length - specs.length, noteIds: noteIds };
     }
@@ -553,7 +575,7 @@ function beRun(params) {
     }
 
     function setToolBase() {
-        const tool = requireNote(options.toolId, 'Tool note not found');
+        const tool = requireNote(options.toolId, text('back.errorToolNote', 'Tool note not found'));
         if (nonEmpty(options.base)) {
             tool.setLabel(labels.base, String(options.base));
         } else if (typeof tool.removeLabel === 'function') {
@@ -605,9 +627,9 @@ function beRun(params) {
         }
         const data = read.data;
         const name = nonEmpty(options.name) ? String(options.name) : 'Preset';
-        const values = options.values && typeof options.values === 'object' && !Array.isArray(options.values)
-            ? options.values
-            : {};
+        // Same sanitiser the reader applies: a preset written by a script can
+        // never persist nested objects or __proto__ keys into the note.
+        const values = sanitisePresets([{ name: name, values: options.values }])[0].values;
         let updated = false;
         for (let index = 0; index < data.presets.length; index += 1) {
             const entry = data.presets[index];

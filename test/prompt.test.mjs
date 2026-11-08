@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import I18n from '../src/i18n.js';
 import Prompt from '../src/prompt.js';
 
 test('the AI prompt describes the tool file shape and asks for JSON only', () => {
@@ -49,4 +50,36 @@ test('an empty or junk help text does not add an empty section', () => {
 
     assert.match(text, /<tool name>/i);
     assert.equal(text.includes('Tool name: \n'), false);
+});
+
+/**
+ * The schema example is the one block a model is asked to imitate verbatim,
+ * so it must stay machine-readable whatever the active translation does.
+ */
+function exampleJson(text) {
+    const start = text.indexOf('{\n  "kind"');
+    assert.ok(start !== -1, 'the prompt carries the example document');
+    const end = text.indexOf('\n}', start);
+    assert.ok(end !== -1, 'the example document is closed');
+    return JSON.parse(text.slice(start, end + 2));
+}
+
+test('the example tool file in the prompt is valid JSON', () => {
+    const parsed = exampleJson(Prompt.buildToolPrompt());
+    assert.equal(parsed.kind, 'command-maker-tool');
+    assert.equal(parsed.version, 2);
+    assert.equal(parsed.tool.options[0].type, 'path');
+});
+
+test('a translation with quotes cannot break the example tool file', () => {
+    const key = 'prompt.schemaTitle';
+    const catalogue = I18n.DICTIONARIES.en;
+    const original = catalogue[key];
+    try {
+        catalogue[key] = '<command name, e.g. "git commit">';
+        const parsed = exampleJson(Prompt.buildToolPrompt());
+        assert.equal(parsed.tool.title, '<command name, e.g. "git commit">');
+    } finally {
+        catalogue[key] = original;
+    }
 });

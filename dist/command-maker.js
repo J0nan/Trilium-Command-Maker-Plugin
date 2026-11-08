@@ -55,6 +55,8 @@ const EN = {
     'ui.toolsFolder': 'Tools folder',
     'ui.repository': 'Repository',
     'ui.language': 'Language',
+    'lang.en': 'English',
+    'lang.es': 'Español',
     'ui.checkUpdates': 'Check for updates',
     'ui.versionMenu': 'Version and settings',
     'ui.loading': 'Loading…',
@@ -463,6 +465,8 @@ const ES = {
     'ui.toolsFolder': 'Carpeta de herramientas',
     'ui.repository': 'Repositorio',
     'ui.language': 'Idioma',
+    'lang.en': 'English',
+    'lang.es': 'Español',
     'ui.checkUpdates': 'Buscar actualizaciones',
     'ui.versionMenu': 'Versión y ajustes',
     'ui.loading': 'Cargando…',
@@ -928,7 +932,7 @@ const BACKEND_KEYS = [
     'back.toolContent',
     'back.errorToolsRoot', 'back.errorToolNote', 'back.errorOptionNote',
     'back.errorSettingsNote', 'back.errorNotAnOptionPrefix',
-    'back.errorNoteNotFound', 'back.errorNoteNotFoundPrefix',
+    'back.errorNoteNotFound',
     'back.errorPresetsSave', 'back.errorPresetsDelete',
     'back.errorUnknownActionPrefix'
 ];
@@ -1061,7 +1065,12 @@ function compareOptions(left, right) {
     if (left.title !== right.title) {
         return String(left.title) < String(right.title) ? -1 : 1;
     }
-    return String(left.noteId) < String(right.noteId) ? -1 : 1;
+    const leftId = String(left.noteId);
+    const rightId = String(right.noteId);
+    if (leftId === rightId) {
+        return 0;
+    }
+    return leftId < rightId ? -1 : 1;
 }
 
 function formatValue(option, value) {
@@ -1095,21 +1104,24 @@ function renderCommand(definition, values) {
     const options = Array.isArray(safeDefinition.options) ? safeDefinition.options : [];
     const valueMap = values || {};
 
-    const byPlaceholder = {};
+    const inlineNames = placeholderNames(base);
+
+    // A Map, like every other name-keyed structure in this codebase: base
+    // placeholders are user text, so `{{constructor}}` or `{{__proto__}}` must
+    // stay an ordinary name instead of resolving to an Object.prototype member.
+    const byPlaceholder = new Map();
     for (const option of options) {
-        if (option && option.placeholder && !byPlaceholder[option.placeholder]) {
-            byPlaceholder[option.placeholder] = option;
+        if (option && option.placeholder && !byPlaceholder.has(option.placeholder)) {
+            byPlaceholder.set(option.placeholder, option);
         }
     }
-
-    const inlineNames = placeholderNames(base);
 
     PLACEHOLDER_RE.lastIndex = 0;
     const substituted = base.replace(PLACEHOLDER_RE, function (match, name) {
         if (match.charAt(0) === '\\') {
             return match.slice(1);
         }
-        const option = byPlaceholder[name];
+        const option = byPlaceholder.get(name);
         const key = option ? valueKey(option) : 'ph:' + name;
         const value = valueMap[key];
         if (isEmpty(value)) {
@@ -1193,13 +1205,11 @@ function renderCommand(definition, values) {
 module.exports = {
     EXTRA_KEY,
     slugify,
-    quote,
     isEmpty,
     isTruthyFlag,
     placeholderNames,
     valueKey,
     compareOptions,
-    formatValue,
     renderCommand
 };
 });
@@ -1600,7 +1610,7 @@ function inferType(metavar, help) {
 const DEFAULT_PATTERNS = [
     /\(\s*defaults?\s*[:=]\s*([^()]*)\)/i,
     /\(\s*defaults?\s+(?!to\b)([^()]+?)\)/i,
-    /\bdefaults?\s+to\s+(?:(?:(\d+(?:\.\d+)?|\S+)|"([^"]*)"|'([^']*)'|`([^`]*)`))((?:[ \t]+[^\s,.;:](?:[^\s,.;:]*))*)/i,
+    /\bdefaults?\s+to\s+(?:(?:(\d+(?:\.\d+)?|\S+)|"([^"]*)"|'([^']*)'|`([^`]*)`))((?:[ \t]+[^\s,.;:]+)*)/i,
     /\bdefault\s*[:=]\s*(\S[^(]*?)(?=\s+when\b|\s+(?:can|must|may|is|to|only|or|if)\b|[.,;]|\s*$)/i
 ];
 
@@ -2401,7 +2411,7 @@ function sanitizeNoteHtml(html) {
                 : '';
             return href === ''
                 ? '<a>'
-                : '<a href="' + escapeAttribute(href) + '" target="_blank" rel="noreferrer">';
+                : '<a href="' + escapeAttribute(href) + '" target="_blank" rel="noopener noreferrer">';
         }
         return '<' + tag + '>';
     }).replace(TRAILING_UNCLOSED_TAG_RE, '');
@@ -2520,7 +2530,8 @@ function normalisePresets(raw) {
                     continue;
                 }
                 const value = entry.values[key];
-                if (value === null || typeof value === 'object' || typeof value === 'function') {
+                const type = typeof value;
+                if (type !== 'string' && type !== 'number' && type !== 'boolean') {
                     continue;
                 }
                 values[key] = value;
@@ -2748,40 +2759,38 @@ function schema() {
     const whatIs = I18n.t('model.headingWhatIs');
     const official = I18n.t('model.headingOfficial');
     const useful = I18n.t('model.headingUseful');
-    return [
-        '{',
-        '  "kind": "command-maker-tool",',
-        '  "version": 2,',
-        '  "tool": {',
-        '    "title": "' + I18n.t('prompt.schemaTitle') + '",',
-        '    "category": "' + I18n.t('prompt.schemaCategory') + '",',
-        '    "base": "' + I18n.t('prompt.schemaBase') + '",',
-        '    "description": "' + I18n.t('prompt.schemaDescription') + '",',
-        '    "content": "<h2>' + whatIs + '</h2><p>...</p><h2>' + official
-            + '</h2><ul><li><a href=\\"https://...\\">...</a></li></ul><h2>' + useful
-            + '</h2><ul><li><a href=\\"https://...\\">...</a></li></ul>",',
-        '    "install": "' + I18n.t('prompt.schemaInstall') + '",',
-        '    "usage": "' + I18n.t('prompt.schemaUsage') + '",',
-        '    "help": "' + I18n.t('prompt.schemaHelp') + '",',
-        '    "options": [',
-        '      {',
-        '        "label": "' + I18n.t('prompt.schemaOptionLabel') + '",',
-        '        "flag": "-i",',
-        '        "help": "' + I18n.t('prompt.schemaOptionHelp') + '",',
-        '        "type": "path",',
-        '        "values": [],',
-        '        "default": "",',
-        '        "required": true,',
-        '        "mode": "flag",',
-        '        "placeholder": "input",',
-        '        "order": 10,',
-        '        "quote": "none",',
-        '        "sep": " "',
-        '      }',
-        '    ]',
-        '  }',
-        '}'
-    ].join('\n');
+    // Built as data and serialized: a translation that contains a quote must
+    // never turn the example into invalid JSON.
+    return JSON.stringify({
+        kind: 'command-maker-tool',
+        version: 2,
+        tool: {
+            title: I18n.t('prompt.schemaTitle'),
+            category: I18n.t('prompt.schemaCategory'),
+            base: I18n.t('prompt.schemaBase'),
+            description: I18n.t('prompt.schemaDescription'),
+            content: '<h2>' + whatIs + '</h2><p>...</p><h2>' + official
+                + '</h2><ul><li><a href="https://...">...</a></li></ul><h2>' + useful
+                + '</h2><ul><li><a href="https://...">...</a></li></ul>',
+            install: I18n.t('prompt.schemaInstall'),
+            usage: I18n.t('prompt.schemaUsage'),
+            help: I18n.t('prompt.schemaHelp'),
+            options: [{
+                label: I18n.t('prompt.schemaOptionLabel'),
+                flag: '-i',
+                help: I18n.t('prompt.schemaOptionHelp'),
+                type: 'path',
+                values: [],
+                default: '',
+                required: true,
+                mode: 'flag',
+                placeholder: 'input',
+                order: 10,
+                quote: 'none',
+                sep: ' '
+            }]
+        }
+    }, null, 2);
 }
 
 function rules() {
@@ -3538,11 +3547,11 @@ const CSS = [
     '.cm-filter{width:100%;box-sizing:border-box;margin-bottom:4px;}',
     '.cm-form{display:flex;flex-direction:column;gap:6px;margin-bottom:10px;}',
     '.cm-control{padding:6px 8px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--input-background-color,#fafafa);color:inherit;font:inherit;box-sizing:border-box;}',
-    ':root .cm-control.cm-select{appearance:none;-webkit-appearance:none;background-color:var(--input-background-color);background-image:var(--select-arrow-svg,url(\'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="none" stroke="%23888888" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m2 5 6 6 6-6"/></svg>\'));background-position:right 0.75rem center;background-size:15px 20px;background-repeat:no-repeat;padding-inline-end:calc(15px + 1.5rem);}',
-    ':root .cm-control.cm-select:hover{background-color:var(--input-hover-background);color:var(--input-hover-color,inherit);}',
-    ':root .cm-control.cm-select:focus{background-color:var(--select-focus-background);color:var(--select-focus-text-color,inherit);}',
-    ':root .cm-preview{width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid var(--main-border-color,#ccc);background:var(--input-background-color);color:inherit;font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:13px;resize:vertical;}',
-    ':root .cm-preview:hover,:root .cm-preview:focus{background:var(--input-background-color);color:inherit;}',
+    ':root .cm-control.cm-select{appearance:none;-webkit-appearance:none;background-color:var(--input-background-color,#fafafa);background-image:var(--select-arrow-svg,url(\'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="none" stroke="%23888888" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m2 5 6 6 6-6"/></svg>\'));background-position:right 0.75rem center;background-size:15px 20px;background-repeat:no-repeat;padding-inline-end:calc(15px + 1.5rem);}',
+    ':root .cm-control.cm-select:hover{background-color:var(--input-hover-background,#eef2ff);color:var(--input-hover-color,inherit);}',
+    ':root .cm-control.cm-select:focus{background-color:var(--select-focus-background,#eef2ff);color:var(--select-focus-text-color,inherit);}',
+    ':root .cm-preview{width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid var(--main-border-color,#ccc);background:var(--input-background-color,#fafafa);color:inherit;font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:13px;resize:vertical;}',
+    ':root .cm-preview:hover,:root .cm-preview:focus{background:var(--input-background-color,#fafafa);color:inherit;}',
     '.cm-warnings{display:flex;flex-direction:column;gap:4px;margin-top:6px;}',
     '.cm-warning{color:#b45309;font-size:12px;}',
     '.cm-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0;}',
@@ -4086,8 +4095,9 @@ function beRun(params) {
 
     /**
      * Tool-file presets -> the JSON stored in the Presets note. Mirrors the
-     * frontend reader: entries need a name, values keep own primitive keys
-     * only, so a hand-edited file can never smuggle __proto__ into the note.
+     * frontend reader: entries need a name and values keep own primitive keys
+     * only, so a hand-edited file or a script call can never smuggle
+     * __proto__ or a nested object into the note.
      */
     function sanitisePresets(raw) {
         const out = [];
@@ -4105,7 +4115,8 @@ function beRun(params) {
                         continue;
                     }
                     const value = entry.values[key];
-                    if (value === null || typeof value === 'object' || typeof value === 'function') {
+                    const type = typeof value;
+                    if (type !== 'string' && type !== 'number' && type !== 'boolean') {
                         continue;
                     }
                     values[key] = value;
@@ -4166,6 +4177,20 @@ function beRun(params) {
         return nonEmpty(fallback) ? String(fallback) : '';
     }
 
+    /**
+     * Delete every note a failed multi-step action created, newest first. Only
+     * notes recorded by track() are touched, never a note that already existed.
+     */
+    function rollbackNotes(batch) {
+        for (let index = batch.length - 1; index >= 0; index -= 1) {
+            try {
+                batch[index].deleteNote();
+            } catch (ignored) {
+                // Best effort: the original failure is the one to report.
+            }
+        }
+    }
+
     /** Shared creation path for createTool, bootstrap seeding and the importer. */
     function createToolNote(toolsRoot, spec, fallbacks) {
         const batch = [];
@@ -4174,13 +4199,7 @@ function beRun(params) {
         try {
             return createToolNoteNotes(toolsRoot, spec, fallbacks);
         } catch (error) {
-            for (let index = batch.length - 1; index >= 0; index -= 1) {
-                try {
-                    batch[index].deleteNote();
-                } catch (ignored) {
-                    // Best effort: the original failure is the one to report.
-                }
-            }
+            rollbackNotes(batch);
             throw error;
         } finally {
             rollbackBatch = previousBatch;
@@ -4460,17 +4479,29 @@ function beRun(params) {
         }
         const noteIds = [];
         let skipped = 0;
-        for (let index = 0; index < specs.length; index += 1) {
-            const spec = specs[index] || {};
-            const flag = spec.flag;
-            if (nonEmpty(flag) && seenFlags.has(String(flag))) {
-                skipped += 1;
-                continue;
+        // One failed creation must not leave a half-imported option list
+        // behind, so every note this action creates is rolled back on error.
+        const batch = [];
+        const previousBatch = rollbackBatch;
+        rollbackBatch = batch;
+        try {
+            for (let index = 0; index < specs.length; index += 1) {
+                const spec = specs[index] || {};
+                const flag = spec.flag;
+                if (nonEmpty(flag) && seenFlags.has(String(flag))) {
+                    skipped += 1;
+                    continue;
+                }
+                if (nonEmpty(flag)) {
+                    seenFlags.add(String(flag));
+                }
+                noteIds.push(createOptionNote(location.folder, spec).noteId);
             }
-            if (nonEmpty(flag)) {
-                seenFlags.add(String(flag));
-            }
-            noteIds.push(createOptionNote(location.folder, spec).noteId);
+        } catch (error) {
+            rollbackNotes(batch);
+            throw error;
+        } finally {
+            rollbackBatch = previousBatch;
         }
         return { created: noteIds.length, skipped: skipped, capped: all.length - specs.length, noteIds: noteIds };
     }
@@ -4489,7 +4520,7 @@ function beRun(params) {
     }
 
     function setToolBase() {
-        const tool = requireNote(options.toolId, 'Tool note not found');
+        const tool = requireNote(options.toolId, text('back.errorToolNote', 'Tool note not found'));
         if (nonEmpty(options.base)) {
             tool.setLabel(labels.base, String(options.base));
         } else if (typeof tool.removeLabel === 'function') {
@@ -4541,9 +4572,9 @@ function beRun(params) {
         }
         const data = read.data;
         const name = nonEmpty(options.name) ? String(options.name) : 'Preset';
-        const values = options.values && typeof options.values === 'object' && !Array.isArray(options.values)
-            ? options.values
-            : {};
+        // Same sanitiser the reader applies: a preset written by a script can
+        // never persist nested objects or __proto__ keys into the note.
+        const values = sanitisePresets([{ name: name, values: options.values }])[0].values;
         let updated = false;
         for (let index = 0; index < data.presets.length; index += 1) {
             const entry = data.presets[index];
@@ -4717,7 +4748,7 @@ const I18n = __require("i18n");
 const CODE_COPY_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 2H10c-1.103 0-2 .897-2 2v4H4c-1.103 0-2 .897-2 2v10c0 1.103.897 2 2 2h10c1.103 0 2-.897 2-2v-4h4c1.103 0 2-.897 2-2V4c0-1.103-.897-2-2-2zM4 20V10h10l.002 10H4zm16-6h-4v-4c0-1.103-.897-2-2-2h-4V4h10v10z"></path></svg>';
 
 function codeCopyButton() {
-    const label = I18n.t('ui.copy');
+    const label = Sections.escapeHtml(I18n.t('ui.copy'));
     return '<button type="button" class="cm-code-copy" title="' + label + '" aria-label="' + label + '">' + CODE_COPY_ICON + '</button>';
 }
 
@@ -4878,7 +4909,7 @@ function openPalette(controller, options) {
     repoLink.textContent = I18n.t('ui.repository');
     repoLink.href = controller.repository();
     repoLink.target = '_blank';
-    repoLink.rel = 'noreferrer';
+    repoLink.rel = 'noopener noreferrer';
     footer.appendChild(newToolButton);
     footer.appendChild(importToolButton);
     footer.appendChild(importButton);
@@ -4959,9 +4990,10 @@ function openPalette(controller, options) {
         menu.appendChild(Dom.el('div', 'cm-menu-sep'));
         menu.appendChild(Dom.el('div', 'cm-menu-title', I18n.t('ui.language')));
 
-        [['en', 'English'], ['es', 'Español']].forEach(function (pair) {
-            const active = I18n.getLocale() === pair[0];
-            const item = Dom.el('button', 'cm-menu-item cm-menu-radio' + (active ? ' is-checked' : ''), pair[1]);
+        // Driven by the active catalog: adding a language never needs a UI edit.
+        I18n.LOCALES.forEach(function (code) {
+            const active = I18n.getLocale() === code;
+            const item = Dom.el('button', 'cm-menu-item cm-menu-radio' + (active ? ' is-checked' : ''), I18n.t('lang.' + code));
             item.type = 'button';
             item.setAttribute('role', 'menuitemradio');
             item.setAttribute('aria-checked', active ? 'true' : 'false');
@@ -4974,7 +5006,7 @@ function openPalette(controller, options) {
                     closeMenu();
                     return;
                 }
-                await controller.setLanguage(pair[0]);
+                await controller.setLanguage(code);
                 remount();
             }, notify));
             menu.appendChild(item);
@@ -5032,7 +5064,7 @@ function openPalette(controller, options) {
             setStatus(I18n.t('status.updateError', { version: info.current, error: info.error }), true);
             return;
         }
-        if (info.latest && info.latest !== info.current) {
+        if (info.outdated && info.latest) {
             versionLabel.textContent = 'v' + info.current + ' → v' + info.latest;
             versionButton.title = I18n.t('status.installedLatest', { current: info.current, latest: info.latest });
         }
@@ -5051,9 +5083,10 @@ function openPalette(controller, options) {
     function button(label, handler, className) {
         const node = Dom.el('button', 'cm-button' + (className ? ' ' + className : ''), label);
         node.type = 'button';
+        const listener = guarded(handler, notify);
         node.addEventListener('click', function (event) {
             event.preventDefault();
-            guarded(handler, notify).call(node, event);
+            listener.call(node, event);
         });
         return node;
     }
@@ -5621,7 +5654,7 @@ function openPalette(controller, options) {
             anchor.textContent = link.text;
             anchor.href = link.href;
             anchor.target = '_blank';
-            anchor.rel = 'noreferrer';
+            anchor.rel = 'noopener noreferrer';
             block.appendChild(anchor);
         });
         return block;
@@ -6445,13 +6478,13 @@ function openPalette(controller, options) {
         bodyNode.appendChild(idRow);
 
         let root = null;
-        guarded(async function () {
-            root = await controller.currentToolsRoot();
+        controller.currentToolsRoot().then(function (value) {
+            root = value;
             info.textContent = root
                 ? I18n.t('toolsFolder.current', { title: root.title, id: root.noteId })
                 : I18n.t('toolsFolder.none');
             openFolder.disabled = !root;
-        }, notify)();
+        }, notify);
 
         active.addEventListener('click', guarded(async function () {
             await controller.useActiveNoteAsToolsRoot();

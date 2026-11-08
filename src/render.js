@@ -105,7 +105,12 @@ function compareOptions(left, right) {
     if (left.title !== right.title) {
         return String(left.title) < String(right.title) ? -1 : 1;
     }
-    return String(left.noteId) < String(right.noteId) ? -1 : 1;
+    const leftId = String(left.noteId);
+    const rightId = String(right.noteId);
+    if (leftId === rightId) {
+        return 0;
+    }
+    return leftId < rightId ? -1 : 1;
 }
 
 function formatValue(option, value) {
@@ -139,21 +144,24 @@ function renderCommand(definition, values) {
     const options = Array.isArray(safeDefinition.options) ? safeDefinition.options : [];
     const valueMap = values || {};
 
-    const byPlaceholder = {};
+    const inlineNames = placeholderNames(base);
+
+    // A Map, like every other name-keyed structure in this codebase: base
+    // placeholders are user text, so `{{constructor}}` or `{{__proto__}}` must
+    // stay an ordinary name instead of resolving to an Object.prototype member.
+    const byPlaceholder = new Map();
     for (const option of options) {
-        if (option && option.placeholder && !byPlaceholder[option.placeholder]) {
-            byPlaceholder[option.placeholder] = option;
+        if (option && option.placeholder && !byPlaceholder.has(option.placeholder)) {
+            byPlaceholder.set(option.placeholder, option);
         }
     }
-
-    const inlineNames = placeholderNames(base);
 
     PLACEHOLDER_RE.lastIndex = 0;
     const substituted = base.replace(PLACEHOLDER_RE, function (match, name) {
         if (match.charAt(0) === '\\') {
             return match.slice(1);
         }
-        const option = byPlaceholder[name];
+        const option = byPlaceholder.get(name);
         const key = option ? valueKey(option) : 'ph:' + name;
         const value = valueMap[key];
         if (isEmpty(value)) {
@@ -237,12 +245,10 @@ function renderCommand(definition, values) {
 module.exports = {
     EXTRA_KEY,
     slugify,
-    quote,
     isEmpty,
     isTruthyFlag,
     placeholderNames,
     valueKey,
     compareOptions,
-    formatValue,
     renderCommand
 };

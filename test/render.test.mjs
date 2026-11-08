@@ -109,6 +109,11 @@ test('an unknown quote mode falls back to no quoting', () => {
     assert.equal(result.command, 'run a b');
 });
 
+test('comparing an option with itself reports equality', () => {
+    const left = option({ placeholder: 'a', flag: '--a' });
+    assert.equal(Render.compareOptions(left, left), 0);
+});
+
 test('non-numeric values are rejected for number options', () => {
     const def = definition('run', [option({ type: 'number', placeholder: 'n', flag: '-n' })]);
     const result = Render.renderCommand(def, { 'note:n1': 'abc' });
@@ -130,6 +135,16 @@ test('an unresolved placeholder warns and leaves no gap', () => {
     const result = Render.renderCommand(def, {});
     assert.equal(result.command, 'run');
     assert.equal(result.warnings[0].code, 'missing-placeholder');
+});
+
+test('a placeholder named like an Object member stays an ordinary name', () => {
+    const def = definition('run {{constructor}} {{__proto__}}');
+    const result = Render.renderCommand(def, {});
+    assert.equal(result.command, 'run');
+    assert.equal(result.warnings.length, 2);
+    assert.ok(result.warnings.every(function (warning) {
+        return warning.code === 'missing-placeholder';
+    }));
 });
 
 test('extra arguments are inserted after the base and before flags', () => {

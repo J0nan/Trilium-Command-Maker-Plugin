@@ -15,40 +15,38 @@ function schema() {
     const whatIs = I18n.t('model.headingWhatIs');
     const official = I18n.t('model.headingOfficial');
     const useful = I18n.t('model.headingUseful');
-    return [
-        '{',
-        '  "kind": "command-maker-tool",',
-        '  "version": 2,',
-        '  "tool": {',
-        '    "title": "' + I18n.t('prompt.schemaTitle') + '",',
-        '    "category": "' + I18n.t('prompt.schemaCategory') + '",',
-        '    "base": "' + I18n.t('prompt.schemaBase') + '",',
-        '    "description": "' + I18n.t('prompt.schemaDescription') + '",',
-        '    "content": "<h2>' + whatIs + '</h2><p>...</p><h2>' + official
-            + '</h2><ul><li><a href=\\"https://...\\">...</a></li></ul><h2>' + useful
-            + '</h2><ul><li><a href=\\"https://...\\">...</a></li></ul>",',
-        '    "install": "' + I18n.t('prompt.schemaInstall') + '",',
-        '    "usage": "' + I18n.t('prompt.schemaUsage') + '",',
-        '    "help": "' + I18n.t('prompt.schemaHelp') + '",',
-        '    "options": [',
-        '      {',
-        '        "label": "' + I18n.t('prompt.schemaOptionLabel') + '",',
-        '        "flag": "-i",',
-        '        "help": "' + I18n.t('prompt.schemaOptionHelp') + '",',
-        '        "type": "path",',
-        '        "values": [],',
-        '        "default": "",',
-        '        "required": true,',
-        '        "mode": "flag",',
-        '        "placeholder": "input",',
-        '        "order": 10,',
-        '        "quote": "none",',
-        '        "sep": " "',
-        '      }',
-        '    ]',
-        '  }',
-        '}'
-    ].join('\n');
+    // Built as data and serialized: a translation that contains a quote must
+    // never turn the example into invalid JSON.
+    return JSON.stringify({
+        kind: 'command-maker-tool',
+        version: 2,
+        tool: {
+            title: I18n.t('prompt.schemaTitle'),
+            category: I18n.t('prompt.schemaCategory'),
+            base: I18n.t('prompt.schemaBase'),
+            description: I18n.t('prompt.schemaDescription'),
+            content: '<h2>' + whatIs + '</h2><p>...</p><h2>' + official
+                + '</h2><ul><li><a href="https://...">...</a></li></ul><h2>' + useful
+                + '</h2><ul><li><a href="https://...">...</a></li></ul>',
+            install: I18n.t('prompt.schemaInstall'),
+            usage: I18n.t('prompt.schemaUsage'),
+            help: I18n.t('prompt.schemaHelp'),
+            options: [{
+                label: I18n.t('prompt.schemaOptionLabel'),
+                flag: '-i',
+                help: I18n.t('prompt.schemaOptionHelp'),
+                type: 'path',
+                values: [],
+                default: '',
+                required: true,
+                mode: 'flag',
+                placeholder: 'input',
+                order: 10,
+                quote: 'none',
+                sep: ' '
+            }]
+        }
+    }, null, 2);
 }
 
 function rules() {
