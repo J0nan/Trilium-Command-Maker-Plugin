@@ -848,14 +848,6 @@ function buildOption(source) {
 }
 
 /**
- * Loose JSON entry (or hand-built object) -> canonical option.
- * @returns {object|null} null when the entry has no usable flag
- */
-function normalizeOption(entry) {
-    return buildOption(entry);
-}
-
-/**
  * One trimmed help line -> { flags, metavar, negated, description, loose }.
  * `loose` marks a line whose flag was followed by prose the parser had to
  * guess at, which is reported as unparsed. Null when not an option line.
@@ -1203,7 +1195,7 @@ module.exports = {
     decodeEntities,
     stripHtml,
     inferType,
-    normalizeOption,
+    buildOption,
     parseHelpText,
     parseJsonOptions,
     parseMarkdownTable,
@@ -1789,8 +1781,7 @@ module.exports = {
     TOOL_KIND,
     FILE_VERSION,
     MAX_OPTIONS,
-    normaliseOption,
-    normaliseTool,
+    normalisePresets,
     buildToolFile,
     parseToolFile
 };
@@ -2331,7 +2322,7 @@ function optionNotesText(snapshots) {
 
 /**
  * Everything a tool can be found by. One definition on purpose: the index and
- * `matches` must never disagree about what is searchable.
+ * `matchesText` over this haystack must never disagree about what is searchable.
  */
 function searchableText(snapshot) {
     const safe = snapshot || {};
@@ -2363,10 +2354,6 @@ function matchesText(haystack, query) {
     return needle.split(/\s+/).every(function (term) {
         return text.indexOf(term) !== -1;
     });
-}
-
-function matches(definition, query) {
-    return matchesText(searchableText(definition), query);
 }
 
 /** Content template for a new tool note: exactly the three H2 sections. */
@@ -2502,7 +2489,6 @@ module.exports = {
     defaultValueMap,
     valuesFromExample,
     tokenizeCommand,
-    matches,
     matchesText,
     searchableText,
     optionNotesText,
@@ -2627,7 +2613,7 @@ const CSS = [
     '.cm-example{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:6px;}',
     '.cm-example:hover{background:var(--hover-item-background-color,#00000010);}',
     '.cm-example-text{flex:1;min-width:0;font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;overflow-wrap:anywhere;}',
-    '.cm-fold summary{cursor:pointer;font-size:12px;text-transform:uppercase;letter-spacing:.06em;opacity:.7;}',
+    '.cm-fold-block summary{cursor:pointer;font-size:12px;text-transform:uppercase;letter-spacing:.06em;opacity:.7;}',
     '.cm-pre{margin:8px 0 0;padding:10px;border-radius:8px;background:var(--input-background-color,#fafafa);border:1px solid var(--main-border-color,#ddd);font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;white-space:pre-wrap;overflow-x:auto;}',
     '.cm-install{font-size:13px;line-height:1.55;user-select:text;}',
     '.cm-install p{margin:0 0 8px;}',
@@ -2989,7 +2975,7 @@ __def("backend", function (module, exports, __require) {
  * being duplicated here. Consequently `beRun` must never reference a
  * module-scope binding and dispatches on literal action strings only.
  *
- * Actions: bootstrap | createCategory | createTool | importTool | addOption |
+ * Actions: bootstrap | createTool | importTool | addOption |
  * importOptions | deleteOption | setToolBase | setToolsRoot | savePreset |
  * deletePreset | ensureTab
  */
@@ -3417,12 +3403,6 @@ function beRun(params) {
         return { rootId: root.noteId, toolsRootId: toolsRoot.noteId, seeded: seeded };
     }
 
-    function createCategory() {
-        const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
-        const name = nonEmpty(options.name) ? String(options.name) : 'Uncategorized';
-        return { noteId: ensureCategory(toolsRoot, name).noteId };
-    }
-
     function createTool() {
         const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
         const note = createToolNote(
@@ -3647,8 +3627,6 @@ function beRun(params) {
     switch (options.action) {
         case 'bootstrap':
             return bootstrap();
-        case 'createCategory':
-            return createCategory();
         case 'createTool':
             return createTool();
         case 'importTool':
@@ -3781,6 +3759,10 @@ function openPalette(controller, options) {
 
     // Only the overlay is a singleton. The tab renderer is rendered by Trilium
     // next to a possibly open overlay, so it always mounts its own instance.
+    // The module-level `instance` dies with a bundle re-evaluation (Trilium
+    // re-runs this script when the plugin note is saved, in the same window).
+    // The window global is what lets the NEW module instance reuse the
+    // overlay the OLD one mounted, instead of stacking a second one.
     if (!embedded) {
         if (instance) {
             instance.focus();
@@ -5617,7 +5599,8 @@ async function refresh() {
             description: description,
             base: base,
             // Built once per refresh: search runs on every keystroke, and the
-            // haystack comes from the same definition `Model.matches` uses.
+            // haystack comes from the same definition Model.searchableText feeds
+            // to Model.matchesText.
             searchable: Model.searchableText({
                 title: note.title,
                 category: category,
@@ -5651,30 +5634,9 @@ function readPresetsContent(content) {
     if (!data || typeof data !== 'object' || !Array.isArray(data.presets)) {
         return { presets: [], invalid: true };
     }
-    const presets = [];
-    for (const entry of data.presets) {
-        if (!entry || typeof entry.name !== 'string') {
-            continue;
-        }
-        // Values are JSON, so copy only own primitive string keys: a hand-edited
-        // or generated preset must never add an own `__proto__` to the map that
-        // the palette later passes to Object.assign.
-        const values = {};
-        if (entry.values && typeof entry.values === 'object' && !Array.isArray(entry.values)) {
-            for (const key of Object.keys(entry.values)) {
-                if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
-                    continue;
-                }
-                const value = entry.values[key];
-                if (value === null || typeof value === 'object' || typeof value === 'function') {
-                    continue;
-                }
-                values[key] = value;
-            }
-        }
-        presets.push({ name: entry.name, values: values });
-    }
-    return { presets: presets, invalid: false };
+    // One filter for every preset reader and writer: entries need a name,
+    // values keep own primitive keys only (src/toolfile.js normalisePresets).
+    return { presets: ToolFile.normalisePresets(data.presets), invalid: false };
 }
 
 async function readNoteText(note) {
@@ -5790,7 +5752,9 @@ async function readRawContent(note) {
 /**
  * Read one tool into the portable file the palette writes to disk.
  * Raw note contents, the tool tags, the per-option note bodies and the
- * presets are kept so an export/import round trip loses nothing.
+ * presets are kept, so the file carries everything it claims; preset value
+ * keys bind to the original note IDs (see README: after import into a
+ * different instance the stored values may not line up with recreated options).
  */
 async function exportTool(noteId) {
     const entry = entriesById.get(noteId);

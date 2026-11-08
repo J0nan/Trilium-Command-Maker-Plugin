@@ -16,11 +16,19 @@ test('src/version.js and package.json agree', () => {
 });
 
 test('version metadata points at the repository', () => {
-    assert.match(Version.REPOSITORY, /^https:\/\/github\.com\//);
-    assert.ok(pkg.repository && pkg.repository.url.indexOf('Trilium-Command-Maker-Plugin') !== -1);
-    assert.ok(Version.LATEST_RELEASE_API.indexOf('https://api.github.com/repos/') === 0);
-    assert.ok(Version.LATEST_TAGS_API.indexOf('https://api.github.com/repos/') === 0);
-    assert.ok(Version.LATEST_RAW.indexOf('https://raw.githubusercontent.com/') === 0);
+    assert.ok(pkg.repository && pkg.repository.url, 'package.json declares a repository');
+    const slug = new URL(pkg.repository.url).pathname.replace(/^\/|\/$/g, '').replace(/\.git$/, '');
+    assert.ok(slug.length > 0, 'the repository URL names an owner and repository');
+    assert.ok(
+        Version.REPOSITORY.endsWith('/' + slug),
+        'the in-app Repository link matches package.json: ' + Version.REPOSITORY
+    );
+    for (const endpoint of [Version.LATEST_RELEASE_API, Version.LATEST_TAGS_API, Version.LATEST_RAW]) {
+        assert.ok(
+            endpoint.indexOf('/' + slug) !== -1,
+            'the update check reads the same repository the link opens: ' + endpoint
+        );
+    }
 });
 
 test('the bundle and installer carry the current version', () => {

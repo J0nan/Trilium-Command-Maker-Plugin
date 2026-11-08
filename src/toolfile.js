@@ -293,8 +293,7 @@ module.exports = {
     TOOL_KIND,
     FILE_VERSION,
     MAX_OPTIONS,
-    normaliseOption,
-    normaliseTool,
+    normalisePresets,
     buildToolFile,
     parseToolFile
 };

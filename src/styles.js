@@ -91,7 +91,7 @@ const CSS = [
     '.cm-example{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:6px;}',
     '.cm-example:hover{background:var(--hover-item-background-color,#00000010);}',
     '.cm-example-text{flex:1;min-width:0;font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;overflow-wrap:anywhere;}',
-    '.cm-fold summary{cursor:pointer;font-size:12px;text-transform:uppercase;letter-spacing:.06em;opacity:.7;}',
+    '.cm-fold-block summary{cursor:pointer;font-size:12px;text-transform:uppercase;letter-spacing:.06em;opacity:.7;}',
     '.cm-pre{margin:8px 0 0;padding:10px;border-radius:8px;background:var(--input-background-color,#fafafa);border:1px solid var(--main-border-color,#ddd);font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;white-space:pre-wrap;overflow-x:auto;}',
     '.cm-install{font-size:13px;line-height:1.55;user-select:text;}',
     '.cm-install p{margin:0 0 8px;}',

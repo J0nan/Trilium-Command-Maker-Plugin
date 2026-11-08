@@ -583,14 +583,6 @@ function buildOption(source) {
 }
 
 /**
- * Loose JSON entry (or hand-built object) -> canonical option.
- * @returns {object|null} null when the entry has no usable flag
- */
-function normalizeOption(entry) {
-    return buildOption(entry);
-}
-
-/**
  * One trimmed help line -> { flags, metavar, negated, description, loose }.
  * `loose` marks a line whose flag was followed by prose the parser had to
  * guess at, which is reported as unparsed. Null when not an option line.
@@ -938,7 +930,7 @@ module.exports = {
     decodeEntities,
     stripHtml,
     inferType,
-    normalizeOption,
+    buildOption,
     parseHelpText,
     parseJsonOptions,
     parseMarkdownTable,

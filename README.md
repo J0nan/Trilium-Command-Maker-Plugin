@@ -359,10 +359,11 @@ written in either case.
 
 - `src/model.js`, `src/render.js`, `src/parse.js`, `src/sections.js`,
   `src/toolfile.js`, `src/prompt.js` and `src/styles.js` are pure
-  and unit tested. `src/dom.js` is the thin wrapper that owns every touch of
-  the global `document`; it has no Trilium API dependency and is exercised
-  through the palette tests. `src/ui.js` is plain DOM — no JSX compile step, no Preact
-  coupling — and reads everything it needs from the runtime controller, so it
+  and unit tested. `src/dom.js` holds the shared DOM helpers (elements, styles,
+  clipboard, download, file reads); it has no Trilium API dependency and is
+  exercised through the palette tests. `src/ui.js` and `src/sourcePicker.js`
+  build their own elements directly on the `document`. UI code reads everything
+  it needs from the runtime controller, so it
   never touches the Trilium `api` global itself.
 - `src/sourcePicker.js` is the paste / active note / file panel shared by both
   import dialogs, so the two of them cannot drift apart.

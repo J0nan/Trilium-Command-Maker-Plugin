@@ -10,7 +10,7 @@
  * being duplicated here. Consequently `beRun` must never reference a
  * module-scope binding and dispatches on literal action strings only.
  *
- * Actions: bootstrap | createCategory | createTool | importTool | addOption |
+ * Actions: bootstrap | createTool | importTool | addOption |
  * importOptions | deleteOption | setToolBase | setToolsRoot | savePreset |
  * deletePreset | ensureTab
  */
@@ -438,12 +438,6 @@ function beRun(params) {
         return { rootId: root.noteId, toolsRootId: toolsRoot.noteId, seeded: seeded };
     }
 
-    function createCategory() {
-        const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
-        const name = nonEmpty(options.name) ? String(options.name) : 'Uncategorized';
-        return { noteId: ensureCategory(toolsRoot, name).noteId };
-    }
-
     function createTool() {
         const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
         const note = createToolNote(
@@ -668,8 +662,6 @@ function beRun(params) {
     switch (options.action) {
         case 'bootstrap':
             return bootstrap();
-        case 'createCategory':
-            return createCategory();
         case 'createTool':
             return createTool();
         case 'importTool':

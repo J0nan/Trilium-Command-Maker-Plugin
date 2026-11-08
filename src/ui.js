@@ -101,6 +101,10 @@ function openPalette(controller, options) {
 
     // Only the overlay is a singleton. The tab renderer is rendered by Trilium
     // next to a possibly open overlay, so it always mounts its own instance.
+    // The module-level `instance` dies with a bundle re-evaluation (Trilium
+    // re-runs this script when the plugin note is saved, in the same window).
+    // The window global is what lets the NEW module instance reuse the
+    // overlay the OLD one mounted, instead of stacking a second one.
     if (!embedded) {
         if (instance) {
             instance.focus();

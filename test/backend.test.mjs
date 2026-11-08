@@ -392,20 +392,24 @@ test('bootstrap keeps the settings note version current', () => {
     assert.equal(root.getLabelValue(labels.version), Version.VERSION, 'no version param leaves it alone');
 });
 
-test('createCategory is idempotent and validates the Tools root', () => {
+test('tools created in one category reuse it, and an unknown Tools root is refused', () => {
+    // The old createCategory backend action was unreachable production code;
+    // category reuse is what callers actually depend on, so it is pinned here.
     const api = createApi();
     const beRun = serialise(Backend.beRun, api);
     const { toolsRootId } = boot(api, beRun);
 
-    const first = beRun({ action: 'createCategory', labels, toolsRootId, name: 'Shell' });
-    const second = beRun({ action: 'createCategory', labels, toolsRootId, name: 'Shell' });
-    assert.equal(first.noteId, second.noteId, 'the same category is reused');
-    const category = api.getNote(first.noteId);
-    assert.equal(category.title, 'Shell');
-    assert.ok(category.hasLabel(labels.category));
+    const before = api.getNotesWithLabel(labels.category).length;
+    beRun({ action: 'createTool', labels, toolsRootId, category: 'Shell', title: 'ls', base: 'ls' });
+    beRun({ action: 'createTool', labels, toolsRootId, category: 'Shell', title: 'cp', base: 'cp' });
+    assert.equal(
+        api.getNotesWithLabel(labels.category).length,
+        before + 1,
+        'the second tool reused the Shell category'
+    );
 
     assert.throws(
-        () => beRun({ action: 'createCategory', labels, toolsRootId: 'missing', name: 'Shell' }),
+        () => beRun({ action: 'createTool', labels, toolsRootId: 'missing', title: 'x' }),
         /Tools root not found/
     );
 });
