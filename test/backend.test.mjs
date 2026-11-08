@@ -294,6 +294,73 @@ test('relocating the Tools folder never seeds the chosen note', () => {
     assert.equal(api.getNote(result.toolsRootId).hasLabel(labels.tools), false, 'the old root lost the label');
 });
 
+test('setToolsRoot keeps the pointer when removing the old label fails', () => {
+    const { api, beRun, result } = seedApi();
+    const userFolder = api.createNewNote({
+        parentNoteId: result.rootId,
+        title: 'My tools',
+        type: 'text',
+        content: ''
+    }).note;
+    const old = api.getNote(result.toolsRootId);
+    old.removeLabel = function () {
+        throw new Error('label store is busy');
+    };
+
+    assert.throws(() => beRun({
+        action: 'setToolsRoot',
+        labels,
+        noteId: userFolder.noteId,
+        oldToolsRootId: result.toolsRootId
+    }), 'the failure still surfaces to the caller');
+
+    assert.ok(
+        userFolder.hasLabel(labels.tools),
+        'the new root holds the pointer even when the old label removal fails'
+    );
+});
+
+test('createToolNote removes notes it already created when a later step throws', () => {
+    const { api, beRun, result } = seedApi();
+    const originalCreate = api.createNewNote;
+    let createCount = 0;
+    api.createNewNote = function (params) {
+        createCount += 1;
+        if (createCount === 3) {
+            throw new Error('database is busy');
+        }
+        return originalCreate.call(api, params);
+    };
+
+    assert.throws(() => beRun({
+        action: 'importTool',
+        labels,
+        toolsRootId: result.toolsRootId,
+        newToolNotes: Model.newToolNotes(),
+        tool: { title: 'partial', category: 'Partial cat', base: 'partial', options: [{ label: 'X', flag: '-x' }] }
+    }), 'the import failure surfaces');
+    api.createNewNote = originalCreate;
+
+    // Mirror Trilium semantics: deleted (moved-to-trash) notes drop out of label queries.
+    const aliveTools = api.getNotesWithLabel(labels.tool).filter((note) => !note.deleted);
+    assert.equal(
+        aliveTools.filter((note) => note.title === 'partial').length,
+        0,
+        'the half-created tool was cleaned up'
+    );
+    assert.equal(
+        api.getNotesWithLabel(labels.category)
+            .filter((entry) => entry.title === 'Partial cat' && !entry.deleted).length,
+        0,
+        'a category created for the failed tool is cleaned up too'
+    );
+    assert.equal(
+        aliveTools.length,
+        2,
+        'the seeded tools survive untouched'
+    );
+});
+
 test('bootstrap honours parentId and always ensures the Tools root', () => {
     const api = createApi();
     const beRun = serialise(Backend.beRun, api);

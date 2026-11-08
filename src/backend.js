@@ -48,6 +48,20 @@ function beRun(params) {
         return note;
     }
 
+    /**
+     * When set, every note created by the action below is recorded here, so a
+     * failed multi-step create can delete exactly the notes it made — never an
+     * existing category, folder or unrelated note.
+     */
+    let rollbackBatch = null;
+
+    function track(note) {
+        if (rollbackBatch) {
+            rollbackBatch.push(note);
+        }
+        return note;
+    }
+
     function findChildWithLabel(parent, name) {
         const children = parent.getChildNotes();
         for (let index = 0; index < children.length; index += 1) {
@@ -84,12 +98,12 @@ function beRun(params) {
         if (existing) {
             return existing;
         }
-        const note = api.createNewNote({
+        const note = track(api.createNewNote({
             parentNoteId: toolsRoot.noteId,
             title: name,
             type: 'text',
             content: ''
-        }).note;
+        }).note);
         note.setLabel(labels.category, '');
         return note;
     }
@@ -99,12 +113,12 @@ function beRun(params) {
         if (existing) {
             return existing;
         }
-        const note = api.createNewNote({
+        const note = track(api.createNewNote({
             parentNoteId: toolNote.noteId,
             title: 'Options',
             type: 'text',
             content: ''
-        }).note;
+        }).note);
         note.setLabel(labels.options, '');
         ensureIcon(note, icons.options);
         return note;
@@ -115,13 +129,13 @@ function beRun(params) {
         if (existing) {
             return existing;
         }
-        const note = api.createNewNote({
+        const note = track(api.createNewNote({
             parentNoteId: optionsFolder.noteId,
             title: 'Presets',
             type: 'code',
             mime: 'application/json',
             content: '{"v":1,"presets":[]}'
-        }).note;
+        }).note);
         note.setLabel(labels.presets, '');
         return note;
     }
@@ -206,17 +220,37 @@ function beRun(params) {
 
     /** Shared creation path for createTool, bootstrap seeding and the importer. */
     function createToolNote(toolsRoot, spec, fallbacks) {
+        const batch = [];
+        const previousBatch = rollbackBatch;
+        rollbackBatch = batch;
+        try {
+            return createToolNoteNotes(toolsRoot, spec, fallbacks);
+        } catch (error) {
+            for (let index = batch.length - 1; index >= 0; index -= 1) {
+                try {
+                    batch[index].deleteNote();
+                } catch (ignored) {
+                    // Best effort: the original failure is the one to report.
+                }
+            }
+            throw error;
+        } finally {
+            rollbackBatch = previousBatch;
+        }
+    }
+
+    function createToolNoteNotes(toolsRoot, spec, fallbacks) {
         const safeSpec = spec || {};
         const safeFallbacks = fallbacks || {};
         const categoryName = nonEmpty(safeSpec.category) ? String(safeSpec.category) : 'Uncategorized';
         const title = nonEmpty(safeSpec.title) ? String(safeSpec.title) : 'New tool';
         const category = ensureCategory(toolsRoot, categoryName);
-        const note = api.createNewNote({
+        const note = track(api.createNewNote({
             parentNoteId: category.noteId,
             title: title,
             type: 'text',
             content: nonEmpty(safeSpec.content) ? String(safeSpec.content) : defaultToolContent(safeFallbacks)
-        }).note;
+        }).note);
         note.setLabel(labels.tool, '');
         if (nonEmpty(safeSpec.base)) {
             note.setLabel(labels.base, String(safeSpec.base));
@@ -228,29 +262,29 @@ function beRun(params) {
             note.setLabel(labels.tags, String(safeSpec.tags));
         }
 
-        const install = api.createNewNote({
+        const install = track(api.createNewNote({
             parentNoteId: note.noteId,
             title: 'Install',
             type: 'text',
             content: childContent(safeSpec.install, safeFallbacks.install)
-        }).note;
+        }).note);
         install.setLabel(labels.install, '');
 
-        const usage = api.createNewNote({
+        const usage = track(api.createNewNote({
             parentNoteId: note.noteId,
             title: 'Usage',
             type: 'text',
             content: childContent(safeSpec.usage, safeFallbacks.usage)
-        }).note;
+        }).note);
         usage.setLabel(labels.usage, '');
 
-        const help = api.createNewNote({
+        const help = track(api.createNewNote({
             parentNoteId: note.noteId,
             title: 'Help',
             type: 'code',
             mime: 'text/x-sh',
             content: childContent(safeSpec.help, safeFallbacks.help)
-        }).note;
+        }).note);
         help.setLabel(labels.helpNote, '');
 
         ensureIcon(install, icons.install);
@@ -274,12 +308,12 @@ function beRun(params) {
     function createOptionNote(folder, spec) {
         const safe = spec || {};
         const title = nonEmpty(safe.label) ? String(safe.label) : 'Option';
-        const note = api.createNewNote({
+        const note = track(api.createNewNote({
             parentNoteId: folder.noteId,
             title: title,
             type: 'text',
             content: safe.content == null ? '' : String(safe.content)
-        }).note;
+        }).note);
         note.setLabel(labels.option, '');
         if (nonEmpty(safe.flag)) {
             note.setLabel(labels.flag, String(safe.flag));
@@ -512,15 +546,18 @@ function beRun(params) {
 
     function setToolsRoot() {
         const target = requireNote(options.noteId, 'Note not found');
+        // Set the new pointer first: if removing the label from the old root
+        // fails afterwards, the tools stay visible instead of losing the
+        // pointer and making the next bootstrap seed an empty folder.
+        target.setLabel(labels.tools, '');
+        // A folder the user picks is theirs: never seed examples into it.
+        target.setLabel(labels.seeded, '');
         if (options.oldToolsRootId && options.oldToolsRootId !== options.noteId) {
             const old = api.getNote(options.oldToolsRootId);
             if (old && typeof old.removeLabel === 'function') {
                 old.removeLabel(labels.tools);
             }
         }
-        target.setLabel(labels.tools, '');
-        // A folder the user picks is theirs: never seed examples into it.
-        target.setLabel(labels.seeded, '');
         return { ok: true };
     }
 
