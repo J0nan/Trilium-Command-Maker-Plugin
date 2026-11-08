@@ -1,5 +1,7 @@
 # Command Maker for Trilium
 
+**Language:** English · [Español](README.es.md)
+
 A TriliumNext plugin that turns your CLI tool notes into a command palette. Search a tool, read what it does, fill in its documented options, and get a runnable command you can edit, copy, insert, or save as a preset.
 
 ```
@@ -29,6 +31,7 @@ The installer is idempotent. It creates the `Command Maker` settings note, the `
 - **A command you can trust.** The preview assembles base, extra arguments and selected flags in order, quotes them for a POSIX shell, and lets you copy, insert into the editor or save as a preset.
 - **Import instead of retyping.** Paste `--help` output, JSON or a markdown table and preview every detected option before anything is written. Whole tools move in and out as one JSON file.
 - **Works as a tab.** **Open in tab** moves the same interface next to your notes instead of over them.
+- **English and Spanish.** The interface is translated into English and Spain Spanish. Pick the language in the footer selector; the choice is stored in the `cmLang` label of the settings note and applies immediately.
 
 ## Screenshots
 
