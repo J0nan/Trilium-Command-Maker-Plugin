@@ -30,16 +30,22 @@ test('the release workflow is manual and publishes both artifacts', () => {
 });
 
 test('every third-party action is pinned to a full commit SHA, not a mutable tag', () => {
-    const workflow = fs.readFileSync(workflowPath, 'utf8');
-    const uses = workflow.split(/\r?\n/).filter((line) => /^\s*uses:\s*\S/.test(line));
-    assert.ok(uses.length >= 3, 'the workflow runs the expected actions');
-    for (const line of uses) {
-        assert.match(
-            line,
-            /^\s*uses:\s*[\w./-]+@[0-9a-f]{40}( # v[\d.]+)?\s*$/,
-            'each uses: line is owner/repo@<40-hex-sha> with a human tag comment: ' + line
-        );
+    const workflowDir = path.join(root, '.github', 'workflows');
+    const workflows = fs.readdirSync(workflowDir).filter((name) => /\.ya?ml$/.test(name));
+    let uses = 0;
+    for (const name of workflows) {
+        const lines = fs.readFileSync(path.join(workflowDir, name), 'utf8').split(/\r?\n/)
+            .filter((line) => /^\s*uses:\s*\S/.test(line));
+        uses += lines.length;
+        for (const line of lines) {
+            assert.match(
+                line,
+                /^\s*uses:\s*[\w./-]+@[0-9a-f]{40}( # v[\d.]+)?\s*$/,
+                name + ': each uses: line is owner/repo@<40-hex-sha> with a human tag comment: ' + line
+            );
+        }
     }
+    assert.ok(uses >= 3, 'the workflows run the expected actions');
 });
 
 test('release versions are validated and ordered', () => {

@@ -310,6 +310,8 @@ npm run check     # both
 
 No dependencies, Node 20+. Network access is only used when you click the version in the palette to check for updates.
 
+CI (`.github/workflows/ci.yml`) runs `npm run check` on Node 20, 22 and 24, plus once on Windows, and fails when the committed `dist/` no longer matches a fresh build.
+
 ## Limitations
 
 - The palette indexes tools on open. Large trees make the first open slower.

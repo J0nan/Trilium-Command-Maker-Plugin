@@ -1,0 +1,49 @@
+name: CI
+
+# Every push and pull request runs the build, the test suite and a check that
+# the committed dist/ matches a fresh build. No dependencies to install: the
+# plugin ships with none.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node: 20
+          - os: ubuntu-latest
+            node: 22
+          - os: ubuntu-latest
+            node: 24
+          - os: windows-latest
+            node: 22
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Build and test
+        run: npm run check
+
+      # dist/ is committed because the release notes point at it; a stale
+      # copy would ship code that no longer matches src/.
+      - name: Fail when dist/ is stale
+        if: runner.os == 'Linux'
+        run: git diff --exit-code -- dist
