@@ -1,6 +1,6 @@
 {
   "name": "trilium-command-maker",
-  "version": "0.1",
+  "version": "1.0",
   "private": true,
   "description": "Trilium plugin: turn CLI tool notes into a command palette with documented options, examples and help output.",
   "license": "GPL-3.0-or-later",

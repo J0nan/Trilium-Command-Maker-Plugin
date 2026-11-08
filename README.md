@@ -36,7 +36,7 @@ The installer is idempotent. It creates the `Command Maker` settings note, the `
 ## Change the language
 
 1. Open the palette with `Ctrl+Shift+Space`.
-2. Click the version pill in the footer (`v0.1 ▾`).
+2. Click the version pill in the footer (`v1.0 ▾`).
 3. Pick **English** or **Español**. The same menu holds **Check for updates**.
 
 The choice applies right away and is saved in the `cmLang` label of the `Command Maker` settings note. Set that label by hand (`en` or `es`) to start in a language before the first open. Without the label the plugin follows the Trilium/browser language and falls back to English. Notes that already exist keep the language they were written in.
