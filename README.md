@@ -413,3 +413,8 @@ in the palette to check for updates.
   JSON or a markdown table is the deterministic option.
 - Help output is stored as text. Very long outputs are kept in the note but only
   the palette's collapsible section renders them.
+
+## License
+
+Released under the GNU General Public License v3.0 (or any later version).
+The full text ships in [LICENSE](LICENSE).
