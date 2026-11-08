@@ -398,7 +398,8 @@ async function readRawContent(note) {
 
 /**
  * Read one tool into the portable file the palette writes to disk.
- * Raw note contents are kept so an export/import round trip loses nothing.
+ * Raw note contents, the tool tags, the per-option note bodies and the
+ * presets are kept so an export/import round trip loses nothing.
  */
 async function exportTool(noteId) {
     const entry = entriesById.get(noteId);
@@ -411,6 +412,22 @@ async function exportTool(noteId) {
     const installNote = await standardChild(note, Model.LABELS.install, 'Install');
     const usageNote = await standardChild(note, Model.LABELS.usage, 'Usage');
     const helpNote = await standardChild(note, Model.LABELS.helpNote, 'Help');
+
+    const optionsNote = await childWithLabel(note, Model.LABELS.options);
+    const presetsNote = optionsNote ? await childWithLabel(optionsNote, Model.LABELS.presets) : null;
+    const presetRead = presetsNote
+        ? readPresetsContent(await readRawContent(presetsNote))
+        : { presets: [] };
+
+    const optionBodies = new Map();
+    if (optionsNote) {
+        const children = await optionsNote.getChildNotes();
+        for (const child of children) {
+            if (hasLabel(child, Model.LABELS.option)) {
+                optionBodies.set(child.noteId, await readRawContent(child));
+            }
+        }
+    }
 
     const definition = Model.buildTool({
         noteId: note.noteId,
@@ -425,11 +442,17 @@ async function exportTool(noteId) {
         category: entry.category,
         base: definition.base,
         description: definition.description,
+        tags: labels[Model.LABELS.tags] || '',
         content: await readRawContent(note),
         install: await readRawContent(installNote),
         usage: await readRawContent(usageNote),
         help: await readRawContent(helpNote),
-        options: definition.options
+        options: definition.options.map(function (option) {
+            return Object.assign({}, option, {
+                content: optionBodies.has(option.noteId) ? optionBodies.get(option.noteId) : ''
+            });
+        }),
+        presets: presetRead.presets
     });
 }
 

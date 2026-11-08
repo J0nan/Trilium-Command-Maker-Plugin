@@ -126,6 +126,38 @@ function beRun(params) {
         return note;
     }
 
+    /**
+     * Tool-file presets -> the JSON stored in the Presets note. Mirrors the
+     * frontend reader: entries need a name, values keep own primitive keys
+     * only, so a hand-edited file can never smuggle __proto__ into the note.
+     */
+    function sanitisePresets(raw) {
+        const out = [];
+        if (!Array.isArray(raw)) {
+            return out;
+        }
+        for (const entry of raw) {
+            if (!entry || typeof entry.name !== 'string' || String(entry.name).trim() === '') {
+                continue;
+            }
+            const values = {};
+            if (entry.values && typeof entry.values === 'object' && !Array.isArray(entry.values)) {
+                for (const key of Object.keys(entry.values)) {
+                    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+                        continue;
+                    }
+                    const value = entry.values[key];
+                    if (value === null || typeof value === 'object' || typeof value === 'function') {
+                        continue;
+                    }
+                    values[key] = value;
+                }
+            }
+            out.push({ name: String(entry.name).trim(), values: values });
+        }
+        return out;
+    }
+
     /** Validate the tool and make sure its Options folder and Presets note exist. */
     function presetsLocation(toolId) {
         const tool = requireNote(toolId, 'Tool note not found');
@@ -192,6 +224,9 @@ function beRun(params) {
         if (nonEmpty(safeSpec.description)) {
             note.setLabel(labels.description, String(safeSpec.description));
         }
+        if (nonEmpty(safeSpec.tags)) {
+            note.setLabel(labels.tags, String(safeSpec.tags));
+        }
 
         const install = api.createNewNote({
             parentNoteId: note.noteId,
@@ -223,7 +258,11 @@ function beRun(params) {
         ensureIcon(help, icons.help);
 
         const folder = ensureOptionsFolder(note);
-        ensurePresetsNote(folder);
+        const presetsNote = ensurePresetsNote(folder);
+        const presetSpecs = sanitisePresets(safeSpec.presets);
+        if (presetSpecs.length) {
+            presetsNote.setContent(JSON.stringify({ v: 1, presets: presetSpecs }));
+        }
         const specs = Array.isArray(safeSpec.options) ? safeSpec.options : [];
         for (let index = 0; index < specs.length; index += 1) {
             createOptionNote(folder, specs[index]);

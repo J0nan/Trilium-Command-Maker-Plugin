@@ -1424,7 +1424,7 @@ function openPalette(controller, options) {
         const filename = (Render.slugify(file.tool.title) || 'tool') + '.tool.json';
 
         const bodyNode = Dom.el('div', '');
-        bodyNode.appendChild(Dom.el('div', 'cm-note', 'This plain-JSON file can be imported here, kept as a backup, or shared.'));
+        bodyNode.appendChild(Dom.el('div', 'cm-note', 'This plain-JSON file carries the tags, options and presets, so it can be imported here, kept as a backup, or shared.'));
         const area = document.createElement('textarea');
         area.className = 'cm-control cm-preview';
         area.rows = 18;

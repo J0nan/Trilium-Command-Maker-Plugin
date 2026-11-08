@@ -721,6 +721,61 @@ test('importTool creates a tool note with its category, children and options', (
     assert.equal(options[1].getLabelValue(labels.placeholder), 'pattern');
 });
 
+test('importTool restores tags, option content and presets from a v2 tool file', () => {
+    const { api, beRun, result } = seedApi();
+    const presetValues = { 'note:x': 'y', deep: {} };
+    Object.defineProperty(presetValues, '__proto__', { value: 'nope', enumerable: true });
+    const created = beRun({
+        action: 'importTool',
+        labels,
+        toolsRootId: result.toolsRootId,
+        newToolNotes: Model.newToolNotes(),
+        tool: {
+            title: 'rg2',
+            category: 'Search',
+            base: 'rg',
+            tags: 'search, cli',
+            options: [{ label: 'Ignore case', flag: '-i', type: 'boolean', content: '<p>Long explanation.</p>' }],
+            presets: [
+                { name: 'web', values: presetValues },
+                { value: 1 }
+            ]
+        }
+    });
+
+    const tool = api.getNote(created.noteId);
+    assert.equal(tool.getLabelValue(labels.tags), 'search, cli', 'tags land on the tool note');
+
+    const options = labelledChildren(findByTitle(tool, 'Options'), labels.option);
+    assert.match(options[0].getContent(), /Long explanation/, 'the option note body survives the import');
+
+    const presetsNote = findByTitle(findByTitle(tool, 'Options'), 'Presets');
+    const saved = JSON.parse(presetsNote.getContent());
+    assert.equal(saved.v, 1);
+    assert.deepEqual(
+        saved.presets,
+        [{ name: 'web', values: { 'note:x': 'y' } }],
+        'magic and object values are filtered and nameless entries dropped'
+    );
+});
+
+test('importTool without tags or presets keeps the empty-presets default', () => {
+    const { api, beRun, result } = seedApi();
+    const created = beRun({
+        action: 'importTool',
+        labels,
+        toolsRootId: result.toolsRootId,
+        newToolNotes: Model.newToolNotes(),
+        tool: { title: 'plain', category: 'Misc', options: [{ label: 'Fast', flag: '-f', type: 'boolean' }] }
+    });
+    const tool = api.getNote(created.noteId);
+    assert.equal(tool.getLabelValue(labels.tags), null, 'no tags label is invented');
+    const option = labelledChildren(findByTitle(tool, 'Options'), labels.option)[0];
+    assert.equal(option.getContent(), '', 'options without content stay empty');
+    const presetsNote = findByTitle(findByTitle(tool, 'Options'), 'Presets');
+    assert.deepEqual(JSON.parse(presetsNote.getContent()), { v: 1, presets: [] });
+});
+
 test('importTool falls back to the content template passed by the frontend', () => {
     const { api, beRun, result } = seedApi();
     const created = beRun({

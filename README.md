@@ -249,12 +249,13 @@ Both work on one portable JSON file per tool:
 ```json
 {
   "kind": "command-maker-tool",
-  "version": 1,
+  "version": 2,
   "tool": {
     "title": "ripgrep",
     "category": "Search",
     "base": "rg",
     "description": "Search text recursively.",
+    "tags": "search, cli",
     "content": "<h2>What is?</h2>…<h2>Official links</h2>…<h2>Useful links</h2>…",
     "install": "<p>cargo install ripgrep</p>",
     "usage": "<pre><code>rg pattern</code></pre>",
@@ -264,6 +265,7 @@ Both work on one portable JSON file per tool:
         "label": "Ignore case",
         "flag": "-i",
         "help": "Case insensitive.",
+        "content": "<p>Long explanation kept in the option note body.</p>",
         "type": "boolean",
         "values": [],
         "default": "",
@@ -274,14 +276,22 @@ Both work on one portable JSON file per tool:
         "quote": "none",
         "sep": " "
       }
+    ],
+    "presets": [
+      { "name": "web", "values": { "note:<note-id>": "web.mp4" } }
     ]
   }
 }
 ```
 
-- **Export tool** reads the selected tool, its three standard children and every
-  option, and shows the JSON. **Copy JSON** copies it; **Download .json** saves it
-  as `<tool>.tool.json`.
+- **Export tool** reads the selected tool, its three standard children, every
+  option with its note body, the `#cmTags` value and the presets, and shows the
+  JSON. **Copy JSON** copies it; **Download .json** saves it as `<tool>.tool.json`.
+  A version-2 file is therefore a real backup: importing it recreates the tool
+  with nothing dropped. Version-1 files still import, but they never carried
+  tags, option bodies or presets. (Preset values are keyed by option note IDs,
+  so after importing into a *different* instance the stored preset values may
+  not line up with the recreated option notes.)
 - **Import tool** accepts the same JSON from a paste, the active note or a file.
   It previews the title, category, base and options, then creates a new tool note
   under that category. Existing tools are never modified or overwritten.

@@ -3,6 +3,48 @@ import assert from 'node:assert/strict';
 
 import ToolFile from '../src/toolfile.js';
 
+test('a tool file round-trips tags, presets and option content', () => {
+    const file = ToolFile.buildToolFile({
+        title: 'rg',
+        category: 'Search',
+        base: 'rg',
+        tags: 'search, cli',
+        options: [{ label: 'Ignore case', flag: '-i', type: 'boolean', content: '<p>Long explanation.</p>' }],
+        presets: [{ name: 'web', values: { 'note:o1': 'web.mp4' } }]
+    });
+    assert.equal(file.version, 2, 'the richer backup format is version 2');
+    const parsed = ToolFile.parseToolFile(JSON.stringify(file));
+    assert.deepEqual(parsed.warnings, []);
+    assert.equal(parsed.tool.tags, 'search, cli');
+    assert.equal(parsed.tool.options[0].content, '<p>Long explanation.</p>');
+    assert.deepEqual(parsed.tool.presets, [{ name: 'web', values: { 'note:o1': 'web.mp4' } }]);
+});
+
+test('version 1 files without the new fields still parse', () => {
+    const legacy = {
+        kind: 'command-maker-tool',
+        version: 1,
+        tool: { title: 'old', options: [{ label: 'L', flag: '-l', type: 'boolean' }] }
+    };
+    const parsed = ToolFile.parseToolFile(JSON.stringify(legacy));
+    assert.equal(parsed.tool.tags, '', 'missing tags read as empty');
+    assert.deepEqual(parsed.tool.presets, []);
+    assert.equal(parsed.tool.options[0].content, '');
+    assert.equal(parsed.warnings.length, 0, 'a legacy file is valid, not warned');
+});
+
+test('tool file presets are filtered to safe entries', () => {
+    const parsed = ToolFile.parseToolFile(
+        '{"tool":{"title":"rg","presets":[' +
+        '{"name":"web","values":{"__proto__":"nope","note:a":"x","n":1,"b":true}},' +
+        '{"name":"obj","values":{"deep":{}}},' +
+        '{"value":1}]}}'
+    );
+    assert.equal(parsed.tool.presets.length, 2, 'entries without a string name are dropped');
+    assert.deepEqual(Object.keys(parsed.tool.presets[0].values), ['note:a', 'n', 'b'], 'magic and object values are dropped');
+    assert.deepEqual(parsed.tool.presets[1].values, {}, 'non-primitive values never survive');
+});
+
 const option = {
     label: 'Input file',
     flag: '-i',

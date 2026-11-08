@@ -207,7 +207,8 @@ function buildFixture() {
     const input = note({
         noteId: 'o1',
         title: 'Input file',
-        labels: { cmOption: '', cmFlag: '-i', cmType: 'path', cmDoc: 'Input file to read.', cmDefault: 'in.mp4', cmOrder: '10', cmRequired: 'true' }
+        labels: { cmOption: '', cmFlag: '-i', cmType: 'path', cmDoc: 'Input file to read.', cmDefault: 'in.mp4', cmOrder: '10', cmRequired: 'true' },
+        content: '<p>Read the input file.</p>'
     });
     const codec = note({
         noteId: 'o2',
@@ -1180,6 +1181,44 @@ test('double-clicking Create, Add option and Import selected issues one backend 
         env.calls.backend.filter((entry) => entry.action === 'importOptions').length,
         1,
         'a double click imports the options exactly once'
+    );
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('Export tool produces a file that carries tags, option bodies and presets', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const originalLabel = fixture.ffmpeg.getLabelValue.bind(fixture.ffmpeg);
+    fixture.ffmpeg.getLabelValue = function (name) {
+        return name === 'cmTags' ? 'video, media' : originalLabel(name);
+    };
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+
+    buttonWithText(dom.body, 'Export tool').click();
+    const modal = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-modal')), 'export modal');
+    const area = find(modal, (node) => node.tagName === 'TEXTAREA' && node.readOnly);
+    assert.ok(area, 'the export modal shows the file in a read-only text area');
+
+    const file = JSON.parse(area.value);
+    assert.equal(file.version, 2, 'exports use the lossless v2 format');
+    assert.equal(file.tool.tags, 'video, media', 'the backup carries the tool tags');
+    assert.ok(
+        file.tool.presets.some((preset) => preset.name === 'web'),
+        'the backup carries the presets'
+    );
+    const inputOption = file.tool.options.filter((entry) => entry.label === 'Input file')[0];
+    assert.match(inputOption.content, /Read the input file/, 'the backup carries the option note body');
+
+    const note = find(modal, (node) => classed(node, 'cm-note'));
+    assert.match(
+        note.textContent,
+        /tags, options and presets/,
+        'the modal states what the backup holds'
     );
     assert.deepEqual(env.calls.errors, []);
 });

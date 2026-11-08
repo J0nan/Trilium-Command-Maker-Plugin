@@ -9,7 +9,7 @@
 const SCHEMA = [
     '{',
     '  "kind": "command-maker-tool",',
-    '  "version": 1,',
+    '  "version": 2,',
     '  "tool": {',
     '    "title": "<command name, e.g. git commit>",',
     '    "category": "<short group, e.g. Version control>",',
@@ -41,6 +41,7 @@ const SCHEMA = [
 
 const RULES = [
     '- title: the command name. base: the exact command the user types (keep subcommands, e.g. "git commit").',
+    '- tags, presets and per-option "content" exist for full backups; leave them out unless a backup was asked for.',
     '- category: a short group such as "Network", "Media" or "Version control".',
     '- description: one sentence that explains what the tool does.',
     '- content: HTML with exactly three <h2> sections in this order: "What is?", "Official links", "Useful links".',
