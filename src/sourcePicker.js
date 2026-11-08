@@ -7,11 +7,12 @@
  */
 
 const Dom = require('./dom');
+const I18n = require('./i18n');
 
 const SOURCES = [
-    { id: 'paste', label: 'Paste text' },
-    { id: 'note', label: 'Active note' },
-    { id: 'file', label: 'File' }
+    { id: 'paste', key: 'source.paste' },
+    { id: 'note', key: 'source.note' },
+    { id: 'file', key: 'source.file' }
 ];
 
 /**
@@ -34,7 +35,7 @@ function createSourcePicker(config) {
     const tabs = Dom.el('div', 'cm-tabs');
     const tabNodes = {};
     for (const source of SOURCES) {
-        const tab = Dom.el('button', 'cm-tab' + (source.id === 'paste' ? ' is-active' : ''), source.label);
+        const tab = Dom.el('button', 'cm-tab' + (source.id === 'paste' ? ' is-active' : ''), I18n.t(source.key));
         tab.type = 'button';
         tabNodes[source.id] = tab;
         tabs.appendChild(tab);
@@ -48,7 +49,7 @@ function createSourcePicker(config) {
     textArea.placeholder = settings.placeholder || '';
 
     const notePreview = Dom.el('div', 'cm-note', '');
-    const readNoteButton = Dom.el('button', 'cm-button', 'Read active note');
+    const readNoteButton = Dom.el('button', 'cm-button', I18n.t('source.readNote'));
     readNoteButton.type = 'button';
     readNoteButton.style.display = 'none';
 
@@ -74,7 +75,7 @@ function createSourcePicker(config) {
 
     function showRead(label, text) {
         sourceText = text;
-        notePreview.textContent = 'Read "' + label + '" (' + text.length + ' characters).';
+        notePreview.textContent = I18n.t('source.read', { label: label, count: text.length });
         notePreview.style.display = '';
     }
 
@@ -88,7 +89,7 @@ function createSourcePicker(config) {
         try {
             const note = await controller.activeNoteText();
             showRead(note.title, note.text);
-            onStatus('Note read.');
+            onStatus(I18n.t('status.noteRead'));
         } catch (error) {
             onError(error);
         }
@@ -100,8 +101,8 @@ function createSourcePicker(config) {
             return;
         }
         try {
-            showRead(file.name || 'file', await Dom.readFileText(file));
-            onStatus('File read.');
+            showRead(file.name || I18n.t('source.fileName'), await Dom.readFileText(file));
+            onStatus(I18n.t('status.fileRead'));
         } catch (error) {
             onError(error);
         }

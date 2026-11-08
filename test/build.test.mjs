@@ -42,7 +42,7 @@ test('the installer only hard-codes labels the model defines', () => {
 
 test('every src module is reachable from the entry point', () => {
     const bundle = fs.readFileSync(path.join(root, 'dist', 'command-maker.js'), 'utf8');
-    for (const name of ['render', 'parse', 'sections', 'toolfile', 'prompt', 'model', 'version',
+    for (const name of ['i18n', 'render', 'parse', 'sections', 'toolfile', 'prompt', 'model', 'version',
         'styles', 'dom', 'sourcePicker', 'backend', 'ui', 'runtime']) {
         assert.ok(bundle.includes('__def("' + name + '"'), name + ' is bundled');
     }

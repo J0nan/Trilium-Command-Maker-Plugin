@@ -16,6 +16,7 @@ Ctrl+Shift+Space  →  search a tool  →  read help  →  fill options  →  co
   - [Opening the palette in a tab](#opening-the-palette-in-a-tab)
   - [Manual install (no installer script)](#manual-install-no-installer-script)
 - [Structure](#structure)
+  - [Language](#language)
   - [Tool notes](#tool-notes)
   - [The three standard children](#the-three-standard-children)
   - [Option notes](#option-notes)
@@ -122,6 +123,12 @@ The `Tools` folder is found by its `#cmTools` label, so you can drag it to anoth
 
 If you installed the plugin runtime manually *before* ever running the installer, put the `Command Maker.js` note as a direct child of the `Command Maker` settings note first: the installer only recognises an existing `#cmPlugin` note there, and otherwise it creates a second plugin note.
 
+### Language
+
+The plugin ships English and Spain Spanish in one bundle. The version pill in the footer (`v0.1 ▾`) opens a small menu with the update check and the language: picking **English** or **Español** writes `#cmLang` (`en` or `es`) on the `Command Maker` settings note and rebuilds the palette in that language, including the titles of the notes the backend creates later (`Opciones`, `Instalación`, `Uso`, `Ayuda`).
+
+Set `#cmLang=es` on the settings note by hand to start in Spanish. With no label, the plugin follows the browser/Trilium language and falls back to English; on the first bootstrap it records the language it picked, so the setting is always visible. The label is strictly a UI preference: tool files, labels, presets and rendered commands never change with it. Notes seeded before a language switch keep the language they were written in.
+
 ### Tool notes
 
 A tool note is a normal **text** note. Its content is meant to be read and edited by you, with exactly three H2 sections:
@@ -137,7 +144,7 @@ Add the official documentation, repository or website links here.
 Add useful guides, cheat sheets or articles here.
 ```
 
-The palette renders the "What is?" text and makes the links from the other two sections clickable. Everything you add above the `Options` folder is yours to organize; the technical notes are confined to that one folder so they do not get in the way when you read the tool manually.
+The palette renders the "What is?" text and makes the links from the other two sections clickable. Spanish headings are equivalent: `## ¿Qué es?`, `## Enlaces oficiales` and `## Enlaces útiles` are read the same way, in either language, so a note written under a Spanish locale keeps working when you switch to English. Everything you add above the `Options` folder is yours to organize; the technical notes are confined to that one folder so they do not get in the way when you read the tool manually.
 
 Two optional labels shape how the palette shows and finds a tool:
 
@@ -153,6 +160,8 @@ Two optional labels shape how the palette shows and finds a tool:
 | `Install` | text | installation steps/commands |
 | `Usage` | text | examples; every code block becomes a one-click example in the palette |
 | `Help` | code (`text/x-sh`) | paste the output of `tool --help` here |
+
+The palette finds these by label first and by their English title second, so renaming them is safe as long as the label stays.
 
 > A `Usage` note stored as a **code** note also works: every non-empty line is treated as one example.
 

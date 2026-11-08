@@ -14,7 +14,7 @@
   "homepage": "https://github.com/J0nan/Trilium-Command-Maker-Plugin",
   "scripts": {
     "build": "node tools/build.mjs",
-    "test": "node --test",
+    "test": "node --test --import ./tools/pin-locale.mjs",
     "check": "npm run build && npm test"
   }
 }
