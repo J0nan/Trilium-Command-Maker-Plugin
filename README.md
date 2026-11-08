@@ -4,8 +4,6 @@ A TriliumNext plugin that turns your CLI tool notes into a command palette: sear
 read what it does, fill in its documented options, and get a runnable command you can edit,
 copy, insert, or save as a preset.
 
-Built for TriliumNext ≥ 0.101 (launcher API, frontend scripts).
-
 ```
 Ctrl+Shift+Space  →  search a tool  →  read help  →  fill options  →  command  →  copy / insert
 ```
