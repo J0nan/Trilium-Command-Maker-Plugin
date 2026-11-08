@@ -21,7 +21,6 @@
  */
 
 const PLACEHOLDER_RE = /\\?\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
-const PLACEHOLDER_SOURCE_RE = /\\?\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
 
 /** Value-map key for the free-text arguments inserted right after the base. */
 const EXTRA_KEY = 'cm:extra';
@@ -38,6 +37,12 @@ const QUOTERS = {
     }
 };
 
+/** Values are user labels, so only own quoter names are honoured. */
+function quoterFor(mode) {
+    const name = String(mode == null ? '' : mode);
+    return Object.prototype.hasOwnProperty.call(QUOTERS, name) ? QUOTERS[name] : QUOTERS.none;
+}
+
 function slugify(text) {
     return String(text == null ? '' : text)
         .toLowerCase()
@@ -47,8 +52,7 @@ function slugify(text) {
 }
 
 function quote(value, mode) {
-    const quoter = QUOTERS[mode] || QUOTERS.none;
-    return quoter(String(value));
+    return quoterFor(mode)(String(value));
 }
 
 function isEmpty(value) {
@@ -67,13 +71,13 @@ function isTruthyFlag(value) {
 function placeholderNames(base) {
     const names = [];
     const source = String(base == null ? '' : base);
-    PLACEHOLDER_SOURCE_RE.lastIndex = 0;
-    let match = PLACEHOLDER_SOURCE_RE.exec(source);
+    PLACEHOLDER_RE.lastIndex = 0;
+    let match = PLACEHOLDER_RE.exec(source);
     while (match !== null) {
         if (match[0].charAt(0) !== '\\' && names.indexOf(match[1]) === -1) {
             names.push(match[1]);
         }
-        match = PLACEHOLDER_SOURCE_RE.exec(source);
+        match = PLACEHOLDER_RE.exec(source);
     }
     return names;
 }
@@ -236,6 +240,7 @@ module.exports = {
     isTruthyFlag,
     placeholderNames,
     valueKey,
+    compareOptions,
     formatValue,
     renderCommand
 };

@@ -132,6 +132,22 @@ test('buildTool discovers placeholders without an option', () => {
     assert.deepEqual(definition.inferred.map((entry) => entry.placeholder), ['target']);
 });
 
+test('placeholder names that collide with Object properties stay ordinary', () => {
+    const definition = Model.buildTool({
+        noteId: 't1',
+        title: 'X',
+        labels: { cmBase: 'run {{constructor}} {{__proto__}}' },
+        optionNotes: []
+    });
+    assert.deepEqual(definition.placeholders, ['constructor', '__proto__']);
+    assert.deepEqual(
+        definition.inferred.map((entry) => entry.placeholder),
+        ['constructor', '__proto__'],
+        'inherited names are not mistaken for options that already exist'
+    );
+    assert.equal(definition.warnings.length, 0);
+});
+
 test('duplicate placeholders produce a warning', () => {
     const definition = Model.buildTool({
         noteId: 't1',

@@ -29,8 +29,6 @@ const Model = require('./model');
 const TOOL_KIND = 'command-maker-tool';
 const FILE_VERSION = 1;
 
-const QUOTES = ['none', 'single', 'double'];
-
 function text(value) {
     return value === undefined || value === null ? '' : String(value);
 }
@@ -123,7 +121,7 @@ function normaliseOption(entry, index, warnings) {
     const rawOrder = entry.order === undefined || entry.order === null || trimmed(entry.order) === ''
         ? NaN
         : Number(entry.order);
-    const quote = QUOTES.indexOf(trimmed(entry.quote).toLowerCase()) === -1
+    const quote = Model.QUOTES.indexOf(trimmed(entry.quote).toLowerCase()) === -1
         ? 'none'
         : trimmed(entry.quote).toLowerCase();
 

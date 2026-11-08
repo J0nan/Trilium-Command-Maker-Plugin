@@ -150,8 +150,11 @@ function beRun(params) {
         return { data: data, valid: valid };
     }
 
-    /** Minimal body for imported tools: exactly the three H2 sections. */
-    function toolHtmlContent() {
+    /** Tool body: the caller's template when it passes one, else the three H2 sections. */
+    function defaultToolContent(fallbacks) {
+        if (fallbacks && nonEmpty(fallbacks.content)) {
+            return String(fallbacks.content);
+        }
         return [
             '<h2>What is?</h2>',
             '<p>Describe what this tool does and when to use it.</p>',
@@ -180,7 +183,7 @@ function beRun(params) {
             parentNoteId: category.noteId,
             title: title,
             type: 'text',
-            content: nonEmpty(safeSpec.content) ? String(safeSpec.content) : toolHtmlContent()
+            content: nonEmpty(safeSpec.content) ? String(safeSpec.content) : defaultToolContent(safeFallbacks)
         }).note;
         note.setLabel(labels.tool, '');
         if (nonEmpty(safeSpec.base)) {
@@ -386,8 +389,12 @@ function beRun(params) {
             options.newToolNotes || {}
         );
         const folder = findChildWithLabel(note, labels.options);
-        const presets = findChildWithLabel(folder, labels.presets);
-        return { noteId: note.noteId, optionsFolderId: folder.noteId, presetsId: presets.noteId };
+        const presets = folder ? findChildWithLabel(folder, labels.presets) : null;
+        return {
+            noteId: note.noteId,
+            optionsFolderId: folder ? folder.noteId : null,
+            presetsId: presets ? presets.noteId : null
+        };
     }
 
     /** Recreate a tool from a portable tool file (see src/toolfile.js). */
@@ -412,12 +419,14 @@ function beRun(params) {
     function importOptions() {
         const location = presetsLocation(options.toolId);
         const specs = Array.isArray(options.options) ? options.options : [];
-        const seenFlags = {};
+        // Flag text comes from imported JSON; a plain object would confuse
+        // `__proto__` and friends with membership.
+        const seenFlags = new Set();
         const existing = location.folder.getChildNotes();
         for (let index = 0; index < existing.length; index += 1) {
             const flag = existing[index].getLabelValue(labels.flag);
             if (nonEmpty(flag)) {
-                seenFlags[String(flag)] = true;
+                seenFlags.add(String(flag));
             }
         }
         const noteIds = [];
@@ -425,20 +434,27 @@ function beRun(params) {
         for (let index = 0; index < specs.length; index += 1) {
             const spec = specs[index] || {};
             const flag = spec.flag;
-            if (nonEmpty(flag) && seenFlags[String(flag)]) {
+            if (nonEmpty(flag) && seenFlags.has(String(flag))) {
                 skipped += 1;
                 continue;
             }
             if (nonEmpty(flag)) {
-                seenFlags[String(flag)] = true;
+                seenFlags.add(String(flag));
             }
             noteIds.push(createOptionNote(location.folder, spec).noteId);
         }
         return { created: noteIds.length, skipped: skipped, noteIds: noteIds };
     }
 
+    /**
+     * Delete one option note. The target must carry the option label, so a wrong
+     * or hostile note id can never remove an unrelated note.
+     */
     function deleteOption() {
         const note = requireNote(options.noteId, 'Option note not found');
+        if (!hasLabel(note, labels.option)) {
+            throw new Error('Note is not an option of a tool: ' + note.noteId);
+        }
         note.deleteNote();
         return { ok: true };
     }
@@ -477,7 +493,9 @@ function beRun(params) {
         }
         const data = read.data;
         const name = nonEmpty(options.name) ? String(options.name) : 'Preset';
-        const values = options.values && typeof options.values === 'object' ? options.values : {};
+        const values = options.values && typeof options.values === 'object' && !Array.isArray(options.values)
+            ? options.values
+            : {};
         let updated = false;
         for (let index = 0; index < data.presets.length; index += 1) {
             const entry = data.presets[index];

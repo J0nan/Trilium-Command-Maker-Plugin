@@ -164,13 +164,7 @@ function optionFromNote(note) {
 }
 
 function sortOptions(left, right) {
-    if (left.order !== right.order) {
-        return left.order - right.order;
-    }
-    if (left.title !== right.title) {
-        return left.title < right.title ? -1 : 1;
-    }
-    return String(left.noteId) < String(right.noteId) ? -1 : 1;
+    return Render.compareOptions(left, right);
 }
 
 function buildTool(note) {
@@ -186,7 +180,9 @@ function buildTool(note) {
     const options = optionNotes.map(optionFromNote).sort(sortOptions);
 
     const warnings = [];
-    const byPlaceholder = {};
+    // Placeholders and flags come from note labels, so the maps must not inherit
+    // Object.prototype: a `__proto__` name would otherwise be treated as a duplicate.
+    const byPlaceholder = new Map();
     for (const option of options) {
         if (!option.placeholder) {
             warnings.push({
@@ -195,35 +191,35 @@ function buildTool(note) {
             });
             continue;
         }
-        if (byPlaceholder[option.placeholder]) {
+        if (byPlaceholder.has(option.placeholder)) {
             warnings.push({
                 code: 'duplicate-placeholder',
                 message: 'Two options share the placeholder "' + option.placeholder + '"; the first one wins.'
             });
             continue;
         }
-        byPlaceholder[option.placeholder] = option;
+        byPlaceholder.set(option.placeholder, option);
     }
 
-    const byFlag = {};
+    const byFlag = new Set();
     for (const option of options) {
         if (!option.flag) {
             continue;
         }
-        if (byFlag[option.flag]) {
+        if (byFlag.has(option.flag)) {
             warnings.push({
                 code: 'duplicate-flag',
                 message: 'Two options use the flag "' + option.flag + '"; the command will repeat it.'
             });
             continue;
         }
-        byFlag[option.flag] = true;
+        byFlag.add(option.flag);
     }
 
     const declared = Render.placeholderNames(base);
     const inferred = declared
         .filter(function (name) {
-            return !byPlaceholder[name];
+            return !byPlaceholder.has(name);
         })
         .map(function (name) {
             return {
@@ -411,32 +407,57 @@ function defaultValueMap(definition) {
     return values;
 }
 
-function matches(definition, query) {
+/** Search text for raw option snapshots, used while indexing a tool tree. */
+function optionNotesText(snapshots) {
+    return (snapshots || []).map(function (snapshot) {
+        const labels = (snapshot && snapshot.labels) || {};
+        return [
+            snapshot ? snapshot.title : '',
+            labels[LABELS.flag],
+            labels[LABELS.doc],
+            labels[LABELS.enumValues]
+        ].join(' ');
+    }).join(' ');
+}
+
+/**
+ * Everything a tool can be found by. One definition on purpose: the index and
+ * `matches` must never disagree about what is searchable.
+ */
+function searchableText(snapshot) {
+    const safe = snapshot || {};
+    const optionText = safe.optionText
+        || (safe.options || []).map(function (option) {
+            return [option.title, option.flag, option.help, (option.enumValues || []).join(' ')].join(' ');
+        }).join(' ');
+    return [
+        safe.title,
+        safe.category,
+        safe.description,
+        safe.tags,
+        safe.base,
+        safe.whatIs,
+        optionText,
+        (safe.optionTitles || []).join(' '),
+        (safe.examples || []).join(' '),
+        safe.searchText
+    ].join(' ');
+}
+
+/** True when every whitespace-separated query term appears in the haystack. */
+function matchesText(haystack, query) {
     const needle = String(query == null ? '' : query).trim().toLowerCase();
     if (needle === '') {
         return true;
     }
-    const safeDefinition = definition || {};
-    const optionText = (safeDefinition.options || [])
-        .map(function (option) {
-            return [option.title, option.flag, option.help, (option.enumValues || []).join(' ')].join(' ');
-        })
-        .join(' ');
-    const haystack = [
-        safeDefinition.title,
-        safeDefinition.description,
-        safeDefinition.tags,
-        safeDefinition.category,
-        safeDefinition.base,
-        optionText,
-        (safeDefinition.optionTitles || []).join(' '),
-        (safeDefinition.examples || []).join(' '),
-        safeDefinition.searchText
-    ].join(' ').toLowerCase();
-
+    const text = String(haystack == null ? '' : haystack).toLowerCase();
     return needle.split(/\s+/).every(function (term) {
-        return haystack.indexOf(term) !== -1;
+        return text.indexOf(term) !== -1;
     });
+}
+
+function matches(definition, query) {
+    return matchesText(searchableText(definition), query);
 }
 
 /** Content template for a new tool note: exactly the three H2 sections. */
@@ -451,9 +472,10 @@ function toolTemplate() {
     ].join('\n');
 }
 
-/** Starting content for the three standard child notes. */
+/** Starting content for the three standard child notes plus the tool body. */
 function newToolNotes() {
     return {
+        content: toolTemplate(),
         install: '<p>Add the installation steps or commands for this tool.</p>',
         usage: '<p>Add examples of commands with this tool. Put each example in a code block.</p>',
         help: ''
@@ -572,6 +594,9 @@ module.exports = {
     valuesFromExample,
     tokenizeCommand,
     matches,
+    matchesText,
+    searchableText,
+    optionNotesText,
     toolTemplate,
     newToolNotes,
     seedTools

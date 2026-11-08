@@ -123,6 +123,10 @@ test('decodeEntities handles named, decimal and hex entities once', () => {
     assert.equal(Parse.decodeEntities('&mdash; &unknown;'), '\u2014 &unknown;');
 });
 
+test('decodeEntities never resolves an inherited Object property', () => {
+    assert.equal(Parse.decodeEntities('&constructor; &toString; &__proto__;'), '&constructor; &toString; &__proto__;');
+});
+
 test('inferType follows the metavar and description rules', () => {
     assert.equal(Parse.inferType('', 'overwrite output files'), 'boolean');
     assert.equal(Parse.inferType('{a,b,c}', ''), 'enum');

@@ -42,19 +42,26 @@ jobs:
         with:
           node-version: 20
 
+      # The version input is untrusted shell text: it is passed through the
+      # environment so a value like `1.2"; rm -rf /` can never break out of the
+      # quoted argument.
       - name: Bump the version in package.json and src/version.js
-        run: node tools/bump-version.mjs "${{ inputs.version }}"
+        env:
+          VERSION: ${{ inputs.version }}
+        run: node tools/bump-version.mjs "$VERSION"
 
       - name: Build the bundle and run the tests
         run: npm run check
 
       - name: Commit the version bump and push the tag
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json src/version.js dist
-          git commit -m "chore(release): v${{ inputs.version }}"
-          git tag "v${{ inputs.version }}"
+          git commit -m "chore(release): v$VERSION"
+          git tag "v$VERSION"
           git push origin HEAD:${{ github.ref_name }} --tags
 
       - name: Create the GitHub release

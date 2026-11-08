@@ -520,6 +520,23 @@ test('importOptions creates options and deleteOption removes one', () => {
     assert.throws(() => beRun({ action: 'deleteOption', labels, noteId: 'nope' }), /Option note not found/);
 });
 
+test('deleteOption refuses any note that is not an option', () => {
+    const api = createApi();
+    const beRun = serialise(Backend.beRun, api);
+    const { toolsRootId, rootId } = boot(api, beRun);
+    const created = beRun({ action: 'createTool', labels, toolsRootId, title: 'git', base: 'git' });
+
+    const category = api.getNote(toolsRootId).getChildNotes()[0];
+    for (const noteId of [toolsRootId, created.noteId, category.noteId, rootId]) {
+        assert.throws(
+            () => beRun({ action: 'deleteOption', labels, noteId }),
+            /not an option/,
+            'a non-option note is protected'
+        );
+        assert.equal(api.getNote(noteId).deleted, false, 'the note is left untouched');
+    }
+});
+
 test('importOptions skips flags that already exist on the tool', () => {
     const api = createApi();
     const beRun = serialise(Backend.beRun, api);
@@ -702,6 +719,23 @@ test('importTool creates a tool note with its category, children and options', (
     assert.equal(options[1].getLabelValue(labels.flag), null, 'positional options have no flag label');
     assert.equal(options[1].getLabelValue(labels.required), 'true');
     assert.equal(options[1].getLabelValue(labels.placeholder), 'pattern');
+});
+
+test('importTool falls back to the content template passed by the frontend', () => {
+    const { api, beRun, result } = seedApi();
+    const created = beRun({
+        action: 'importTool',
+        labels,
+        toolsRootId: result.toolsRootId,
+        newToolNotes: Model.newToolNotes(),
+        tool: { title: 'bare tool', category: 'Misc' }
+    });
+
+    const content = api.getNote(created.noteId).getContent();
+    assert.equal(content, Model.newToolNotes().content, 'the model owns the single template');
+    assert.match(content, /<h2>What is\?<\/h2>/);
+    assert.match(content, /<h2>Official links<\/h2>/);
+    assert.match(content, /<h2>Useful links<\/h2>/);
 });
 
 test('ensureTab creates one render note, one HTML wrapper and one plugin clone', () => {

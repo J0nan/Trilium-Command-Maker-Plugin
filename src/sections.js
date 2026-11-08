@@ -14,7 +14,8 @@ const Parse = require('./parse');
 const H2_RE = /<h2\b[^>]*>([\s\S]*?)<\/h2\s*>/gi;
 const ANCHOR_RE = /<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi;
 const HREF_RE = /href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`<>]+))/i;
-const ALLOWED_SCHEME_RE = /^(?:https?|mailto):/i;
+/** Only these schemes may become a clickable link. */
+const SAFE_URL_RE = /^(?:https?|mailto):/i;
 /** `<pre>`, `<p>` and `<li>` blocks, in source order. */
 const BLOCK_RE = /<(pre|p|li)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi;
 
@@ -25,19 +26,18 @@ const USEFUL = 'useful links';
 const MAX_EXAMPLES = 50;
 
 /** Tags that survive install-note rendering; everything else loses its markup. */
-const ALLOWED_TAGS = {
-    p: true, br: true, div: true, span: true,
-    strong: true, b: true, em: true, i: true, u: true, s: true, strike: true, del: true,
-    code: true, pre: true,
-    ul: true, ol: true, li: true,
-    h1: true, h2: true, h3: true, h4: true, h5: true, h6: true,
-    a: true, blockquote: true, hr: true,
-    table: true, thead: true, tbody: true, tfoot: true, tr: true, th: true, td: true,
-    dl: true, dt: true, dd: true
-};
+const ALLOWED_TAGS = new Set([
+    'p', 'br', 'div', 'span',
+    'strong', 'b', 'em', 'i', 'u', 's', 'strike', 'del',
+    'code', 'pre',
+    'ul', 'ol', 'li',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'a', 'blockquote', 'hr',
+    'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td',
+    'dl', 'dt', 'dd'
+]);
 const DROP_ELEMENT_RE = /<(script|style|iframe|object|embed|svg|math|form|input|textarea|select|button|link|meta)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
 const TAG_TOKEN_RE = /<\/?([a-zA-Z][A-Za-z0-9:-]*)([^>]*)>/g;
-const SAFE_HREF_RE = /^(?:https?|mailto):/i;
 const COMMENT_RE = /<!--[\s\S]*?-->/g;
 
 function trim(value) {
@@ -81,7 +81,7 @@ function linksInSection(html, section) {
     while (match !== null) {
         const hrefMatch = HREF_RE.exec(match[1]);
         const href = hrefMatch ? Parse.decodeEntities(trim(hrefMatch[1] || hrefMatch[2] || hrefMatch[3])) : '';
-        if (href !== '' && ALLOWED_SCHEME_RE.test(href)) {
+        if (href !== '' && SAFE_URL_RE.test(href)) {
             const text = Parse.stripHtml(match[2]);
             links.push({ text: text === '' ? href : text, href: href, section: section });
         }
@@ -107,21 +107,25 @@ function findSectionKey(sections, wanted) {
  */
 function parseToolNote(html) {
     const source = String(html == null ? '' : html);
-    const sections = {};
-    const rawBodies = {};
+    // Heading text is note content, so keys are collected in a Map first: a
+    // heading named `__proto__` must become an ordinary section, never a
+    // prototype assignment.
+    const found = new Map();
+    const rawBodies = new Map();
     for (const body of sectionBodies(source)) {
         const key = body.key === '' ? 'untitled' : body.key;
-        if (Object.prototype.hasOwnProperty.call(sections, key)) {
+        if (found.has(key)) {
             continue;
         }
-        sections[key] = Parse.stripHtml(body.html);
-        rawBodies[key] = body.html;
+        found.set(key, Parse.stripHtml(body.html));
+        rawBodies.set(key, body.html);
     }
+    const sections = Object.fromEntries(found);
 
     const officialKey = findSectionKey(sections, OFFICIAL);
     const usefulKey = findSectionKey(sections, USEFUL);
-    const officialLinks = linksInSection(officialKey === null ? '' : rawBodies[officialKey], 'official');
-    const usefulLinks = linksInSection(usefulKey === null ? '' : rawBodies[usefulKey], 'useful');
+    const officialLinks = linksInSection(officialKey === null ? '' : rawBodies.get(officialKey), 'official');
+    const usefulLinks = linksInSection(usefulKey === null ? '' : rawBodies.get(usefulKey), 'useful');
 
     const whatIsKey = findSectionKey(sections, WHAT_IS);
     return {
@@ -207,13 +211,17 @@ function escapeAttribute(value) {
     return String(value == null ? '' : value)
         .replace(/&/g, '&amp;')
         .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
 }
 
+/** Same rules as escapeAttribute: safe for text and for double-quoted attributes. */
+const escapeHtml = escapeAttribute;
+
 function safeHref(raw) {
     const decoded = Parse.decodeEntities(String(raw == null ? '' : raw)).trim();
-    return SAFE_HREF_RE.test(decoded) ? decoded : '';
+    return SAFE_URL_RE.test(decoded) ? decoded : '';
 }
 
 /**
@@ -228,7 +236,7 @@ function sanitizeNoteHtml(html) {
     const cleaned = source.replace(DROP_ELEMENT_RE, '');
     return cleaned.replace(TAG_TOKEN_RE, function (match, rawName, rawAttrs) {
         const tag = String(rawName).toLowerCase();
-        if (!ALLOWED_TAGS[tag]) {
+        if (!ALLOWED_TAGS.has(tag)) {
             return '';
         }
         if (match.charAt(1) === '/') {
@@ -265,5 +273,6 @@ module.exports = {
     parseExamples,
     parseExampleLines,
     sanitizeNoteHtml,
+    escapeHtml,
     wrapCodeBlocks
 };

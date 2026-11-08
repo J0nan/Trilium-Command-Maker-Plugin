@@ -20,7 +20,13 @@ test('the release workflow is manual and publishes both artifacts', () => {
     assert.match(workflow, /softprops\/action-gh-release@v2/);
     assert.match(workflow, /dist\/command-maker\.js/);
     assert.match(workflow, /dist\/install\.js/);
-    assert.match(workflow, /git tag "v\$\{\{ inputs\.version \}\}"/);
+    assert.match(workflow, /git tag "v\$VERSION"/, 'the tag uses the env copy of the version');
+    assert.match(workflow, /VERSION: \$\{\{ inputs\.version \}\}/, 'the version reaches the shell through env');
+    assert.equal(
+        /run:.*\$\{\{ inputs\.version \}\}/.test(workflow),
+        false,
+        'the version input is never interpolated directly into a shell command'
+    );
 });
 
 test('release versions are validated and ordered', () => {

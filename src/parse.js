@@ -20,9 +20,10 @@
  * matching Model.optionFromNote.
  */
 
+const Model = require('./model');
 const Render = require('./render');
 
-const TYPES = ['boolean', 'path', 'number', 'enum', 'string'];
+const TYPES = Model.TYPES;
 const PATH_TOKENS = ['PATH', 'FILE', 'DIR', 'FOLDER'];
 const NUMBER_TOKENS = ['N', 'NUM', 'NUMBER', 'INT', 'INTEGER', 'COUNT', 'SIZE', 'SECONDS'];
 
@@ -82,7 +83,9 @@ function decodeEntities(text) {
                 return match;
             }
         }
-        const named = NAMED_ENTITIES[body.toLowerCase()];
+        const named = Object.prototype.hasOwnProperty.call(NAMED_ENTITIES, body.toLowerCase())
+            ? NAMED_ENTITIES[body.toLowerCase()]
+            : undefined;
         return named === undefined ? match : named;
     });
 }
@@ -144,15 +147,7 @@ function splitList(text) {
 }
 
 function uniq(list) {
-    const seen = {};
-    const out = [];
-    for (const value of list) {
-        if (!Object.prototype.hasOwnProperty.call(seen, value)) {
-            seen[value] = true;
-            out.push(value);
-        }
-    }
-    return out;
+    return Array.from(new Set(list));
 }
 
 function bracketDepth(token) {
@@ -638,12 +633,12 @@ function pushOption(options, warnings, seen, option, origin) {
     if (!option) {
         return;
     }
-    if (seen[option.flag] !== undefined) {
+    if (seen.has(option.flag)) {
         warnings.push(warning('duplicate-flag', 'Option "' + option.flag + '" from ' + origin
-            + ' duplicates the earlier one on ' + seen[option.flag] + '; the first one wins.'));
+            + ' duplicates the earlier one on ' + seen.get(option.flag) + '; the first one wins.'));
         return;
     }
-    seen[option.flag] = origin;
+    seen.set(option.flag, origin);
     options.push(option);
 }
 
@@ -655,7 +650,7 @@ function pushOption(options, warnings, seen, option, origin) {
 function parseHelpText(text) {
     const options = [];
     const warnings = [];
-    const seen = {};
+    const seen = new Map();
     const lines = String(text == null ? '' : text).split(/\r?\n/);
     let current = null;
     let currentIndent = 0;
@@ -748,7 +743,7 @@ function parseJsonOptions(text) {
     }
 
     const options = [];
-    const seen = {};
+    const seen = new Map();
     for (let index = 0; index < list.length; index += 1) {
         const entry = list[index];
         const origin = 'entry ' + (index + 1);
@@ -879,7 +874,7 @@ function parseMarkdownTable(text) {
     };
 
     const options = [];
-    const seen = {};
+    const seen = new Map();
     for (let index = firstDataRow; index < rows.length; index += 1) {
         const columns = rows[index];
         const rawFlag = cell(columns, flagColumn);

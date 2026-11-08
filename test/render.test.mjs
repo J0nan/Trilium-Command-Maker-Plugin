@@ -103,6 +103,12 @@ test('double quoting escapes quotes, dollars and backticks', () => {
     assert.equal(result.command, 'run "a \\"b\\" \\$c \\`d\\`"');
 });
 
+test('an unknown quote mode falls back to no quoting', () => {
+    const def = definition('run', [option({ quote: 'constructor', flag: '', placeholder: 'p' })]);
+    const result = Render.renderCommand(def, { 'note:n1': 'a b' });
+    assert.equal(result.command, 'run a b');
+});
+
 test('non-numeric values are rejected for number options', () => {
     const def = definition('run', [option({ type: 'number', placeholder: 'n', flag: '-n' })]);
     const result = Render.renderCommand(def, { 'note:n1': 'abc' });

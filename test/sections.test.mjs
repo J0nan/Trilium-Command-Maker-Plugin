@@ -65,6 +65,16 @@ test('parseToolNote falls back to the whole note when there is no H2', () => {
     assert.equal(Sections.parseToolNote(null).whatIs, '');
 });
 
+test('parseToolNote keeps a __proto__ heading as an ordinary section', () => {
+    const note = Sections.parseToolNote([
+        '<h2>__proto__</h2><p>Not a prototype.</p>',
+        '<h2>Official links</h2><ul></ul>'
+    ].join(''));
+    assert.equal(note.sections['__proto__'], 'Not a prototype.');
+    assert.equal(Object.getPrototypeOf(note.sections), Object.prototype);
+    assert.equal({}.polluted, undefined);
+});
+
 test('parseExamples takes the pre blocks and command-looking paragraphs', () => {
     const usage = [
         '<p>Compress a video to H.264:</p>',
