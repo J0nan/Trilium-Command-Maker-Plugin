@@ -49,6 +49,25 @@ It also registers a launcher (`Command Maker`, `Ctrl+Shift+Space`) through
 required. The first time the palette opens it seeds two documented examples:
 `git commit` (Version control) and `curl` (Network).
 
+### Uninstall
+
+Nothing in Command Maker rewrites your own notes, so uninstalling is removing
+the notes the plugin created:
+
+1. Delete the launcher note `al_commandmaker` (action launchers live as `al_`
+   prefixed notes, out of the regular tree) — this removes the
+   `Ctrl+Shift+Space` entry from the global menu.
+2. Delete the `Command Maker` settings note (`#cmRoot`). Its children include
+   the plugin runtime note `Command Maker.js` (`#cmPlugin`) and the palette tab
+   notes, so they go with it.
+3. Optionally delete the `Tools` folder (`#cmTools`) together with every tool
+   note under it. Your tool notes are normal notes: if you want to keep the
+   documentation but drop the plugin, **Export tool** each one first, or simply
+   leave the folder in place — without the plugin it is just a folder of notes.
+
+Reload Trilium afterwards. Re-running the installer later recreates everything
+it is missing.
+
 ### Changing the keyboard shortcut
 
 The default is `Ctrl+Shift+Space`. The shortcut belongs to the **launcher note**
@@ -62,7 +81,11 @@ rebuilding or reinstalling:
    `#keyboardShortcut` label. Removing the label keeps the launcher button and
    disables the hotkey.
 
-Re-running the installer **preserves** the shortcut you set. Resolution order:
+Re-running the installer keeps a shortcut you set on the launcher (priority 2),
+but removing `#keyboardShortcut` only disables the hotkey until the next install
+falls back to the default. To disable it **persistently**, add an empty
+`#cmShortcut=` to the `Command Maker` settings note — an empty value means "no
+shortcut" and wins over every other source. Resolution order:
 
 | Priority | Source |
 | --- | --- |
@@ -120,7 +143,16 @@ Tools/                              #cmTools  (move it anywhere, the label follo
 
 The `Tools` folder is found by its `#cmTools` label, so you can drag it to another
 path and the plugin keeps working. Use **Tools folder → Use the active note** in
-the palette (or add `#cmTools` to any folder manually) to pick a different root.
+the palette (or the note-ID field there) to pick a different root: moving the
+root **moves the `#cmTools` label** from the old folder to the new one, and only
+one folder should carry the label — if you label a second folder by hand while
+another still holds it, the palette picks one of them unpredictably, so use the
+palette action instead of manual labelling.
+
+If you installed the plugin runtime manually *before* ever running the
+installer, put the `Command Maker.js` note as a direct child of the
+`Command Maker` settings note first: the installer only recognises an existing
+`#cmPlugin` note there, and otherwise it creates a second plugin note.
 
 ### Tool notes
 
@@ -142,6 +174,13 @@ The palette renders the "What is?" text and makes the links from the other two
 sections clickable. Everything you add above the `Options` folder is yours to
 organize; the technical notes are confined to that one folder so they do not
 get in the way when you read the tool manually.
+
+Two optional labels shape how the palette shows and finds a tool:
+
+| Label | Effect |
+| --- | --- |
+| `#cmDesc` | one-line description rendered under the tool title in the palette detail pane |
+| `#cmTags` | comma-separated search keywords; matched by the search box, never displayed, and carried by **Export tool** into the backup file |
 
 ### The three standard children
 
@@ -309,14 +348,18 @@ paste box already contains `--help` output, the prompt includes it too.
    import box.
 4. Press **Parse**, review the preview, then **Import tool**.
 
-The model is told to return only the JSON object, so markdown fences can simply
-be removed if one slips through.
+The model is told to return only the JSON object. If a markdown fence still
+slips into its answer, strip the ` ``` ` lines before pasting: a fenced file is
+not parsed as JSON and **Parse** reports `Not valid JSON: …` — nothing is
+written in either case.
 
 ## Design notes
 
 - `src/model.js`, `src/render.js`, `src/parse.js`, `src/sections.js`,
-  `src/toolfile.js`, `src/prompt.js`, `src/styles.js` and `src/dom.js` are pure
-  and unit tested. `src/ui.js` is plain DOM — no JSX compile step, no Preact
+  `src/toolfile.js`, `src/prompt.js` and `src/styles.js` are pure
+  and unit tested. `src/dom.js` is the thin wrapper that owns every touch of
+  the global `document`; it has no Trilium API dependency and is exercised
+  through the palette tests. `src/ui.js` is plain DOM — no JSX compile step, no Preact
   coupling — and reads everything it needs from the runtime controller, so it
   never touches the Trilium `api` global itself.
 - `src/sourcePicker.js` is the paste / active note / file panel shared by both

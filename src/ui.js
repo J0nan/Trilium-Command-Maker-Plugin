@@ -21,7 +21,6 @@
  *   savePreset(toolId, name, values): Promise<void>
  *   deletePreset(toolId, name): Promise<void>
  *   addOption(toolId, option): Promise<void>
- *   deleteOption(noteId): Promise<void>
  *   setToolBase(toolId, base): Promise<void>
  *   currentToolsRoot(): Promise<{ noteId, title } | null>
  *   setToolsRoot(noteId): Promise<void>
