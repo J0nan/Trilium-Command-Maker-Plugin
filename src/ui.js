@@ -439,6 +439,13 @@ function openPalette(controller, options) {
         state.current = item;
         state.edited = false;
         state.exampleLoaded = false;
+        // The list highlights the new tool right away; keep showing the old
+        // one until the load finishes and write on click would hit the tool
+        // the user no longer points at. Clear the pane instead: while a load
+        // is in flight it belongs to no tool.
+        state.loaded = null;
+        state.definition = null;
+        renderDetail();
         markActive(item);
         try {
             const loaded = await controller.load(item.noteId);

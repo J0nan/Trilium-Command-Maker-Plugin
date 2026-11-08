@@ -1223,6 +1223,48 @@ test('Export tool produces a file that carries tags, option bodies and presets',
     assert.deepEqual(env.calls.errors, []);
 });
 
+test('the detail pane never shows the previous tool while a newer selection loads', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    const originalContent = fixture.ffmpeg.getContent.bind(fixture.ffmpeg);
+    let releaseSlowLoad;
+    const slowGate = new Promise((resolve) => {
+        releaseSlowLoad = resolve;
+    });
+    let ffmpegContentReads = 0;
+    fixture.ffmpeg.getContent = async function () {
+        ffmpegContentReads += 1;
+        if (ffmpegContentReads > 1) {
+            await slowGate;
+        }
+        return originalContent();
+    };
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    const rows = findAll(dom.body, (node) => classed(node, 'cm-result'));
+
+    rows[1].click();
+    const gitPreview = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'git preview');
+    assert.ok(String(gitPreview.value).startsWith('git commit'), 'the first selection renders');
+
+    rows[0].click();
+    await new Promise((resolve) => setImmediate(resolve));
+    const activeRow = find(dom.body, (node) => classed(node, 'is-active'));
+    assert.equal(activeRow.children[0].textContent, rows[0].children[0].textContent, 'the list highlights the newest selection');
+    assert.equal(
+        find(dom.body, (node) => classed(node, 'cm-preview')),
+        null,
+        'the previous tool\'s pane is cleared while the newer one is still loading'
+    );
+
+    releaseSlowLoad();
+    const loaded = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'the slower tool preview');
+    assert.match(String(loaded.value), /^ffmpeg\b/, 'the newly loaded tool renders when its load finishes');
+    assert.deepEqual(env.calls.errors, []);
+});
+
 test('a slow tool load cannot hijack the detail pane of a newer selection', async () => {
     const dom = createDom();
     const fixture = buildFixture();
