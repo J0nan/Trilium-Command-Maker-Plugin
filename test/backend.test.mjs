@@ -777,6 +777,34 @@ test('importOptions caps a hostile option list at the per-import limit', () => {
     assert.equal(result.capped, 5, 'the excess is reported, not silently dropped');
 });
 
+test('importOptions cap boundaries: exactly 200, one over, malformed input', () => {
+    const api = createApi();
+    const beRun = serialise(Backend.beRun, api);
+    const { toolsRootId } = boot(api, beRun);
+    const mk = function (prefix, count) {
+        const specs = [];
+        for (let index = 0; index < count; index += 1) {
+            specs.push({ label: prefix + index, flag: '--' + prefix + index });
+        }
+        return specs;
+    };
+
+    const a = beRun({ action: 'createTool', labels, toolsRootId, title: 'capA', base: 'capA' });
+    const at200 = beRun({ action: 'importOptions', labels, toolId: a.noteId, options: mk('a', 200) });
+    assert.equal(at200.created, 200, 'boundary: 200 in, 200 created');
+    assert.equal(at200.capped, 0, 'boundary: nothing reported over the limit');
+
+    const b = beRun({ action: 'createTool', labels, toolsRootId, title: 'capB', base: 'capB' });
+    const at201 = beRun({ action: 'importOptions', labels, toolId: b.noteId, options: mk('b', 201) });
+    assert.equal(at201.created, 200, 'one over the limit still creates 200');
+    assert.equal(at201.capped, 1, 'one over the limit reports exactly one');
+
+    const c = beRun({ action: 'createTool', labels, toolsRootId, title: 'capC', base: 'capC' });
+    const malformed = beRun({ action: 'importOptions', labels, toolId: c.noteId, options: 'nope' });
+    assert.equal(malformed.created, 0, 'non-array options create nothing');
+    assert.equal(malformed.capped, 0, 'non-array options report nothing capped');
+});
+
 test('importTool creates a tool note with its category, children and options', () => {
     const { api, beRun, result } = seedApi();
     const created = beRun({

@@ -1439,3 +1439,141 @@ test('a slow tool load cannot hijack the detail pane of a newer selection', asyn
     assert.equal(activeRow.children[0].textContent, 'git commit', 'the highlight follows the newest selection');
     assert.deepEqual(env.calls.errors, []);
 });
+
+test('a deletePreset write resolving after a newer selection cannot repaint a mixed pane', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    let releaseDelete;
+    const deleteGate = new Promise((resolve) => {
+        releaseDelete = resolve;
+    });
+    const originalRun = env.api.runOnBackend.bind(env.api);
+    env.api.runOnBackend = function (fn, params) {
+        if (params[0].action === 'deletePreset') {
+            env.calls.backend.push(params[0]);
+            return deleteGate.then(function () {
+                return { ok: true };
+            });
+        }
+        return originalRun(fn, params);
+    };
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    const rows = findAll(dom.body, (node) => classed(node, 'cm-result'));
+    rows[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'ffmpeg pane');
+    const select = find(dom.body, (node) => node.getAttribute('aria-label') === 'Preset');
+    select.value = 'web';
+    select.dispatch('change');
+    buttonWithText(dom.body, 'Delete').click();
+    buttonWithText(dom.body, 'Confirm delete').click();
+    rows[1].click();
+    await waitFor(() => {
+        const preview = find(dom.body, (node) => classed(node, 'cm-preview'));
+        return preview && String(preview.value).startsWith('git commit') ? preview : null;
+    }, 'git pane renders while the delete write is in flight');
+
+    releaseDelete();
+    for (let turn = 0; turn < 40; turn += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    const preview = find(dom.body, (node) => classed(node, 'cm-preview'));
+    assert.ok(String(preview.value).startsWith('git commit'), 'the pane keeps the newest tool after the write resolves');
+    const what = findAll(dom.body, (node) => classed(node, 'cm-what'))
+        .map((node) => String(node.textContent))
+        .join(' ');
+    assert.ok(!/Encode and process video/.test(what), 'no mixed pane via the delete path: ' + what);
+    const deletes = env.calls.backend.filter((entry) => entry.action === 'deletePreset');
+    assert.equal(deletes.length, 1, 'exactly one delete write');
+    assert.equal(deletes[0].toolId, 't1', 'the delete targeted the captured note');
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('a failed base-command write re-enables the input and surfaces the error', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    const originalRun = env.api.runOnBackend.bind(env.api);
+    env.api.runOnBackend = function (fn, params) {
+        if (params[0].action === 'setToolBase') {
+            return Promise.reject(new Error('backend down'));
+        }
+        return originalRun(fn, params);
+    };
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'ffmpeg pane');
+    const baseInput = find(dom.body, (node) => node.getAttribute('aria-label') === 'Base command');
+    baseInput.value = 'broken-base';
+    baseInput.dispatch('change');
+    await waitFor(() => {
+        return env.calls.errors.length > 0 || baseInput.disabled === false;
+    }, 'the failed write settles');
+    assert.equal(baseInput.disabled, false, 'a failed write hands the input back to the user');
+    assert.ok(
+        env.calls.errors.some((entry) => /backend down/.test(String(entry))),
+        'the failure is surfaced'
+    );
+});
+
+test('a failed preset delete re-enables the delete button', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    const originalRun = env.api.runOnBackend.bind(env.api);
+    env.api.runOnBackend = function (fn, params) {
+        if (params[0].action === 'deletePreset') {
+            env.calls.backend.push(params[0]);
+            return Promise.reject(new Error('delete failed'));
+        }
+        return originalRun(fn, params);
+    };
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'ffmpeg pane');
+    const select = find(dom.body, (node) => node.getAttribute('aria-label') === 'Preset');
+    select.value = 'web';
+    select.dispatch('change');
+    buttonWithText(dom.body, 'Delete').click();
+    const armed = buttonWithText(dom.body, 'Confirm delete');
+    armed.click();
+    await waitFor(() => env.calls.errors.length > 0 || armed.disabled === false, 'the failed delete settles');
+    assert.equal(armed.disabled, false, 'the failed delete re-enables the button');
+    assert.ok(env.calls.errors.some((entry) => /delete failed/.test(String(entry))), 'the failure is surfaced');
+});
+
+test('the import status line names the capped options', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    const originalRun = env.api.runOnBackend.bind(env.api);
+    env.api.runOnBackend = function (fn, params) {
+        if (params[0].action === 'importOptions') {
+            env.calls.backend.push(params[0]);
+            return Promise.resolve({ created: 200, skipped: 3, capped: 37, noteIds: [] });
+        }
+        return originalRun(fn, params);
+    };
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'ffmpeg pane');
+    buttonWithText(dom.body, 'Import options').click();
+    const modal = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-modal')), 'import modal');
+    const area = find(modal, (node) => node.tagName === 'TEXTAREA');
+    area.value = '  -i FILE  input file\n  -o FILE  output file';
+    buttonWithText(modal, 'Parse').click();
+    await waitFor(() => buttonWithText(modal, 'Import selected') && buttonWithText(modal, 'Import selected').disabled === false, 'parsed preview');
+    buttonWithText(modal, 'Import selected').click();
+    await waitFor(() => {
+        return env.calls.messages.some((message) => /Ignored 37 options over the per-import limit/.test(message));
+    }, 'capped import status');
+});

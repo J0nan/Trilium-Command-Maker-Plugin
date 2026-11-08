@@ -3680,7 +3680,7 @@ __def("ui", function (module, exports, __require) {
  *   createTool(spec): Promise<{ noteId }>
  *   importTool(tool): Promise<{ noteId }>
  *   exportTool(noteId): Promise<{ kind, version, tool }>
- *   importOptions(toolId, options): Promise<{ created, skipped }>
+ *   importOptions(toolId, options): Promise<{ created, skipped, capped }>
  *   savePreset(toolId, name, values): Promise<void>
  *   deletePreset(toolId, name): Promise<void>
  *   addOption(toolId, option): Promise<void>
