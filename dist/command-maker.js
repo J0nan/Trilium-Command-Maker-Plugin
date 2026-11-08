@@ -5809,7 +5809,7 @@ async function readRawContent(note) {
  * Read one tool into the portable file the palette writes to disk.
  * Raw note contents, the tool tags, the per-option note bodies and the
  * presets are kept, so the file carries everything it claims; preset value
- * keys bind to the original note IDs (see README: after import into a
+ * keys bind to the original note IDs (see docs/guide.md: after import into a
  * different instance the stored values may not line up with recreated options).
  */
 async function exportTool(noteId) {
