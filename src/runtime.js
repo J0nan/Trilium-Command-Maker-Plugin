@@ -316,7 +316,9 @@ async function load(noteId) {
     try {
         toolContent = await note.getContent();
     } catch (error) {
-        toolContent = '';
+        // The indexed note vanished (deleted from another tab or session).
+        // Surface it instead of rendering a silently empty tool.
+        throw new Error('Tool "' + note.title + '" could not be read; it may have been deleted. Reopen the palette to refresh.');
     }
     const parsed = Sections.parseToolNote(toolContent);
 

@@ -335,10 +335,13 @@ function valuesFromExample(definition, command) {
         }
     }
 
-    const byFlag = {};
+    // A Map, like every other flag-keyed structure in this file: a tool file
+    // can carry a literal "__proto__" flag, and a plain object would let that
+    // key replace the map's prototype instead of becoming an entry.
+    const byFlag = new Map();
     for (const option of options) {
         if (option.flag) {
-            byFlag[option.flag] = option;
+            byFlag.set(option.flag, option);
         }
     }
 
@@ -360,7 +363,7 @@ function valuesFromExample(definition, command) {
             flag = token.slice(0, equals);
             inlineValue = token.slice(equals + 1);
         }
-        const option = byFlag[flag];
+        const option = byFlag.get(flag);
         if (!option) {
             unknownFlag = true;
             continue;
@@ -375,7 +378,7 @@ function valuesFromExample(definition, command) {
             continue;
         }
         const next = tokens[index + 1];
-        const nextIsKnownFlag = next !== undefined && next.charAt(0) === '-' && next.length > 1 && byFlag[next];
+        const nextIsKnownFlag = next !== undefined && next.charAt(0) === '-' && next.length > 1 && byFlag.get(next);
         if (next !== undefined && !nextIsKnownFlag) {
             values[key] = next;
             index += 1;

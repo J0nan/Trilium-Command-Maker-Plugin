@@ -1252,6 +1252,7 @@ const ALLOWED_TAGS = new Set([
 ]);
 const DROP_ELEMENT_RE = /<(script|style|iframe|object|embed|svg|math|form|input|textarea|select|button|link|meta)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
 const TAG_TOKEN_RE = /<\/?([a-zA-Z][A-Za-z0-9:-]*)([^>]*)>/g;
+const TRAILING_UNCLOSED_TAG_RE = /<[a-zA-Z][^>]*$/;
 const COMMENT_RE = /<!--[\s\S]*?-->/g;
 
 function trim(value) {
@@ -1466,7 +1467,7 @@ function sanitizeNoteHtml(html) {
                 : '<a href="' + escapeAttribute(href) + '" target="_blank" rel="noreferrer">';
         }
         return '<' + tag + '>';
-    });
+    }).replace(TRAILING_UNCLOSED_TAG_RE, '');
 }
 
 /**
@@ -2210,10 +2211,13 @@ function valuesFromExample(definition, command) {
         }
     }
 
-    const byFlag = {};
+    // A Map, like every other flag-keyed structure in this file: a tool file
+    // can carry a literal "__proto__" flag, and a plain object would let that
+    // key replace the map's prototype instead of becoming an entry.
+    const byFlag = new Map();
     for (const option of options) {
         if (option.flag) {
-            byFlag[option.flag] = option;
+            byFlag.set(option.flag, option);
         }
     }
 
@@ -2235,7 +2239,7 @@ function valuesFromExample(definition, command) {
             flag = token.slice(0, equals);
             inlineValue = token.slice(equals + 1);
         }
-        const option = byFlag[flag];
+        const option = byFlag.get(flag);
         if (!option) {
             unknownFlag = true;
             continue;
@@ -2250,7 +2254,7 @@ function valuesFromExample(definition, command) {
             continue;
         }
         const next = tokens[index + 1];
-        const nextIsKnownFlag = next !== undefined && next.charAt(0) === '-' && next.length > 1 && byFlag[next];
+        const nextIsKnownFlag = next !== undefined && next.charAt(0) === '-' && next.length > 1 && byFlag.get(next);
         if (next !== undefined && !nextIsKnownFlag) {
             values[key] = next;
             index += 1;
@@ -5648,7 +5652,9 @@ async function load(noteId) {
     try {
         toolContent = await note.getContent();
     } catch (error) {
-        toolContent = '';
+        // The indexed note vanished (deleted from another tab or session).
+        // Surface it instead of rendering a silently empty tool.
+        throw new Error('Tool "' + note.title + '" could not be read; it may have been deleted. Reopen the palette to refresh.');
     }
     const parsed = Sections.parseToolNote(toolContent);
 

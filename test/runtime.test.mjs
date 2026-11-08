@@ -248,6 +248,22 @@ test('exportTool builds a portable file with raw contents and every option', asy
     globalThis.api = undefined;
 });
 
+test('load reports a tool note that was deleted externally instead of rendering it empty', async () => {
+    const built = makeTool();
+    installApi(built.tool, {});
+    await Runtime.refresh();
+    const controller = Runtime.controller();
+
+    built.tool.getContent = () => Promise.reject(new Error('note deleted'));
+    await assert.rejects(
+        () => controller.load('t1'),
+        /could not be read/,
+        'a vanished tool note surfaces as a readable error, not a silent empty pane'
+    );
+
+    globalThis.api = undefined;
+});
+
 test('importTool posts the portable spec to the backend', async () => {
     const built = makeTool();
     const calls = installApi(built.tool, {});

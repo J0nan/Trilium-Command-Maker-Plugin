@@ -155,6 +155,24 @@ test('sanitizeNoteHtml keeps readable formatting and removes unsafe markup', () 
     assert.equal(clean.includes('<img'), false);
 });
 
+test('sanitizeNoteHtml strips a trailing unterminated tag token', () => {
+    assert.equal(
+        Sections.sanitizeNoteHtml('<p>ok</p><script src=//evil.example'),
+        '<p>ok</p>',
+        'an unterminated script token must never reach the page'
+    );
+    assert.equal(
+        Sections.sanitizeNoteHtml('text ending with <imG src=x'),
+        'text ending with ',
+        'any unterminated tag at the end is dropped, allowed ones included'
+    );
+    assert.equal(
+        Sections.sanitizeNoteHtml('a < b and 5<3'),
+        'a < b and 5<3',
+        'a bare less-than in prose is left alone'
+    );
+});
+
 test('sanitizeNoteHtml only keeps safe link targets', () => {
     const clean = Sections.sanitizeNoteHtml([
         '<a href="javascript:alert(1)">bad</a>',

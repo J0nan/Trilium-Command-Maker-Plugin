@@ -38,6 +38,7 @@ const ALLOWED_TAGS = new Set([
 ]);
 const DROP_ELEMENT_RE = /<(script|style|iframe|object|embed|svg|math|form|input|textarea|select|button|link|meta)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
 const TAG_TOKEN_RE = /<\/?([a-zA-Z][A-Za-z0-9:-]*)([^>]*)>/g;
+const TRAILING_UNCLOSED_TAG_RE = /<[a-zA-Z][^>]*$/;
 const COMMENT_RE = /<!--[\s\S]*?-->/g;
 
 function trim(value) {
@@ -252,7 +253,7 @@ function sanitizeNoteHtml(html) {
                 : '<a href="' + escapeAttribute(href) + '" target="_blank" rel="noreferrer">';
         }
         return '<' + tag + '>';
-    });
+    }).replace(TRAILING_UNCLOSED_TAG_RE, '');
 }
 
 /**
