@@ -6,235 +6,283 @@
  *
  * The UI is driven by a controller (see runtime.js):
  *   refresh(): Promise<void>
- *   search(query): Promise<Array<{ noteId, title, description }>>
- *   load(noteId): Promise<{ definition, presets }>
+ *   search(query): Array<{ noteId, title, category, description, base }>
+ *   load(noteId): Promise<{ definition, presets, whatIs, links, usageExamples,
+ *                            helpText, installText, ... }>
  *   copy(text): Promise<boolean>
  *   insert(text): void
- *   createCommand(title): Promise<{ noteId }>
- *   addOption(commandId, option): Promise<void>
- *   savePreset(commandId, name, values): Promise<void>
- *   deletePreset(noteId): Promise<void>
+ *   message(text): void            show a non-blocking Trilium message
+ *   error(text): void              show a Trilium error message
+ *   categories(): string[]
+ *   createTool(spec): Promise<{ noteId }>
+ *   importTool(tool): Promise<{ noteId }>
+ *   exportTool(noteId): Promise<{ kind, version, tool }>
+ *   importOptions(toolId, options): Promise<{ created, skipped }>
+ *   savePreset(toolId, name, values): Promise<void>
+ *   deletePreset(toolId, name): Promise<void>
+ *   addOption(toolId, option): Promise<void>
+ *   deleteOption(noteId): Promise<void>
+ *   setToolBase(toolId, base): Promise<void>
+ *   currentToolsRoot(): Promise<{ noteId, title } | null>
+ *   setToolsRoot(noteId): Promise<void>
+ *   useActiveNoteAsToolsRoot(): Promise<void>
+ *   activeNoteText(): Promise<{ noteId, title, text }>
+ *   openNote(noteId): Promise<void>
+ *   openInTab(): Promise<string>
+ *   version(): string
+ *   repository(): string
+ *   checkLatestVersion(): Promise<{ current, latest, outdated, error }>
+ *
+ * This module never touches the Trilium `api` global: everything goes through
+ * the controller, which keeps the DOM code testable with a plain DOM.
  */
 
 const Model = require('./model');
 const Render = require('./render');
+const Parse = require('./parse');
+const Sections = require('./sections');
+const ToolFile = require('./toolfile');
+const Prompt = require('./prompt');
+const Dom = require('./dom');
+const Styles = require('./styles');
+const SourcePicker = require('./sourcePicker');
 
-const STYLE_ID = 'cm-palette-style';
+/** Copy icon and control injected into every code block of the Install note. */
+const CODE_COPY_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 2H10c-1.103 0-2 .897-2 2v4H4c-1.103 0-2 .897-2 2v10c0 1.103.897 2 2 2h10c1.103 0 2-.897 2-2v-4h4c1.103 0 2-.897 2-2V4c0-1.103-.897-2-2-2zM4 20V10h10l.002 10H4zm16-6h-4v-4c0-1.103-.897-2-2-2h-4V4h10v10z"></path></svg>';
+const CODE_COPY_BUTTON = '<button type="button" class="cm-code-copy" title="Copy to clipboard" aria-label="Copy to clipboard">' + CODE_COPY_ICON + '</button>';
 
-const CSS = [
-    '.cm-overlay{position:fixed;inset:0;z-index:99999;display:flex;justify-content:center;align-items:flex-start;padding:7vh 16px;background:rgba(0,0,0,.45);}',
-    '.cm-panel{display:flex;flex-direction:column;width:min(960px,100%);max-height:86vh;border-radius:10px;overflow:hidden;background:var(--main-background-color,#fff);color:var(--main-text-color,#222);box-shadow:0 24px 64px rgba(0,0,0,.4);font-size:14px;}',
-    '.cm-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--main-border-color,#ddd);}',
-    '.cm-search{flex:1;padding:8px 10px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--input-background-color,#fafafa);color:inherit;font-size:15px;}',
-    '.cm-close{border:0;background:transparent;color:inherit;font-size:16px;cursor:pointer;padding:4px 8px;}',
-    '.cm-body{display:flex;min-height:0;flex:1;}',
-    '.cm-list{width:280px;flex-shrink:0;overflow-y:auto;border-right:1px solid var(--main-border-color,#ddd);padding:6px;}',
-    '.cm-result{display:block;width:100%;text-align:left;padding:8px 10px;border:0;border-radius:6px;background:transparent;color:inherit;cursor:pointer;}',
-    '.cm-result:hover{background:var(--hover-item-background-color,#0000001a);color:var(--hover-item-text-color,inherit);}',
-    '.cm-result.is-active{background:var(--accented-background-color,#eef2ff);box-shadow:inset 3px 0 0 var(--link-color,#4f8cff);}',
-    '.cm-result-title{font-weight:600;}',
-    '.cm-result-desc{opacity:.7;font-size:12px;margin-top:2px;}',
-    '.cm-detail{flex:1;min-width:0;overflow-y:auto;padding:14px 16px;}',
-    '.cm-title{margin:0 0 4px;font-size:17px;}',
-    '.cm-subtitle{margin:0 0 12px;opacity:.7;}',
-    '.cm-form{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;}',
-    '.cm-row{display:flex;align-items:center;gap:8px;}',
-    '.cm-row-label{flex:0 0 180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
-    '.cm-row .cm-control{flex:1;}',
-    '.cm-control{padding:6px 8px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--input-background-color,#fafafa);color:inherit;font:inherit;}',
-    // Native <select> draws its own arrow while Trilium adds a themed one on hover/focus, so a
-    // select would show two. Hide the native control and keep a single themed arrow in every state.
-    ':root .cm-control.cm-select{appearance:none;-webkit-appearance:none;background-color:var(--input-background-color);background-image:var(--select-arrow-svg,url(\'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="none" stroke="%23888888" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m2 5 6 6 6-6"/></svg>\'));background-position:right 0.75rem center;background-size:15px 20px;background-repeat:no-repeat;padding-inline-end:calc(15px + 1.5rem);}',
-    ':root .cm-control.cm-select:hover{background-color:var(--input-hover-background);color:var(--input-hover-color,inherit);}',
-    ':root .cm-control.cm-select:focus{background-color:var(--select-focus-background);color:var(--select-focus-text-color,inherit);}',
-    // `:root` outranks Trilium's global `textarea:hover` / `textarea:focus` rules, which would
-    // otherwise repaint the preview with the input colours as soon as the pointer or caret enters.
-    ':root .cm-preview{width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid var(--main-border-color,#ccc);background:var(--input-background-color);color:inherit;font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:13px;resize:vertical;}',
-    ':root .cm-preview:hover,:root .cm-preview:focus{background:var(--input-background-color);color:inherit;}',
-    '.cm-warnings{display:flex;flex-direction:column;gap:4px;margin-top:6px;}',
-    '.cm-warning{color:#b45309;font-size:12px;}',
-    '.cm-actions{display:flex;gap:8px;margin:12px 0;}',
-    '.cm-button{padding:6px 12px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--button-background-color,#fff);color:inherit;cursor:pointer;font:inherit;}',
-    '.cm-button:hover{background:var(--accented-background-color,#eef2ff);}',
-    '.cm-danger{color:#b91c1c;}',
-    '.cm-presets{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--main-border-color,#ddd);padding-top:10px;}',
-    '.cm-section{margin:8px 0 4px;font-size:12px;text-transform:uppercase;letter-spacing:.06em;opacity:.6;}',
-    '.cm-empty{opacity:.6;padding:8px;}',
-    '.cm-foot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 12px;border-top:1px solid var(--main-border-color,#ddd);}',
-    '.cm-inline{display:flex;gap:6px;align-items:center;flex:1;min-width:220px;}',
-    '.cm-status{margin-left:auto;font-size:12px;opacity:.75;}',
-    '.cm-status.is-error{color:#b91c1c;opacity:1;}',
-    '.cm-badge{font-size:11px;padding:1px 6px;border-radius:999px;background:var(--accented-background-color,#eef2ff);opacity:.8;}',
-    '@media (max-width:720px){.cm-body{flex-direction:column;}.cm-list{width:auto;max-height:180px;border-right:0;border-bottom:1px solid var(--main-border-color,#ddd);}.cm-row-label{flex-basis:120px;}}'
-].join('\n');
+const NEW_CATEGORY = '__new__';
 
 let instance = null;
 
-function ensureStyle() {
-    if (document.getElementById(STYLE_ID)) {
-        return;
-    }
-    const style = document.createElement('style');
-    style.id = STYLE_ID;
-    style.textContent = CSS;
-    document.head.appendChild(style);
-}
-
-function el(tag, className, text) {
-    const node = document.createElement(tag);
-    if (className) {
-        node.className = className;
-    }
-    if (text !== undefined && text !== null) {
-        node.textContent = String(text);
-    }
-    return node;
-}
-
-/**
- * Trilium code blocks borrow their colours from the active highlight.js theme, which is not
- * exposed as a CSS variable. Probe a hidden `.hljs` element to read the exact background and
- * foreground the current theme gives a code block, so the preview matches it in any theme.
- * Returns null when the stylesheet or `getComputedStyle` is unavailable.
- */
-function codeBlockTheme() {
-    let resolveStyle = null;
-    if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
-        resolveStyle = function (node) {
-            return window.getComputedStyle(node);
-        };
-    } else if (typeof getComputedStyle === 'function') {
-        resolveStyle = function (node) {
-            return getComputedStyle(node);
-        };
-    }
-    if (!resolveStyle || typeof document === 'undefined' || !document.body) {
-        return null;
-    }
-
-    let probe = null;
-    try {
-        probe = document.createElement('code');
-        probe.className = 'hljs';
-        probe.style.position = 'absolute';
-        probe.style.visibility = 'hidden';
-        probe.style.pointerEvents = 'none';
-        document.body.appendChild(probe);
-        const computed = resolveStyle(probe);
-        const background = computed ? String(computed.backgroundColor || '') : '';
-        const color = computed ? String(computed.color || '') : '';
-        if (!background || background === 'transparent' || background === 'rgba(0, 0, 0, 0)') {
-            return null;
+/** Resolve after the handler, so a rejected promise becomes a status message. */
+function guarded(handler, onError) {
+    return function (event) {
+        try {
+            const result = handler(event);
+            if (result && typeof result.then === 'function') {
+                result.catch(onError);
+            }
+        } catch (error) {
+            onError(error);
         }
-        return { background: background, color: color };
-    } catch (ignored) {
-        return null;
-    } finally {
-        if (probe && typeof probe.remove === 'function') {
-            probe.remove();
+    };
+}
+
+function openPalette(controller, options) {
+    const container = options && options.container ? options.container : null;
+    const embedded = Boolean(container);
+
+    // Only the overlay is a singleton. The tab renderer is rendered by Trilium
+    // next to a possibly open overlay, so it always mounts its own instance.
+    if (!embedded) {
+        if (instance) {
+            instance.focus();
+            return instance;
+        }
+        if (typeof window !== 'undefined' && window.__cmPaletteInstance) {
+            window.__cmPaletteInstance.focus();
+            return window.__cmPaletteInstance;
         }
     }
-}
 
-function openPalette(controller) {
-    if (instance) {
-        instance.focus();
-        return instance;
-    }
-    if (typeof window !== 'undefined' && window.__cmPaletteInstance) {
-        window.__cmPaletteInstance.focus();
-        return window.__cmPaletteInstance;
-    }
-
-    ensureStyle();
+    Dom.ensureStyle(Styles.STYLE_ID, Styles.CSS);
 
     const state = {
         items: [],
         active: -1,
         current: null,
+        loaded: null,
         definition: null,
         presets: [],
         values: {},
         edited: false,
+        exampleLoaded: false,
+        optionRows: [],
+        optionGroups: [],
         previewEl: null,
         warningsEl: null,
         presetSelect: null,
-        presetName: null
+        presetName: null,
+        footerRow: null,
+        modal: null,
+        importParsed: null,
+        importRows: [],
+        importToolParsed: null
     };
 
-    const overlay = el('div', 'cm-overlay');
-    const panel = el('div', 'cm-panel');
+    const overlay = embedded ? null : Dom.el('div', 'cm-overlay');
+    const shell = embedded ? Dom.el('div', 'cm-tab-view') : overlay;
+    const panel = Dom.el('div', 'cm-panel');
 
-    const head = el('div', 'cm-head');
+    const head = Dom.el('div', 'cm-head');
     const searchInput = document.createElement('input');
     searchInput.type = 'search';
     searchInput.className = 'cm-search';
-    searchInput.placeholder = 'Search commands…';
-    const closeButton = el('button', 'cm-close', '✕');
+    searchInput.placeholder = 'Search tools…';
+    searchInput.setAttribute('aria-label', 'Search tools');
+    const openTabButton = embedded ? null : Dom.el('button', 'cm-open-tab', 'Open in tab');
+    if (openTabButton) {
+        openTabButton.type = 'button';
+        openTabButton.title = 'Open Command Maker in a new Trilium tab';
+    }
+    const closeButton = Dom.el('button', 'cm-close', '✕');
     closeButton.type = 'button';
     closeButton.title = 'Close (Esc)';
+    closeButton.setAttribute('aria-label', 'Close palette');
     head.appendChild(searchInput);
-    head.appendChild(closeButton);
+    if (openTabButton) {
+        head.appendChild(openTabButton);
+    }
+    if (!embedded) {
+        head.appendChild(closeButton);
+    }
 
-    const body = el('div', 'cm-body');
-    const list = el('div', 'cm-list');
-    const detail = el('div', 'cm-detail');
+    const body = Dom.el('div', 'cm-body');
+    const list = Dom.el('div', 'cm-list');
+    const detail = Dom.el('div', 'cm-detail');
     body.appendChild(list);
     body.appendChild(detail);
 
-    const footer = el('div', 'cm-foot');
-    const newCommandButton = el('button', 'cm-button', 'New command');
-    newCommandButton.type = 'button';
-    const addOptionButton = el('button', 'cm-button', 'Add option');
+    const footer = Dom.el('div', 'cm-foot');
+    const newToolButton = Dom.el('button', 'cm-button', 'New tool');
+    newToolButton.type = 'button';
+    const importToolButton = Dom.el('button', 'cm-button', 'Import tool');
+    importToolButton.type = 'button';
+    const exportToolButton = Dom.el('button', 'cm-button', 'Export tool');
+    exportToolButton.type = 'button';
+    const importButton = Dom.el('button', 'cm-button', 'Import options');
+    importButton.type = 'button';
+    const addOptionButton = Dom.el('button', 'cm-button', 'Add option');
     addOptionButton.type = 'button';
-    const statusEl = el('span', 'cm-status', '');
-    footer.appendChild(newCommandButton);
+    const toolsButton = Dom.el('button', 'cm-button', 'Tools folder');
+    toolsButton.type = 'button';
+    const statusEl = Dom.el('span', 'cm-status', '');
+    statusEl.setAttribute('role', 'status');
+    const versionButton = Dom.el('button', 'cm-version', 'v' + controller.version());
+    versionButton.type = 'button';
+    versionButton.title = 'Check for updates';
+    const repoLink = document.createElement('a');
+    repoLink.className = 'cm-version-link';
+    repoLink.textContent = 'Repository';
+    repoLink.href = controller.repository();
+    repoLink.target = '_blank';
+    repoLink.rel = 'noreferrer';
+    footer.appendChild(newToolButton);
+    footer.appendChild(importToolButton);
+    footer.appendChild(importButton);
     footer.appendChild(addOptionButton);
+    footer.appendChild(exportToolButton);
+    footer.appendChild(toolsButton);
     footer.appendChild(statusEl);
+    footer.appendChild(versionButton);
+    footer.appendChild(repoLink);
+
+    const modalHost = Dom.el('div', 'cm-modal-host');
 
     panel.appendChild(head);
     panel.appendChild(body);
     panel.appendChild(footer);
-    overlay.appendChild(panel);
-    document.body.appendChild(overlay);
+    if (embedded) {
+        Dom.clearEmbeddedView(container, 'cm-tab-view');
+        shell.appendChild(panel);
+        // The modal lives on the shell, not inside the panel: the panel shrinks
+        // to its content when no tool is selected, which used to clip the modal.
+        shell.appendChild(modalHost);
+        container.appendChild(shell);
+    } else {
+        overlay.appendChild(panel);
+        // The modal lives on the overlay, not inside the panel: the panel shrinks
+        // to its content when no tool is selected, which used to clip the modal.
+        overlay.appendChild(modalHost);
+        document.body.appendChild(overlay);
+    }
 
     let searchTimer = null;
-    let newCommandRow = null;
-    let addOptionRow = null;
 
+    /** Update the footer and surface the same text as a Trilium message. */
     function setStatus(message, isError) {
-        statusEl.textContent = message || '';
+        const value = message === undefined || message === null ? '' : String(message);
+        statusEl.textContent = value;
         statusEl.classList.toggle('is-error', Boolean(isError));
+        if (value.trim() === '') {
+            return;
+        }
+        if (isError) {
+            controller.error(value);
+        } else {
+            controller.message(value);
+        }
     }
 
     function notify(error) {
-        const message = error && error.message ? error.message : String(error);
-        setStatus(message, true);
-        try {
-            if (typeof api !== 'undefined' && typeof api.showError === 'function') {
-                api.showError('Command Maker: ' + message);
-            }
-        } catch (ignored) {
-            // showing the message in the footer is enough
+        setStatus(error && error.message ? error.message : String(error), true);
+    }
+
+    async function checkForUpdates() {
+        if (typeof controller.checkLatestVersion !== 'function') {
+            setStatus('Update check is unavailable.', true);
+            return;
+        }
+        setStatus('Checking for updates…');
+        const info = await controller.checkLatestVersion();
+        if (info.error) {
+            setStatus('v' + info.current + ' — ' + info.error + ' See the Repository link.', true);
+            return;
+        }
+        if (info.latest && info.latest !== info.current) {
+            versionButton.textContent = 'v' + info.current + ' → v' + info.latest;
+            versionButton.title = 'Installed v' + info.current + '; latest v' + info.latest + '. Click to check again.';
+        }
+
+        if (info.latest && info.latest === info.current) {
+            setStatus('v' + info.current + ' is the latest version.');
+        } else if (info.outdated) {
+            setStatus('v' + info.current + ' installed · latest is v' + info.latest + '.');
+        } else if (info.latest) {
+            setStatus('v' + info.current + ' is newer than the latest published tag (v' + info.latest + ').');
+        } else {
+            setStatus('v' + info.current + ' — no published version found.');
         }
     }
 
     function button(label, handler, className) {
-        const node = el('button', 'cm-button' + (className ? ' ' + className : ''), label);
+        const node = Dom.el('button', 'cm-button' + (className ? ' ' + className : ''), label);
         node.type = 'button';
         node.addEventListener('click', function (event) {
             event.preventDefault();
-            Promise.resolve()
-                .then(handler)
-                .catch(notify);
+            guarded(handler, notify)();
         });
         return node;
     }
 
+    function closeModal() {
+        if (!state.modal) {
+            return;
+        }
+        state.modal.remove();
+        state.modal = null;
+        state.importParsed = null;
+        state.importRows = [];
+        state.importToolParsed = null;
+    }
+
     function close() {
+        closeModal();
         if (searchTimer) {
             clearTimeout(searchTimer);
             searchTimer = null;
+        }
+        if (shell) {
+            shell.removeEventListener('keydown', onKeyDown);
+        }
+        if (embedded) {
+            if (shell && shell.parentNode && typeof shell.parentNode.removeChild === 'function') {
+                shell.parentNode.removeChild(shell);
+            } else if (shell) {
+                shell.remove();
+            }
+            return;
         }
         overlay.removeEventListener('keydown', onKeyDown);
         overlay.remove();
@@ -247,12 +295,16 @@ function openPalette(controller) {
     function onKeyDown(event) {
         if (event.key === 'Escape') {
             event.preventDefault();
-            close();
+            if (state.modal) {
+                closeModal();
+            } else if (!embedded) {
+                close();
+            }
             return;
         }
         if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
             event.preventDefault();
-            copy();
+            copy().catch(notify);
             return;
         }
         if (document.activeElement !== searchInput) {
@@ -273,19 +325,26 @@ function openPalette(controller) {
     function renderList() {
         list.textContent = '';
         if (!state.items.length) {
-            list.appendChild(el('div', 'cm-empty', 'No commands match.'));
+            list.appendChild(Dom.el('div', 'cm-empty', 'No tools match.'));
             return;
         }
         state.items.forEach(function (item, index) {
-            const row = el('button', 'cm-result' + (index === state.active ? ' is-active' : ''));
+            const row = Dom.el('button', 'cm-result' + (index === state.active ? ' is-active' : ''));
             row.type = 'button';
-            row.appendChild(el('div', 'cm-result-title', item.title));
-            if (item.description) {
-                row.appendChild(el('div', 'cm-result-desc', item.description));
+            row.appendChild(Dom.el('div', 'cm-result-title', item.title));
+            const meta = Dom.el('div', 'cm-result-meta');
+            if (item.category) {
+                meta.appendChild(Dom.el('span', 'cm-cat', item.category));
             }
-            row.addEventListener('click', function () {
-                selectItem(item).catch(notify);
-            });
+            if (item.description) {
+                meta.appendChild(Dom.el('div', 'cm-result-desc', item.description));
+            }
+            if (meta.children.length) {
+                row.appendChild(meta);
+            }
+            row.addEventListener('click', guarded(function () {
+                return selectItem(item);
+            }, notify));
             list.appendChild(row);
         });
     }
@@ -307,8 +366,6 @@ function openPalette(controller) {
     }
 
     function pickActive() {
-        // Enter still opens the best match when nothing has been highlighted yet, but the
-        // list keeps no selected row until the user navigates or clicks.
         const index = state.active >= 0 ? state.active : (state.items.length ? 0 : -1);
         if (index < 0 || !state.items[index]) {
             return;
@@ -317,14 +374,10 @@ function openPalette(controller) {
     }
 
     async function runSearch() {
-        try {
-            const items = await Promise.resolve(controller.search(searchInput.value));
-            state.items = Array.isArray(items) ? items : [];
-            state.active = -1;
-            renderList();
-        } catch (error) {
-            notify(error);
-        }
+        const items = await Promise.resolve(controller.search(searchInput.value));
+        state.items = Array.isArray(items) ? items : [];
+        state.active = -1;
+        renderList();
     }
 
     function onSearchInput() {
@@ -333,7 +386,7 @@ function openPalette(controller) {
         }
         searchTimer = setTimeout(function () {
             searchTimer = null;
-            runSearch();
+            runSearch().catch(notify);
         }, 120);
     }
 
@@ -347,29 +400,49 @@ function openPalette(controller) {
         }
     }
 
-    async function selectItem(item) {
+    async function selectItem(item, selectOptions) {
+        const preserve = Boolean(selectOptions && selectOptions.preserveValues);
+        const previousValues = preserve ? state.values : null;
+        const previousEdited = preserve ? state.edited : false;
+        const previousPreview = preserve && state.previewEl ? state.previewEl.value : '';
         state.current = item;
         state.edited = false;
+        state.exampleLoaded = false;
         markActive(item);
         try {
             const loaded = await controller.load(item.noteId);
+            state.loaded = loaded;
             state.definition = loaded.definition;
             state.presets = loaded.presets || [];
             state.values = Model.defaultValueMap(state.definition);
+            if (previousValues) {
+                state.values = Object.assign(state.values, previousValues);
+            }
             renderDetail();
+            if (previousEdited && state.previewEl) {
+                state.previewEl.value = previousPreview;
+                state.edited = true;
+            }
             setStatus('');
         } catch (error) {
+            state.loaded = null;
             state.definition = null;
             renderDetail();
             notify(error);
         }
     }
 
-    function optionRow(option, inferred) {
-        const row = el('label', 'cm-row' + (inferred ? ' cm-row-inferred' : ''));
-        const key = Render.valueKey(option);
-        row.appendChild(el('span', 'cm-row-label', option.title + (option.required ? ' *' : '')));
+    function setValue(key, value) {
+        state.values[key] = value;
+        if (state.exampleLoaded) {
+            state.edited = false;
+            state.exampleLoaded = false;
+        }
+        updatePreview(false);
+    }
 
+    function optionControl(option) {
+        const key = Render.valueKey(option);
         let control;
         if (option.type === 'boolean') {
             control = document.createElement('input');
@@ -378,13 +451,14 @@ function openPalette(controller) {
             control.addEventListener('change', function () {
                 setValue(key, control.checked);
             });
+            control.className = 'cm-opt-check';
         } else if (option.type === 'enum') {
             control = document.createElement('select');
             const empty = document.createElement('option');
             empty.value = '';
             empty.textContent = '—';
             control.appendChild(empty);
-            option.enumValues.forEach(function (value) {
+            (option.enumValues || []).forEach(function (value) {
                 const entry = document.createElement('option');
                 entry.value = value;
                 entry.textContent = value;
@@ -394,6 +468,7 @@ function openPalette(controller) {
             control.addEventListener('change', function () {
                 setValue(key, control.value);
             });
+            control.className = 'cm-control cm-select cm-opt-control';
         } else {
             control = document.createElement('input');
             control.type = option.type === 'number' ? 'number' : 'text';
@@ -402,21 +477,50 @@ function openPalette(controller) {
             control.addEventListener('input', function () {
                 setValue(key, control.value);
             });
+            control.className = 'cm-control cm-opt-control';
         }
-
-        control.className = option.type === 'boolean'
-            ? ''
-            : 'cm-control' + (option.type === 'enum' ? ' cm-select' : '');
-        row.appendChild(control);
-        if (inferred) {
-            row.appendChild(el('span', 'cm-badge', 'inferred'));
-        }
-        return row;
+        control.setAttribute('aria-label', option.title);
+        return control;
     }
 
-    function setValue(key, value) {
-        state.values[key] = value;
-        updatePreview(false);
+    function optionRow(option, inferred) {
+        const row = Dom.el('div', 'cm-option' + (inferred ? ' cm-option-inferred' : ''));
+        const main = Dom.el('div', 'cm-opt-main');
+        const headRow = Dom.el('div', 'cm-opt-head');
+        headRow.appendChild(Dom.el('span', 'cm-opt-title', option.title));
+        if (option.flag) {
+            headRow.appendChild(Dom.el('code', 'cm-opt-flag', option.flag));
+        }
+        if (inferred) {
+            headRow.appendChild(Dom.el('span', 'cm-badge', 'inferred'));
+        }
+        main.appendChild(headRow);
+        if (option.help) {
+            main.appendChild(Dom.el('div', 'cm-opt-help', option.help));
+        }
+        row.appendChild(main);
+        const control = optionControl(option);
+        row.appendChild(control);
+        if (option.type === 'boolean') {
+            row.classList.add('cm-option-bool');
+            row.addEventListener('click', function (event) {
+                if (event.target === control) {
+                    return;
+                }
+                control.checked = !control.checked;
+                setValue(Render.valueKey(option), control.checked);
+            });
+        }
+        state.optionRows.push({
+            node: row,
+            search: [
+                option.title,
+                option.flag,
+                option.help,
+                (option.enumValues || []).join(' ')
+            ].join(' ').toLowerCase()
+        });
+        return row;
     }
 
     function renderWarnings(warnings) {
@@ -424,8 +528,9 @@ function openPalette(controller) {
             return;
         }
         state.warningsEl.textContent = '';
-        (warnings || []).forEach(function (warning) {
-            state.warningsEl.appendChild(el('div', 'cm-warning', warning.message));
+        const definitionWarnings = state.definition && state.definition.warnings ? state.definition.warnings : [];
+        definitionWarnings.concat(warnings || []).forEach(function (warning) {
+            state.warningsEl.appendChild(Dom.el('div', 'cm-warning', warning.message));
         });
     }
 
@@ -446,6 +551,13 @@ function openPalette(controller) {
             return;
         }
         state.presetSelect.textContent = '';
+        if (state.loaded && state.loaded.presetsInvalid) {
+            const broken = document.createElement('option');
+            broken.value = '';
+            broken.textContent = 'Presets note needs fixing';
+            state.presetSelect.appendChild(broken);
+            return;
+        }
         if (!state.presets.length) {
             const empty = document.createElement('option');
             empty.value = '';
@@ -454,27 +566,30 @@ function openPalette(controller) {
         }
         state.presets.forEach(function (preset) {
             const entry = document.createElement('option');
-            entry.value = preset.noteId;
-            entry.textContent = preset.title;
+            entry.value = preset.name;
+            entry.textContent = preset.name;
             state.presetSelect.appendChild(entry);
         });
+    }
+
+    async function copyTextToClipboard(text, message) {
+        if (!String(text || '').trim()) {
+            notify(new Error('Nothing to copy.'));
+            return;
+        }
+        const ok = await controller.copy(text);
+        if (ok) {
+            setStatus(message || 'Copied to the clipboard.');
+        } else {
+            notify(new Error('Could not write to the clipboard.'));
+        }
     }
 
     async function copy() {
         if (!state.previewEl) {
             return;
         }
-        const text = state.previewEl.value;
-        if (!text.trim()) {
-            notify(new Error('Nothing to copy.'));
-            return;
-        }
-        const ok = await controller.copy(text);
-        if (ok) {
-            setStatus('Copied to the clipboard.');
-        } else {
-            notify(new Error('Could not write to the clipboard.'));
-        }
+        await copyTextToClipboard(state.previewEl.value);
     }
 
     function insert() {
@@ -489,10 +604,10 @@ function openPalette(controller) {
         }
     }
 
-    async function loadPreset() {
-        const noteId = state.presetSelect ? state.presetSelect.value : '';
+    function loadPreset() {
+        const name = state.presetSelect ? state.presetSelect.value : '';
         const preset = state.presets.filter(function (entry) {
-            return entry.noteId === noteId;
+            return entry.name === name;
         })[0];
         if (!preset) {
             notify(new Error('Pick a preset first.'));
@@ -500,6 +615,7 @@ function openPalette(controller) {
         }
         state.values = Object.assign(Model.defaultValueMap(state.definition), preset.values || {});
         state.edited = false;
+        state.exampleLoaded = false;
         renderDetail();
         setStatus('Preset loaded.');
     }
@@ -515,42 +631,82 @@ function openPalette(controller) {
         }
         await controller.savePreset(state.definition.noteId, name, state.values);
         const loaded = await controller.load(state.definition.noteId);
+        state.loaded = loaded;
         state.presets = loaded.presets || [];
         renderDetail();
         setStatus('Preset saved.');
     }
 
     async function deletePreset() {
-        const noteId = state.presetSelect ? state.presetSelect.value : '';
-        if (!noteId) {
+        const name = state.presetSelect ? state.presetSelect.value : '';
+        if (!name) {
             notify(new Error('Pick a preset first.'));
             return;
         }
-        await controller.deletePreset(noteId);
+        await controller.deletePreset(state.definition.noteId, name);
         const loaded = await controller.load(state.definition.noteId);
+        state.loaded = loaded;
         state.presets = loaded.presets || [];
         renderDetail();
         setStatus('Preset deleted.');
     }
 
     function presetBlock() {
-        const block = el('div', 'cm-presets');
-        block.appendChild(el('div', 'cm-section', 'Presets'));
+        const block = Dom.el('div', 'cm-presets');
+        block.appendChild(Dom.el('div', 'cm-section', 'Presets'));
+        if (state.loaded && state.loaded.presetsInvalid) {
+            block.appendChild(Dom.el('div', 'cm-warning', 'The Presets note is not valid JSON. Fix or delete it before saving a preset.'));
+        }
 
-        const row = el('div', 'cm-row');
+        const row = Dom.el('div', 'cm-row');
         const select = document.createElement('select');
         select.className = 'cm-control cm-select';
+        select.setAttribute('aria-label', 'Preset');
         state.presetSelect = select;
         row.appendChild(select);
         row.appendChild(button('Load', loadPreset));
-        row.appendChild(button('Delete', deletePreset, 'cm-danger'));
+
+        const deleteButton = Dom.el('button', 'cm-button cm-danger', 'Delete');
+        deleteButton.type = 'button';
+        let deleteArmed = false;
+        let deleteTimer = null;
+        function disarmDelete() {
+            deleteArmed = false;
+            deleteButton.textContent = 'Delete';
+            deleteButton.classList.remove('cm-danger-armed');
+            if (deleteTimer) {
+                clearTimeout(deleteTimer);
+                deleteTimer = null;
+            }
+        }
+        deleteButton.addEventListener('click', function (event) {
+            event.preventDefault();
+            const name = state.presetSelect ? state.presetSelect.value : '';
+            if (!name) {
+                notify(new Error('Pick a preset first.'));
+                return;
+            }
+            if (!deleteArmed) {
+                deleteArmed = true;
+                deleteButton.textContent = 'Confirm delete';
+                deleteButton.classList.add('cm-danger-armed');
+                setStatus('Press Delete again to remove "' + name + '".');
+                deleteTimer = setTimeout(disarmDelete, 5000);
+                return;
+            }
+            disarmDelete();
+            deletePreset().catch(notify);
+        });
+        select.addEventListener('change', disarmDelete);
+        row.appendChild(deleteButton);
         block.appendChild(row);
 
-        const saveRow = el('div', 'cm-row');
+        const saveRow = Dom.el('div', 'cm-row');
         const nameInput = document.createElement('input');
         nameInput.type = 'text';
         nameInput.className = 'cm-control';
         nameInput.placeholder = 'Preset name';
+        nameInput.setAttribute('aria-label', 'Preset name');
         state.presetName = nameInput;
         saveRow.appendChild(nameInput);
         saveRow.appendChild(button('Save preset', savePreset));
@@ -560,47 +716,237 @@ function openPalette(controller) {
         return block;
     }
 
+    function examplesBlock() {
+        if (!state.loaded || !(state.loaded.usageExamples || []).length) {
+            return null;
+        }
+        const block = Dom.el('div', 'cm-examples');
+        block.appendChild(Dom.el('div', 'cm-section', 'Examples'));
+        state.loaded.usageExamples.forEach(function (example) {
+            const row = Dom.el('div', 'cm-example');
+            row.appendChild(Dom.el('code', 'cm-example-text', example));
+            row.appendChild(button('Use', function () {
+                state.values = Model.valuesFromExample(state.definition, example);
+                state.edited = false;
+                state.exampleLoaded = false;
+                renderDetail();
+                if (state.previewEl) {
+                    state.previewEl.value = example;
+                    state.edited = true;
+                    state.exampleLoaded = true;
+                }
+                setStatus('Example loaded into the form.');
+            }));
+            row.appendChild(button('Copy', function () {
+                return copyTextToClipboard(example);
+            }));
+            block.appendChild(row);
+        });
+        return block;
+    }
+
+    function linksBlock() {
+        if (!state.loaded || !state.loaded.links.length) {
+            return null;
+        }
+        const block = Dom.el('div', 'cm-links');
+        state.loaded.links.forEach(function (link) {
+            const anchor = document.createElement('a');
+            anchor.className = 'cm-link';
+            anchor.textContent = link.text;
+            anchor.href = link.href;
+            anchor.target = '_blank';
+            anchor.rel = 'noreferrer';
+            block.appendChild(anchor);
+        });
+        return block;
+    }
+
+    function foldBlock(title, text, className) {
+        if (!text) {
+            return null;
+        }
+        const details = document.createElement('details');
+        details.className = 'cm-fold-block';
+        const summary = document.createElement('summary');
+        summary.textContent = title;
+        details.appendChild(summary);
+        const pre = Dom.el('pre', 'cm-pre' + (className ? ' ' + className : ''), text);
+        details.appendChild(pre);
+        return details;
+    }
+
+    /** Same fold, but the body keeps the formatting of a rich-text note. */
+    function foldHtmlBlock(title, html) {
+        if (!html) {
+            return null;
+        }
+        const details = document.createElement('details');
+        details.className = 'cm-fold-block';
+        const summary = document.createElement('summary');
+        summary.textContent = title;
+        details.appendChild(summary);
+        const box = Dom.el('div', 'cm-install');
+        // Only allowlisted tags and attributes reach the DOM; the copy control is
+        // our own trusted markup.
+        box.innerHTML = Sections.wrapCodeBlocks(Sections.sanitizeNoteHtml(html), CODE_COPY_BUTTON);
+        box.addEventListener('click', function (event) {
+            const target = event.target;
+            if (!target || typeof target.closest !== 'function') {
+                return;
+            }
+            const control = target.closest('.cm-code-copy');
+            if (!control) {
+                return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            const wrapper = control.parentNode;
+            const pre = wrapper && typeof wrapper.querySelector === 'function'
+                ? wrapper.querySelector('pre')
+                : null;
+            copyTextToClipboard(pre ? pre.textContent : '', 'Code copied to the clipboard.').catch(notify);
+        });
+        details.appendChild(box);
+        return details;
+    }
+
+    function baseRow() {
+        const row = Dom.el('div', 'cm-base-row');
+        row.appendChild(Dom.el('span', 'cm-base-label', 'Base command'));
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'cm-control';
+        input.value = state.definition.base;
+        input.setAttribute('aria-label', 'Base command');
+        input.addEventListener('change', function () {
+            const value = input.value.trim();
+            guarded(async function () {
+                await controller.setToolBase(state.definition.noteId, value);
+                state.definition.base = value || Model.deriveBase(state.definition.title);
+                state.values = Object.assign(Model.defaultValueMap(state.definition), state.values);
+                state.exampleLoaded = false;
+                renderDetail();
+                setStatus('Base command updated.');
+            }, notify)();
+        });
+        row.appendChild(input);
+        return row;
+    }
+
     function renderDetail() {
         detail.textContent = '';
         state.previewEl = null;
         state.warningsEl = null;
         state.presetSelect = null;
         state.presetName = null;
+        state.optionRows = [];
+        state.optionGroups = [];
 
         if (!state.definition) {
-            detail.appendChild(el('div', 'cm-empty', 'Pick a command from the list.'));
+            detail.appendChild(Dom.el('div', 'cm-empty', 'Pick a tool from the list.'));
             return;
         }
 
         const definition = state.definition;
-        const header = el('div', 'cm-detail-head');
-        header.appendChild(el('h2', 'cm-title', definition.title));
+        const header = Dom.el('div', 'cm-detail-head');
+        const title = Dom.el('h2', 'cm-title');
+        title.appendChild(Dom.el('span', '', definition.title));
+        if (definition.category) {
+            title.appendChild(Dom.el('span', 'cm-cat', definition.category));
+        }
+        header.appendChild(title);
         if (definition.description) {
-            header.appendChild(el('p', 'cm-subtitle', definition.description));
+            header.appendChild(Dom.el('p', 'cm-subtitle', definition.description));
         }
         detail.appendChild(header);
 
-        const form = el('div', 'cm-form');
-        if (!definition.options.length && !definition.inferred.length) {
-            form.appendChild(el('div', 'cm-empty', 'This command has no options yet. Use "Add option".'));
+        if (state.loaded && state.loaded.whatIs) {
+            detail.appendChild(Dom.el('div', 'cm-section', 'What is?'));
+            detail.appendChild(Dom.el('p', 'cm-what', state.loaded.whatIs));
         }
-        definition.options.forEach(function (option) {
-            form.appendChild(optionRow(option, false));
-        });
-        if (definition.inferred.length) {
-            form.appendChild(el('div', 'cm-section', 'Placeholders without an option'));
-            definition.inferred.forEach(function (option) {
-                form.appendChild(optionRow(option, true));
+
+        const links = linksBlock();
+        if (links) {
+            detail.appendChild(links);
+        }
+
+        detail.appendChild(baseRow());
+        detail.appendChild(presetBlock());
+
+        detail.appendChild(Dom.el('div', 'cm-section', 'Options (' + definition.options.length + ')'));
+        const filter = document.createElement('input');
+        filter.type = 'search';
+        filter.className = 'cm-control cm-filter';
+        filter.placeholder = 'Filter options…';
+        filter.setAttribute('aria-label', 'Filter options');
+        filter.addEventListener('input', function () {
+            const needle = String(filter.value || '').trim().toLowerCase();
+            state.optionRows.forEach(function (entry) {
+                const match = needle === '' || entry.search.indexOf(needle) !== -1;
+                entry.node.style.display = match ? '' : 'none';
             });
+            state.optionGroups.forEach(function (group) {
+                const visible = group.rows.some(function (row) {
+                    return row.style.display !== 'none';
+                });
+                group.node.style.display = visible ? '' : 'none';
+            });
+        });
+        detail.appendChild(filter);
+
+        const form = Dom.el('div', 'cm-form');
+        const requiredOptions = definition.options
+            .filter(function (option) {
+                return option.required;
+            })
+            .concat(definition.inferred);
+        const optionalOptions = definition.options.filter(function (option) {
+            return !option.required;
+        });
+
+        function optionGroup(title, options) {
+            if (!options.length) {
+                return;
+            }
+            const group = Dom.el('div', 'cm-option-group');
+            group.appendChild(Dom.el('div', 'cm-option-group-title', title));
+            const rows = [];
+            options.forEach(function (option) {
+                const row = optionRow(option, Boolean(option.inferred));
+                rows.push(row);
+                group.appendChild(row);
+            });
+            form.appendChild(group);
+            state.optionGroups.push({ node: group, rows: rows });
         }
+
+        if (!requiredOptions.length && !optionalOptions.length) {
+            form.appendChild(Dom.el('div', 'cm-empty', 'This tool has no options yet. Use "Import options" or add option notes under Options.'));
+        }
+        optionGroup('Required', requiredOptions);
+        optionGroup('Optional', optionalOptions);
         detail.appendChild(form);
 
-        detail.appendChild(el('div', 'cm-section', 'Command'));
+        detail.appendChild(Dom.el('div', 'cm-section', 'Extra arguments'));
+        const extra = document.createElement('input');
+        extra.type = 'text';
+        extra.className = 'cm-control';
+        extra.placeholder = 'Positional arguments or subcommands, inserted after the base';
+        extra.setAttribute('aria-label', 'Extra arguments');
+        extra.value = state.values[Render.EXTRA_KEY] === undefined ? '' : String(state.values[Render.EXTRA_KEY]);
+        extra.addEventListener('input', function () {
+            setValue(Render.EXTRA_KEY, extra.value);
+        });
+        detail.appendChild(extra);
+
+        detail.appendChild(Dom.el('div', 'cm-section', 'Command'));
         const preview = document.createElement('textarea');
         preview.className = 'cm-preview';
         preview.spellcheck = false;
-        preview.rows = 4;
-        const codeTheme = codeBlockTheme();
+        preview.rows = 3;
+        preview.setAttribute('aria-label', 'Command preview');
+        const codeTheme = Dom.codeBlockTheme();
         if (codeTheme) {
             preview.style.background = codeTheme.background;
             if (codeTheme.color) {
@@ -609,49 +955,123 @@ function openPalette(controller) {
         }
         preview.addEventListener('input', function () {
             state.edited = true;
+            state.exampleLoaded = false;
         });
         state.previewEl = preview;
         detail.appendChild(preview);
 
-        state.warningsEl = el('div', 'cm-warnings');
+        state.warningsEl = Dom.el('div', 'cm-warnings');
         detail.appendChild(state.warningsEl);
 
-        const actions = el('div', 'cm-actions');
+        const actions = Dom.el('div', 'cm-actions');
         actions.appendChild(button('Copy', copy));
         actions.appendChild(button('Insert', insert));
         actions.appendChild(button('Regenerate', function () {
             state.edited = false;
+            state.exampleLoaded = false;
             updatePreview(true);
+        }));
+        actions.appendChild(button('Open note', function () {
+            return controller.openNote(definition.noteId);
         }));
         detail.appendChild(actions);
 
-        detail.appendChild(presetBlock());
+        const examples = examplesBlock();
+        if (examples) {
+            detail.appendChild(examples);
+        }
+
+        const help = foldBlock('Help output', state.loaded ? state.loaded.helpText : '');
+        if (help) {
+            detail.appendChild(help);
+        }
+        let install = null;
+        if (state.loaded && state.loaded.installHtml) {
+            install = state.loaded.installIsCode
+                ? foldHtmlBlock('Install', '<pre><code>' + Sections.escapeHtml(state.loaded.installHtml) + '</code></pre>')
+                : foldHtmlBlock('Install', state.loaded.installHtml);
+        } else if (state.loaded) {
+            install = foldBlock('Install', state.loaded.installText);
+        }
+        if (install) {
+            detail.appendChild(install);
+        }
+
         updatePreview(true);
     }
 
-    function toggleNewCommand() {
-        if (newCommandRow) {
-            newCommandRow.remove();
-            newCommandRow = null;
+    function clearFooterRow() {
+        if (state.footerRow) {
+            state.footerRow.remove();
+            state.footerRow = null;
+        }
+    }
+
+    function toggleNewTool() {
+        if (state.footerRow) {
+            clearFooterRow();
             return;
         }
-        const row = el('div', 'cm-inline');
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'cm-control';
-        input.placeholder = 'New command name (e.g. docker run)';
+        const row = Dom.el('div', 'cm-inline');
+        const titleInput = document.createElement('input');
+        titleInput.type = 'text';
+        titleInput.className = 'cm-control';
+        titleInput.placeholder = 'Tool name (e.g. docker)';
+        titleInput.setAttribute('aria-label', 'Tool name');
+
+        const categorySelect = document.createElement('select');
+        categorySelect.className = 'cm-control cm-select';
+        categorySelect.setAttribute('aria-label', 'Category');
+        const categories = controller.categories();
+        categories.forEach(function (name) {
+            const option = document.createElement('option');
+            option.value = name;
+            option.textContent = name;
+            categorySelect.appendChild(option);
+        });
+        const newCategoryOption = document.createElement('option');
+        newCategoryOption.value = NEW_CATEGORY;
+        newCategoryOption.textContent = 'New category…';
+        categorySelect.appendChild(newCategoryOption);
+        if (!categories.length) {
+            categorySelect.value = NEW_CATEGORY;
+        }
+
+        const newCategoryInput = document.createElement('input');
+        newCategoryInput.type = 'text';
+        newCategoryInput.className = 'cm-control';
+        newCategoryInput.placeholder = 'New category name';
+        newCategoryInput.setAttribute('aria-label', 'New category name');
+        newCategoryInput.style.display = categorySelect.value === NEW_CATEGORY ? '' : 'none';
+        categorySelect.addEventListener('change', function () {
+            newCategoryInput.style.display = categorySelect.value === NEW_CATEGORY ? '' : 'none';
+        });
+
+        const baseInput = document.createElement('input');
+        baseInput.type = 'text';
+        baseInput.className = 'cm-control';
+        baseInput.placeholder = 'Base command (optional, defaults to the name)';
+        baseInput.setAttribute('aria-label', 'Base command');
+
         const create = button('Create', async function () {
-            const title = input.value.trim();
+            const title = titleInput.value.trim();
             if (!title) {
-                notify(new Error('Command name is required.'));
+                notify(new Error('Tool name is required.'));
                 return;
             }
-            const created = await controller.createCommand(title);
-            if (newCommandRow) {
-                newCommandRow.remove();
-                newCommandRow = null;
+            const isNewCategory = categorySelect.value === NEW_CATEGORY;
+            const category = isNewCategory ? newCategoryInput.value.trim() : categorySelect.value;
+            if (isNewCategory && !category) {
+                notify(new Error('Category name is required.'));
+                return;
             }
-            await controller.refresh();
+            const created = await controller.createTool({
+                title: title,
+                category: category,
+                base: baseInput.value.trim(),
+                description: ''
+            });
+            clearFooterRow();
             await runSearch();
             const item = state.items.filter(function (entry) {
                 return entry.noteId === created.noteId;
@@ -659,38 +1079,375 @@ function openPalette(controller) {
             if (item) {
                 await selectItem(item);
             }
-            setStatus('Command created.');
+            setStatus('Tool created.');
         });
-        row.appendChild(input);
+
+        row.appendChild(titleInput);
+        row.appendChild(categorySelect);
+        row.appendChild(newCategoryInput);
+        row.appendChild(baseInput);
         row.appendChild(create);
         footer.appendChild(row);
-        newCommandRow = row;
-        input.focus();
+        state.footerRow = row;
+        titleInput.focus();
     }
 
-    function toggleAddOption() {
-        if (!state.definition) {
-            notify(new Error('Select a command first.'));
+    function modalShell(title, bodyNode, actionsNode) {
+        closeModal();
+        const modal = Dom.el('div', 'cm-modal');
+        const modalPanel = Dom.el('div', 'cm-modal-panel');
+        modalPanel.setAttribute('role', 'dialog');
+        modalPanel.setAttribute('aria-modal', 'true');
+        modalPanel.setAttribute('aria-label', title);
+        const modalHead = Dom.el('div', 'cm-modal-head');
+        modalHead.appendChild(Dom.el('span', 'cm-modal-title', title));
+        const closeModalButton = Dom.el('button', 'cm-close', '✕');
+        closeModalButton.type = 'button';
+        closeModalButton.setAttribute('aria-label', 'Close dialog');
+        closeModalButton.addEventListener('click', closeModal);
+        modalHead.appendChild(closeModalButton);
+        const modalBody = Dom.el('div', 'cm-modal-body');
+        modalBody.appendChild(bodyNode);
+        const modalActions = Dom.el('div', 'cm-modal-actions');
+        modalActions.appendChild(actionsNode);
+        modalPanel.appendChild(modalHead);
+        modalPanel.appendChild(modalBody);
+        modalPanel.appendChild(modalActions);
+        modal.appendChild(modalPanel);
+        modal.addEventListener('click', function (event) {
+            if (event.target === modal) {
+                closeModal();
+            }
+        });
+        modalHost.appendChild(modal);
+        state.modal = modal;
+        return { modal: modal, body: modalBody, actions: modalActions };
+    }
+
+    function openImport() {
+        if (!state.current) {
+            notify(new Error('Select a tool first.'));
             return;
         }
-        if (addOptionRow) {
-            addOptionRow.remove();
-            addOptionRow = null;
+        const tool = state.current;
+        const picker = SourcePicker.createSourcePicker({
+            controller: controller,
+            hint: 'Paste "--help" output, a JSON options file, or a markdown table. Nothing is written until you import.',
+            placeholder: '--help output, JSON or a markdown table…',
+            accept: '.txt,.json,.md,.markdown,.log,.help,.text',
+            onStatus: setStatus,
+            onError: notify
+        });
+
+        const parseButton = Dom.el('button', 'cm-button', 'Parse');
+        parseButton.type = 'button';
+        const importSelected = Dom.el('button', 'cm-button', 'Import selected');
+        importSelected.type = 'button';
+        importSelected.disabled = true;
+        const closeButton2 = Dom.el('button', 'cm-button', 'Close');
+        closeButton2.type = 'button';
+        closeButton2.addEventListener('click', closeModal);
+
+        const warnings = Dom.el('div', 'cm-warnings', '');
+        const previewList = Dom.el('div', 'cm-import-list', '');
+        let statusMessage = '';
+
+        function renderImportPreview() {
+            warnings.textContent = '';
+            previewList.textContent = '';
+            state.importRows = [];
+            importSelected.disabled = true;
+            if (!state.importParsed) {
+                return;
+            }
+            (state.importParsed.warnings || []).forEach(function (warning) {
+                warnings.appendChild(Dom.el('div', 'cm-warning', warning.message || warning.code));
+            });
+            const options = state.importParsed.options || [];
+            if (!options.length) {
+                previewList.appendChild(Dom.el('div', 'cm-empty', 'No options found. Check the format and try again.'));
+                return;
+            }
+            options.forEach(function (option, index) {
+                const row = Dom.el('div', 'cm-import-row');
+                const selectLabel = Dom.el('label', 'cm-import-select');
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.checked = true;
+                checkbox.setAttribute('aria-label', 'Select ' + (option.flag || option.label));
+                checkbox.addEventListener('change', function () {
+                    state.importRows[index].checked = checkbox.checked;
+                    importSelected.disabled = !state.importRows.some(function (entry) {
+                        return entry.checked;
+                    });
+                });
+                selectLabel.appendChild(checkbox);
+                row.appendChild(selectLabel);
+                const main = Dom.el('div', 'cm-import-main');
+                main.appendChild(Dom.el('div', 'cm-import-flag', option.flag + (option.type ? '  (' + option.type + ')' : '')));
+                if (option.help) {
+                    main.appendChild(Dom.el('div', 'cm-import-help', option.help));
+                }
+                row.appendChild(main);
+                const requiredLabel = Dom.el('label', 'cm-import-required');
+                const requiredBox = document.createElement('input');
+                requiredBox.type = 'checkbox';
+                requiredBox.checked = Boolean(option.required);
+                requiredBox.setAttribute('aria-label', 'Required');
+                requiredBox.addEventListener('change', function () {
+                    state.importRows[index].required = requiredBox.checked;
+                });
+                requiredLabel.appendChild(requiredBox);
+                requiredLabel.appendChild(Dom.el('span', '', 'Required'));
+                row.appendChild(requiredLabel);
+                previewList.appendChild(row);
+                state.importRows.push({ option: option, checked: true, required: Boolean(option.required) });
+            });
+            importSelected.disabled = false;
+        }
+
+        parseButton.addEventListener('click', guarded(function () {
+            const text = picker.getText();
+            if (!String(text || '').trim()) {
+                notify(new Error('Nothing to parse. Paste help output, read the active note or choose a file.'));
+                return;
+            }
+            state.importParsed = Parse.parseImport(text);
+            renderImportPreview();
+            setStatus('Parsed ' + (state.importParsed.options || []).length + ' option(s).');
+        }, notify));
+
+        importSelected.addEventListener('click', guarded(async function () {
+            const selected = state.importRows
+                .filter(function (entry) {
+                    return entry.checked;
+                })
+                .map(function (entry) {
+                    return Object.assign({}, entry.option, { required: entry.required });
+                });
+            if (!selected.length) {
+                throw new Error('Select at least one option.');
+            }
+            const result = await controller.importOptions(tool.noteId, selected);
+            closeModal();
+            const created = result && typeof result.created === 'number' ? result.created : 'the selected';
+            const skipped = result && result.skipped ? ' Skipped ' + result.skipped + ' duplicate(s).' : '';
+            statusMessage = 'Imported ' + created + ' option(s).' + skipped;
+            await controller.refresh();
+            await runSearch();
+            await selectItem(tool, { preserveValues: true });
+            setStatus(statusMessage);
+        }, notify));
+
+        const bodyNode = Dom.el('div', '');
+        bodyNode.appendChild(picker.node);
+        bodyNode.appendChild(warnings);
+        bodyNode.appendChild(previewList);
+
+        const actionsNode = Dom.el('div', 'cm-inline');
+        actionsNode.appendChild(parseButton);
+        actionsNode.appendChild(importSelected);
+        actionsNode.appendChild(closeButton2);
+
+        modalShell('Import options into "' + tool.title + '"', bodyNode, actionsNode);
+    }
+
+    function openImportTool() {
+        const picker = SourcePicker.createSourcePicker({
+            controller: controller,
+            hint: 'Paste a tool file (JSON) exported from another tool, or one generated with "Copy AI prompt". Nothing is written until you import.',
+            placeholder: 'Tool file JSON, or the output of the tool\'s --help command…',
+            accept: '.json,.txt,.text',
+            onStatus: setStatus,
+            onError: notify
+        });
+
+        const promptButton = Dom.el('button', 'cm-button', 'Copy AI prompt');
+        promptButton.type = 'button';
+        promptButton.title = 'Copy a prompt for any AI model, including the pasted --help output';
+        const parseButton = Dom.el('button', 'cm-button', 'Parse');
+        parseButton.type = 'button';
+        const importSelected = Dom.el('button', 'cm-button', 'Import tool');
+        importSelected.type = 'button';
+        importSelected.disabled = true;
+        const closeButton2 = Dom.el('button', 'cm-button', 'Close');
+        closeButton2.type = 'button';
+        closeButton2.addEventListener('click', closeModal);
+
+        const warnings = Dom.el('div', 'cm-warnings', '');
+        const previewList = Dom.el('div', 'cm-import-list', '');
+        let statusMessage = '';
+
+        function renderToolPreview() {
+            warnings.textContent = '';
+            previewList.textContent = '';
+            importSelected.disabled = true;
+            const parsed = state.importToolParsed;
+            if (!parsed) {
+                return;
+            }
+            (parsed.warnings || []).forEach(function (warning) {
+                warnings.appendChild(Dom.el('div', 'cm-warning', warning.message || warning.code));
+            });
+            const tool = parsed.tool;
+            if (!tool) {
+                return;
+            }
+            [
+                ['Title', tool.title],
+                ['Category', tool.category || 'Uncategorized'],
+                ['Base command', tool.base || Model.deriveBase(tool.title)]
+            ].forEach(function (line) {
+                previewList.appendChild(Dom.el('div', 'cm-import-flag', line[0] + ': ' + line[1]));
+            });
+            if (tool.description) {
+                previewList.appendChild(Dom.el('div', 'cm-note', tool.description));
+            }
+            if (!tool.options.length) {
+                previewList.appendChild(Dom.el('div', 'cm-empty', 'This tool file has no options.'));
+            }
+            tool.options.forEach(function (option) {
+                const row = Dom.el('div', 'cm-import-row');
+                const main = Dom.el('div', 'cm-import-main');
+                const flag = option.flag || '(positional)';
+                main.appendChild(Dom.el('div', 'cm-import-flag', flag + '  (' + option.type + ')  ' + option.label));
+                if (option.help) {
+                    main.appendChild(Dom.el('div', 'cm-import-help', option.help));
+                }
+                row.appendChild(main);
+                previewList.appendChild(row);
+            });
+            importSelected.disabled = false;
+        }
+
+        promptButton.addEventListener('click', function () {
+            const pasted = picker.getText();
+            const looksJson = /^\s*[{[]/.test(String(pasted || ''));
+            copyTextToClipboard(Prompt.buildToolPrompt({
+                helpText: looksJson ? '' : pasted
+            }), 'AI prompt copied to the clipboard.').catch(notify);
+        });
+
+        parseButton.addEventListener('click', guarded(function () {
+            const text = picker.getText();
+            if (!String(text || '').trim()) {
+                notify(new Error('Nothing to parse. Paste a tool file, read the active note or choose a file.'));
+                return;
+            }
+            state.importToolParsed = ToolFile.parseToolFile(text);
+            renderToolPreview();
+            const tool = state.importToolParsed.tool;
+            setStatus(tool ? 'Parsed tool "' + tool.title + '".' : 'The tool file could not be parsed.');
+        }, notify));
+
+        importSelected.addEventListener('click', guarded(async function () {
+            const parsed = state.importToolParsed;
+            if (!parsed || !parsed.tool) {
+                notify(new Error('Parse a tool file first.'));
+                return;
+            }
+            const created = await controller.importTool(parsed.tool);
+            closeModal();
+            statusMessage = 'Imported tool "' + parsed.tool.title + '".';
+            await controller.refresh();
+            await runSearch();
+            const item = created
+                ? state.items.filter(function (entry) {
+                    return entry.noteId === created.noteId;
+                })[0]
+                : null;
+            if (item) {
+                await selectItem(item);
+            }
+            setStatus(statusMessage);
+        }, notify));
+
+        const bodyNode = Dom.el('div', '');
+        bodyNode.appendChild(picker.node);
+        bodyNode.appendChild(warnings);
+        bodyNode.appendChild(previewList);
+
+        const actionsNode = Dom.el('div', 'cm-inline');
+        actionsNode.appendChild(promptButton);
+        actionsNode.appendChild(parseButton);
+        actionsNode.appendChild(importSelected);
+        actionsNode.appendChild(closeButton2);
+
+        modalShell('Import a tool', bodyNode, actionsNode);
+    }
+
+    async function openExportTool() {
+        if (!state.current) {
+            notify(new Error('Select a tool first.'));
             return;
         }
-        const row = el('div', 'cm-inline');
+        const file = await controller.exportTool(state.current.noteId);
+        const json = JSON.stringify(file, null, 2);
+        const filename = (Render.slugify(file.tool.title) || 'tool') + '.tool.json';
+
+        const bodyNode = Dom.el('div', '');
+        bodyNode.appendChild(Dom.el('div', 'cm-note', 'This plain-JSON file can be imported here, kept as a backup, or shared.'));
+        const area = document.createElement('textarea');
+        area.className = 'cm-control cm-preview';
+        area.rows = 18;
+        area.readOnly = true;
+        area.value = json;
+        bodyNode.appendChild(area);
+        bodyNode.appendChild(Dom.el('div', 'cm-note', 'Suggested file name: ' + filename));
+
+        const copyButton = Dom.el('button', 'cm-button', 'Copy JSON');
+        copyButton.type = 'button';
+        copyButton.addEventListener('click', function () {
+            copyTextToClipboard(json, 'Tool file copied to the clipboard.').catch(notify);
+        });
+
+        const downloadButton = Dom.el('button', 'cm-button', 'Download .json');
+        downloadButton.type = 'button';
+        downloadButton.addEventListener('click', guarded(function () {
+            Dom.downloadText(filename, json);
+            setStatus('Downloaded ' + filename + '.');
+        }, notify));
+
+        const closeButton2 = Dom.el('button', 'cm-button', 'Close');
+        closeButton2.type = 'button';
+        closeButton2.addEventListener('click', closeModal);
+
+        const actionsNode = Dom.el('div', 'cm-inline');
+        actionsNode.appendChild(copyButton);
+        actionsNode.appendChild(downloadButton);
+        actionsNode.appendChild(closeButton2);
+
+        modalShell('Export "' + file.tool.title + '"', bodyNode, actionsNode);
+    }
+
+    function openAddOption() {
+        if (!state.current) {
+            notify(new Error('Select a tool first.'));
+            return;
+        }
+        const tool = state.current;
+
+        function field(labelText, control) {
+            const wrapper = Dom.el('label', 'cm-field');
+            wrapper.appendChild(Dom.el('span', 'cm-field-label', labelText));
+            control.className = 'cm-control' + (control.tagName === 'SELECT' ? ' cm-select' : '');
+            wrapper.appendChild(control);
+            return wrapper;
+        }
+
         const labelInput = document.createElement('input');
         labelInput.type = 'text';
-        labelInput.className = 'cm-control';
-        labelInput.placeholder = 'Option label';
+        labelInput.placeholder = 'Option label, e.g. Output file';
 
         const flagInput = document.createElement('input');
         flagInput.type = 'text';
-        flagInput.className = 'cm-control';
-        flagInput.placeholder = '--flag (empty = positional)';
+        flagInput.placeholder = 'Flag, e.g. --output (empty = positional)';
+
+        const helpInput = document.createElement('input');
+        helpInput.type = 'text';
+        helpInput.placeholder = 'What is this option for?';
 
         const typeSelect = document.createElement('select');
-        typeSelect.className = 'cm-control cm-select';
         Model.TYPES.forEach(function (type) {
             const entry = document.createElement('option');
             entry.value = type;
@@ -698,48 +1455,187 @@ function openPalette(controller) {
             typeSelect.appendChild(entry);
         });
 
-        const add = button('Add', async function () {
+        const defaultInput = document.createElement('input');
+        defaultInput.type = 'text';
+        defaultInput.placeholder = 'Default value (optional)';
+
+        const valuesInput = document.createElement('input');
+        valuesInput.type = 'text';
+        valuesInput.placeholder = 'Enum values, comma separated (optional)';
+
+        const orderInput = document.createElement('input');
+        orderInput.type = 'number';
+        orderInput.placeholder = '100';
+        orderInput.value = '100';
+
+        const requiredInput = document.createElement('input');
+        requiredInput.type = 'checkbox';
+        const requiredRow = Dom.el('label', 'cm-row');
+        requiredRow.appendChild(Dom.el('span', 'cm-base-label', 'Required'));
+        requiredRow.appendChild(requiredInput);
+
+        const add = Dom.el('button', 'cm-button', 'Add');
+        add.type = 'button';
+        add.addEventListener('click', guarded(async function () {
             const label = labelInput.value.trim();
             if (!label) {
-                notify(new Error('Option label is required.'));
-                return;
+                throw new Error('Option label is required.');
             }
-            await controller.addOption(state.definition.noteId, {
+            const values = valuesInput.value.split(',')
+                .map(function (entry) {
+                    return entry.trim();
+                })
+                .filter(function (entry) {
+                    return entry !== '';
+                });
+            const order = Number(orderInput.value);
+            await controller.addOption(tool.noteId, {
                 label: label,
                 flag: flagInput.value.trim(),
-                type: typeSelect.value
+                help: helpInput.value.trim(),
+                type: typeSelect.value,
+                values: values,
+                defaultValue: defaultInput.value,
+                required: Boolean(requiredInput.checked),
+                order: isFinite(order) ? order : 100
             });
-            if (addOptionRow) {
-                addOptionRow.remove();
-                addOptionRow = null;
-            }
-            if (state.current) {
-                await selectItem(state.current);
-            }
-            setStatus('Option added. Edit its attributes to set enum values, defaults and order.');
-        });
+            closeModal();
+            await controller.refresh();
+            await runSearch();
+            await selectItem(tool, { preserveValues: true });
+            setStatus('Option added.');
+        }, notify));
 
-        row.appendChild(labelInput);
-        row.appendChild(flagInput);
-        row.appendChild(typeSelect);
-        row.appendChild(add);
-        footer.appendChild(row);
-        addOptionRow = row;
+        const closeButton2 = Dom.el('button', 'cm-button', 'Close');
+        closeButton2.type = 'button';
+        closeButton2.addEventListener('click', closeModal);
+
+        const bodyNode = Dom.el('div', '');
+        bodyNode.appendChild(Dom.el('div', 'cm-note', 'The option is stored as a note under the tool\'s Options folder.'));
+        bodyNode.appendChild(field('Label', labelInput));
+        bodyNode.appendChild(field('Flag', flagInput));
+        bodyNode.appendChild(field('Help', helpInput));
+        bodyNode.appendChild(field('Type', typeSelect));
+        bodyNode.appendChild(field('Default', defaultInput));
+        bodyNode.appendChild(field('Values', valuesInput));
+        bodyNode.appendChild(field('Order', orderInput));
+        bodyNode.appendChild(requiredRow);
+        bodyNode.appendChild(Dom.el('div', 'cm-note', 'Required options are grouped first under Required in the palette.'));
+
+        const actionsNode = Dom.el('div', 'cm-inline');
+        actionsNode.appendChild(add);
+        actionsNode.appendChild(closeButton2);
+
+        modalShell('Add an option to "' + tool.title + '"', bodyNode, actionsNode);
         labelInput.focus();
     }
 
-    searchInput.addEventListener('input', onSearchInput);
-    closeButton.addEventListener('click', close);
-    newCommandButton.addEventListener('click', toggleNewCommand);
-    addOptionButton.addEventListener('click', toggleAddOption);
-    overlay.addEventListener('click', function (event) {
-        if (event.target === overlay) {
-            close();
-        }
-    });
-    overlay.addEventListener('keydown', onKeyDown);
+    function openToolsFolder() {
+        const bodyNode = Dom.el('div', '');
+        const info = Dom.el('div', 'cm-note', 'Loading…');
+        bodyNode.appendChild(info);
 
-    instance = {
+        const active = Dom.el('button', 'cm-button', 'Use the active note');
+        active.type = 'button';
+        const openFolder = Dom.el('button', 'cm-button', 'Open Tools folder');
+        openFolder.type = 'button';
+        openFolder.disabled = true;
+
+        const idRow = Dom.el('div', 'cm-row');
+        const idInput = document.createElement('input');
+        idInput.type = 'text';
+        idInput.className = 'cm-control';
+        idInput.placeholder = 'Note ID of an existing folder';
+        idInput.setAttribute('aria-label', 'Note ID of an existing folder');
+        const useId = Dom.el('button', 'cm-button', 'Use this note ID');
+        useId.type = 'button';
+        idRow.appendChild(idInput);
+        idRow.appendChild(useId);
+        bodyNode.appendChild(idRow);
+
+        let root = null;
+        guarded(async function () {
+            root = await controller.currentToolsRoot();
+            info.textContent = root
+                ? 'Current Tools folder: "' + root.title + '" (' + root.noteId + ').'
+                : 'No Tools folder yet.';
+            openFolder.disabled = !root;
+        }, notify)();
+
+        active.addEventListener('click', guarded(async function () {
+            await controller.useActiveNoteAsToolsRoot();
+            closeModal();
+            setStatus('Tools folder updated to the active note.');
+            await runSearch();
+        }, notify));
+
+        openFolder.addEventListener('click', function () {
+            if (!root) {
+                return;
+            }
+            controller.openNote(root.noteId).catch(notify);
+        });
+
+        useId.addEventListener('click', guarded(async function () {
+            const noteId = idInput.value.trim();
+            if (!noteId) {
+                throw new Error('Enter a note ID.');
+            }
+            await controller.setToolsRoot(noteId);
+            closeModal();
+            setStatus('Tools folder updated.');
+            await runSearch();
+        }, notify));
+
+        const actionsNode = Dom.el('div', 'cm-inline');
+        actionsNode.appendChild(active);
+        actionsNode.appendChild(openFolder);
+        const closeButton2 = Dom.el('button', 'cm-button', 'Close');
+        closeButton2.type = 'button';
+        closeButton2.addEventListener('click', closeModal);
+        actionsNode.appendChild(closeButton2);
+
+        modalShell('Tools folder', bodyNode, actionsNode);
+    }
+
+    searchInput.addEventListener('input', onSearchInput);
+    if (!embedded) {
+        closeButton.addEventListener('click', close);
+    }
+    if (openTabButton) {
+        openTabButton.addEventListener('click', guarded(async function () {
+            openTabButton.disabled = true;
+            try {
+                await controller.openInTab();
+                close();
+            } catch (error) {
+                openTabButton.disabled = false;
+                throw error;
+            }
+        }, notify));
+    }
+    versionButton.addEventListener('click', function (event) {
+        event.preventDefault();
+        checkForUpdates().catch(notify);
+    });
+    newToolButton.addEventListener('click', toggleNewTool);
+    importToolButton.addEventListener('click', openImportTool);
+    exportToolButton.addEventListener('click', guarded(openExportTool, notify));
+    importButton.addEventListener('click', openImport);
+    addOptionButton.addEventListener('click', openAddOption);
+    toolsButton.addEventListener('click', openToolsFolder);
+    if (embedded) {
+        shell.addEventListener('keydown', onKeyDown);
+    } else {
+        overlay.addEventListener('click', function (event) {
+            if (event.target === overlay) {
+                close();
+            }
+        });
+        overlay.addEventListener('keydown', onKeyDown);
+    }
+
+    const handle = {
         focus() {
             searchInput.focus();
             searchInput.select();
@@ -747,20 +1643,21 @@ function openPalette(controller) {
         close,
         element: panel
     };
-    if (typeof window !== 'undefined') {
-        window.__cmPaletteInstance = instance;
+    if (!embedded) {
+        instance = handle;
+        if (typeof window !== 'undefined') {
+            window.__cmPaletteInstance = handle;
+        }
     }
 
     searchInput.focus();
 
-    Promise.resolve()
-        .then(function () {
-            return controller.refresh();
-        })
-        .then(runSearch)
-        .catch(notify);
+    guarded(async function () {
+        await controller.refresh();
+        await runSearch();
+    }, notify)();
 
-    return instance;
+    return handle;
 }
 
 module.exports = { openPalette };

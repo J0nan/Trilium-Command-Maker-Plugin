@@ -2,16 +2,34 @@
 
 /**
  * Trilium runtime glue: reads FNote objects into plain snapshots, keeps a
- * command index for fast fuzzy search, and exposes actions to the palette.
+ * tool index for fast search, and exposes actions to the palette.
+ *
+ * Structure the runtime expects:
+ *   Tools/                 #cmTools (any path)
+ *     Category/            #cmCategory
+ *       Tool/              #cmTool  (three H2 sections in its content)
+ *         Install          #cmInstall
+ *         Usage            #cmUsage
+ *         Help             #cmHelpNote
+ *         Options/         #cmOptions
+ *           Option         #cmOption
+ *           Presets        #cmPresets (JSON)
  */
 
 const Model = require('./model');
 const Backend = require('./backend');
+const Sections = require('./sections');
+const Parse = require('./parse');
+const ToolFile = require('./toolfile');
+const Version = require('./version');
+const Dom = require('./dom');
 const UI = require('./ui');
 
 let index = [];
-let notesById = new Map();
+let entriesById = new Map();
 let bootstrapPromise = null;
+let bootstrapApi = null;
+let bootstrapInfo = null;
 
 function getApi() {
     return typeof api !== 'undefined' ? api : null;
@@ -36,207 +54,387 @@ function readLabels(note) {
     return labels;
 }
 
+function hasLabel(note, name) {
+    if (!note) {
+        return false;
+    }
+    try {
+        if (typeof note.hasLabel === 'function') {
+            return note.hasLabel(name);
+        }
+        const value = note.getLabelValue(name);
+        return value !== null && value !== undefined;
+    } catch (error) {
+        return false;
+    }
+}
+
 async function childWithLabel(note, label) {
+    if (!note) {
+        return null;
+    }
     const children = await note.getChildNotes();
     for (const child of children) {
-        let value = null;
-        try {
-            value = child.getLabelValue(label);
-        } catch (error) {
-            value = null;
-        }
-        if (value !== null && value !== undefined) {
+        if (hasLabel(child, label)) {
             return child;
         }
     }
     return null;
 }
 
+async function childByTitle(note, title) {
+    const children = await note.getChildNotes();
+    for (const child of children) {
+        if (child.title === title) {
+            return child;
+        }
+    }
+    return null;
+}
+
+/**
+ * The standard child of a tool note: found by label first (survives a rename)
+ * and by its default title second (survives a missing label).
+ */
+function standardChild(note, label, title) {
+    if (!note) {
+        return Promise.resolve(null);
+    }
+    return childWithLabel(note, label).then(function (found) {
+        return found || childByTitle(note, title);
+    });
+}
+
 function ensureBootstrap() {
-    if (bootstrapPromise) {
+    const apiRef = getApi();
+    if (bootstrapPromise && bootstrapApi === apiRef) {
         return bootstrapPromise;
     }
-    const apiRef = getApi();
     if (!apiRef) {
         return Promise.reject(new Error('Trilium api is not available.'));
     }
+    bootstrapApi = apiRef;
     bootstrapPromise = Promise.resolve(
         apiRef.runOnBackend(Backend.beRun, [{
-            action: Backend.ACTIONS.bootstrap,
-            labels: Model.LABELS
+            action: 'bootstrap',
+            labels: Model.LABELS,
+            icons: Model.ICONS,
+            version: Version.VERSION,
+            seed: true,
+            seedTools: Model.seedTools(),
+            newToolNotes: Model.newToolNotes()
         }])
-    ).catch(function (error) {
+    ).then(function (result) {
+        bootstrapInfo = result || null;
+        return result;
+    }).catch(function (error) {
         bootstrapPromise = null;
+        bootstrapApi = null;
         throw error;
     });
     return bootstrapPromise;
 }
 
-async function readOptionTitles(note) {
-    const optionsNote = await childWithLabel(note, Model.LABELS.options);
-    if (!optionsNote) {
-        return [];
+async function resolveToolsRoot() {
+    const apiRef = getApi();
+    try {
+        const found = await apiRef.searchForNote('#' + Model.LABELS.tools);
+        if (found) {
+            return found;
+        }
+    } catch (error) {
+        // fall through to the bootstrap result
     }
-    const children = await optionsNote.getChildNotes();
-    return children.map(function (child) {
-        return child.title;
-    });
+    if (bootstrapInfo && bootstrapInfo.toolsRootId) {
+        try {
+            return await apiRef.getNote(bootstrapInfo.toolsRootId);
+        } catch (error) {
+            return null;
+        }
+    }
+    return null;
 }
 
-/**
- * The base string lives in the note content (code note, raw text) unless
- * #cmBase overrides it. It must be indexed here: search has to match the
- * command text, not just the title.
- */
-async function readBase(note, labels) {
-    if (labels && labels[Model.LABELS.base] !== undefined) {
-        return String(labels[Model.LABELS.base]);
+async function readOptionSnapshots(toolNote) {
+    const folder = await childWithLabel(toolNote, Model.LABELS.options);
+    if (!folder) {
+        return [];
     }
-    try {
-        return String(await note.getContent());
-    } catch (error) {
-        return '';
+    const children = await folder.getChildNotes();
+    const snapshots = [];
+    for (const child of children) {
+        if (hasLabel(child, Model.LABELS.option)) {
+            snapshots.push({
+                noteId: child.noteId,
+                title: child.title,
+                labels: readLabels(child)
+            });
+        }
     }
+    return snapshots;
 }
 
 async function refresh() {
     await ensureBootstrap();
     const apiRef = getApi();
-    const notes = await apiRef.searchForNotes('#' + Model.LABELS.command);
-
-    let templateId = null;
-    try {
-        const template = await apiRef.searchForNote('#' + Model.LABELS.template);
-        templateId = template ? template.noteId : null;
-    } catch (error) {
-        templateId = null;
-    }
+    const notes = await apiRef.searchForNotes('#' + Model.LABELS.tool);
 
     const nextIndex = [];
     const nextById = new Map();
+
     for (const note of notes) {
-        if (templateId && note.noteId === templateId) {
-            continue;
-        }
         const labels = readLabels(note);
-        let optionTitles = [];
+        let category = '';
         try {
-            optionTitles = await readOptionTitles(note);
+            const parents = note.getParentNotes();
+            if (parents && parents.length) {
+                category = parents[0].title;
+            }
         } catch (error) {
-            optionTitles = [];
+            category = '';
         }
-        nextById.set(note.noteId, note);
+
+        let optionSnapshots = [];
+        try {
+            optionSnapshots = await readOptionSnapshots(note);
+        } catch (error) {
+            optionSnapshots = [];
+        }
+
+        let whatIs = '';
+        try {
+            const parsed = Sections.parseToolNote(await note.getContent());
+            whatIs = parsed.whatIs;
+        } catch (error) {
+            whatIs = '';
+        }
+
+        const description = labels[Model.LABELS.description] || '';
+        const base = labels[Model.LABELS.base] || Model.deriveBase(note.title);
+        const entry = {
+            noteId: note.noteId,
+            title: note.title,
+            category: category,
+            labels: labels,
+            note: note,
+            optionSnapshots: optionSnapshots
+        };
+
+        nextById.set(note.noteId, entry);
         nextIndex.push({
             noteId: note.noteId,
             title: note.title,
-            labels: labels,
-            base: await readBase(note, labels),
-            optionTitles: optionTitles
+            category: category,
+            description: description,
+            base: base,
+            // Built once per refresh: search runs on every keystroke, and the
+            // haystack comes from the same definition `Model.matches` uses.
+            searchable: Model.searchableText({
+                title: note.title,
+                category: category,
+                description: description,
+                tags: labels[Model.LABELS.tags],
+                base: base,
+                whatIs: whatIs,
+                optionText: Model.optionNotesText(optionSnapshots)
+            })
         });
     }
 
     index = nextIndex;
-    notesById = nextById;
+    entriesById = nextById;
     return index;
 }
 
 function search(query) {
     return index.filter(function (item) {
-        return Model.matches({
-            title: item.title,
-            description: item.labels[Model.LABELS.description] || '',
-            tags: item.labels[Model.LABELS.tags] || '',
-            base: item.base || item.labels[Model.LABELS.base] || '',
-            options: [],
-            optionTitles: item.optionTitles || []
-        }, query);
+        return Model.matchesText(item.searchable, query);
     });
 }
 
-async function readPresets(presetsNote) {
-    const children = await presetsNote.getChildNotes();
+function readPresetsContent(content) {
+    let data = null;
+    try {
+        data = JSON.parse(String(content || ''));
+    } catch (error) {
+        return { presets: [], invalid: true };
+    }
+    if (!data || typeof data !== 'object' || !Array.isArray(data.presets)) {
+        return { presets: [], invalid: true };
+    }
     const presets = [];
-    for (const child of children) {
-        let marker = null;
-        try {
-            marker = child.getLabelValue(Model.LABELS.preset);
-        } catch (error) {
-            marker = null;
-        }
-        if (marker === null || marker === undefined) {
+    for (const entry of data.presets) {
+        if (!entry || typeof entry.name !== 'string') {
             continue;
         }
-        let values = {};
-        try {
-            const parsed = JSON.parse(await child.getContent());
-            values = parsed && parsed.values ? parsed.values : {};
-        } catch (error) {
-            values = {};
+        // Values are JSON, so copy only own primitive string keys: a hand-edited
+        // or generated preset must never add an own `__proto__` to the map that
+        // the palette later passes to Object.assign.
+        const values = {};
+        if (entry.values && typeof entry.values === 'object' && !Array.isArray(entry.values)) {
+            for (const key of Object.keys(entry.values)) {
+                if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+                    continue;
+                }
+                const value = entry.values[key];
+                if (value === null || typeof value === 'object' || typeof value === 'function') {
+                    continue;
+                }
+                values[key] = value;
+            }
         }
-        presets.push({ noteId: child.noteId, title: child.title, values: values });
+        presets.push({ name: entry.name, values: values });
     }
-    return presets;
+    return { presets: presets, invalid: false };
 }
 
-async function load(noteId) {
-    const note = notesById.get(noteId);
+async function readNoteText(note) {
     if (!note) {
-        throw new Error('Command not found. Reopen the palette.');
+        return '';
     }
-    const labels = readLabels(note);
-
     let content = '';
     try {
         content = await note.getContent();
     } catch (error) {
-        content = '';
+        return '';
     }
+    if (note.type === 'code') {
+        return String(content || '');
+    }
+    return Parse.stripHtml(content);
+}
 
+async function load(noteId) {
+    const entry = entriesById.get(noteId);
+    if (!entry) {
+        throw new Error('Tool not found. Reopen the palette.');
+    }
+    const note = entry.note;
+    const labels = entry.labels;
+
+    let toolContent = '';
+    try {
+        toolContent = await note.getContent();
+    } catch (error) {
+        toolContent = '';
+    }
+    const parsed = Sections.parseToolNote(toolContent);
+
+    const installNote = await standardChild(note, Model.LABELS.install, 'Install');
+    const usageNote = await standardChild(note, Model.LABELS.usage, 'Usage');
+    const helpNote = await standardChild(note, Model.LABELS.helpNote, 'Help');
     const optionsNote = await childWithLabel(note, Model.LABELS.options);
-    const presetsNote = await childWithLabel(note, Model.LABELS.presets);
-    const optionNotes = optionsNote ? await optionsNote.getChildNotes() : [];
+    const presetsNote = optionsNote ? await childWithLabel(optionsNote, Model.LABELS.presets) : null;
 
-    const definition = Model.buildCommand({
+    const installHtml = await readRawContent(installNote);
+    const installIsCode = Boolean(installNote && installNote.type === 'code');
+    const installText = installIsCode ? installHtml : Parse.stripHtml(installHtml);
+    const usageHtml = await readRawContent(usageNote);
+    const helpText = await readNoteText(helpNote);
+    const usageExamples = usageNote && usageNote.type === 'code'
+        ? Sections.parseExampleLines(usageHtml)
+        : Sections.parseExamples(usageHtml, labels[Model.LABELS.base] || Model.deriveBase(note.title));
+
+    const definition = Model.buildTool({
         noteId: note.noteId,
         title: note.title,
-        content: content,
+        category: entry.category,
+        content: toolContent,
         labels: labels,
-        optionNotes: optionNotes.map(function (optionNote) {
-            return {
-                noteId: optionNote.noteId,
-                title: optionNote.title,
-                labels: readLabels(optionNote)
-            };
-        })
+        optionNotes: entry.optionSnapshots,
+        examples: usageExamples,
+        searchText: entry.searchText
     });
 
-    const presets = presetsNote ? await readPresets(presetsNote) : [];
-    return { definition: definition, presets: presets };
+    let presets = [];
+    let presetsInvalid = false;
+    if (presetsNote) {
+        try {
+            const read = readPresetsContent(await presetsNote.getContent());
+            presets = read.presets;
+            presetsInvalid = read.invalid;
+        } catch (error) {
+            presets = [];
+            presetsInvalid = true;
+        }
+    }
+
+    let toolNotePath = '';
+    try {
+        toolNotePath = note.getBestNotePathString();
+    } catch (error) {
+        toolNotePath = '';
+    }
+
+    return {
+        definition: definition,
+        presets: presets,
+        presetsInvalid: presetsInvalid,
+        whatIs: parsed.whatIs,
+        links: parsed.links,
+        officialLinks: parsed.officialLinks,
+        usefulLinks: parsed.usefulLinks,
+        usageExamples: usageExamples,
+        helpText: helpText,
+        installText: installText,
+        installHtml: installHtml,
+        installIsCode: installIsCode,
+        optionsFolderId: optionsNote ? optionsNote.noteId : null,
+        presetsNoteId: presetsNote ? presetsNote.noteId : null,
+        toolNotePath: toolNotePath
+    };
+}
+
+async function readRawContent(note) {
+    if (!note) {
+        return '';
+    }
+    try {
+        return String(await note.getContent() || '');
+    } catch (error) {
+        return '';
+    }
+}
+
+/**
+ * Read one tool into the portable file the palette writes to disk.
+ * Raw note contents are kept so an export/import round trip loses nothing.
+ */
+async function exportTool(noteId) {
+    const entry = entriesById.get(noteId);
+    if (!entry) {
+        throw new Error('Tool not found. Reopen the palette.');
+    }
+    const note = entry.note;
+    const labels = entry.labels;
+
+    const installNote = await standardChild(note, Model.LABELS.install, 'Install');
+    const usageNote = await standardChild(note, Model.LABELS.usage, 'Usage');
+    const helpNote = await standardChild(note, Model.LABELS.helpNote, 'Help');
+
+    const definition = Model.buildTool({
+        noteId: note.noteId,
+        title: note.title,
+        category: entry.category,
+        labels: labels,
+        optionNotes: entry.optionSnapshots
+    });
+
+    return ToolFile.buildToolFile({
+        title: note.title,
+        category: entry.category,
+        base: definition.base,
+        description: definition.description,
+        content: await readRawContent(note),
+        install: await readRawContent(installNote),
+        usage: await readRawContent(usageNote),
+        help: await readRawContent(helpNote),
+        options: definition.options
+    });
 }
 
 async function copyText(text) {
-    try {
-        if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
-            await navigator.clipboard.writeText(text);
-            return true;
-        }
-    } catch (error) {
-        // fall through to the legacy path
-    }
-    try {
-        const area = document.createElement('textarea');
-        area.value = text;
-        area.setAttribute('readonly', '');
-        area.style.position = 'fixed';
-        area.style.opacity = '0';
-        document.body.appendChild(area);
-        area.select();
-        const ok = document.execCommand('copy');
-        document.body.removeChild(area);
-        return Boolean(ok);
-    } catch (error) {
-        return false;
-    }
+    return Dom.copyText(text);
 }
 
 function insertText(text) {
@@ -249,8 +447,183 @@ function insertText(text) {
 
 function backendAction(action, extra) {
     const apiRef = getApi();
-    const params = Object.assign({ action: action, labels: Model.LABELS }, extra || {});
+    const params = Object.assign({ action: action, labels: Model.LABELS, icons: Model.ICONS }, extra || {});
     return apiRef.runOnBackend(Backend.beRun, [params]);
+}
+
+function toolsRootId() {
+    if (!bootstrapInfo || !bootstrapInfo.toolsRootId) {
+        throw new Error('Tools folder is not available yet. Reopen the palette.');
+    }
+    return bootstrapInfo.toolsRootId;
+}
+
+async function setToolsRootAction(noteId) {
+    const current = await resolveToolsRoot();
+    await backendAction('setToolsRoot', {
+        noteId: noteId,
+        oldToolsRootId: current ? current.noteId : null
+    });
+    bootstrapPromise = null;
+    bootstrapInfo = null;
+    index = [];
+    entriesById = new Map();
+    await refresh();
+    return { noteId: noteId };
+}
+
+function versionParts(value) {
+    return String(value == null ? '' : value)
+        .replace(/^v/i, '')
+        .split('.')
+        .map(function (part) {
+            return parseInt(part, 10) || 0;
+        });
+}
+
+function compareVersions(left, right) {
+    const a = versionParts(left);
+    const b = versionParts(right);
+    for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+        const delta = (a[index] || 0) - (b[index] || 0);
+        if (delta !== 0) {
+            return delta;
+        }
+    }
+    return 0;
+}
+
+/**
+ * Best-effort update check: the latest GitHub release, else the highest tag,
+ * else the package.json version on the default branch. A private or unreachable
+ * repository becomes a readable error.
+ */
+async function checkLatestVersion() {
+    const result = { current: Version.VERSION, latest: '', outdated: false, error: '' };
+    if (typeof fetch !== 'function') {
+        result.error = 'This environment cannot check for updates.';
+        return result;
+    }
+
+    async function read(url, kind) {
+        const options = { headers: { Accept: kind === 'json' ? 'application/json' : 'text/plain' } };
+        let timer = null;
+        if (typeof AbortController === 'function') {
+            const controller = new AbortController();
+            options.signal = controller.signal;
+            timer = setTimeout(function () {
+                controller.abort();
+            }, 10000);
+        }
+        try {
+            const response = await fetch(url, options);
+            if (!response || !response.ok) {
+                throw new Error('HTTP ' + (response ? response.status : 'unknown'));
+            }
+            return kind === 'json' ? response.json() : response.text();
+        } finally {
+            if (timer) {
+                clearTimeout(timer);
+            }
+        }
+    }
+
+    try {
+        const release = await read(Version.LATEST_RELEASE_API, 'json');
+        const tag = release && (release.tag_name || release.name);
+        if (tag) {
+            result.latest = String(tag).replace(/^v/i, '');
+            result.outdated = compareVersions(result.latest, result.current) > 0;
+            return result;
+        }
+    } catch (error) {
+        // no release yet; try tags
+    }
+
+    try {
+        const tags = await read(Version.LATEST_TAGS_API, 'json');
+        if (Array.isArray(tags) && tags.length) {
+            const names = tags
+                .map(function (tag) {
+                    return tag && tag.name ? String(tag.name).replace(/^v/i, '') : '';
+                })
+                .filter(function (name) {
+                    return name !== '';
+                });
+            if (names.length) {
+                names.sort(compareVersions);
+                result.latest = names[names.length - 1];
+                result.outdated = compareVersions(result.latest, result.current) > 0;
+                return result;
+            }
+        }
+    } catch (error) {
+        // fall through to the default branch package.json
+    }
+
+    try {
+        const text = String(await read(Version.LATEST_RAW, 'text') || '');
+        const match = /"version"\s*:\s*"([^"]+)"/.exec(text);
+        if (match) {
+            result.latest = match[1];
+            result.outdated = compareVersions(result.latest, result.current) > 0;
+            return result;
+        }
+        result.error = 'No published version found.';
+    } catch (error) {
+        result.error = 'Could not check for updates: ' + (error && error.message ? error.message : error);
+    }
+    return result;
+}
+
+/**
+ * In a Render Note, Trilium executes the JS child with `api.$container` set to
+ * the rendered note content. The HTML wrapper carries `.cm-tab-root`, so the
+ * palette mounts inside the tab instead of as an overlay. A launcher script has
+ * no rendered container and falls through to the normal overlay.
+ */
+function embeddedHost(apiRef) {
+    if (!apiRef || !apiRef.$container) {
+        return null;
+    }
+    try {
+        const container = apiRef.$container;
+        if (typeof container.find !== 'function') {
+            return null;
+        }
+        const marked = container.find('.cm-tab-root');
+        const node = marked && marked.length ? marked[0] : null;
+        return node && typeof node.appendChild === 'function' ? node : null;
+    } catch (error) {
+        return null;
+    }
+}
+
+async function openInTab() {
+    const apiRef = getApi();
+    if (!apiRef) {
+        throw new Error('Trilium api is not available.');
+    }
+    const info = await ensureBootstrap();
+    if (!info || !info.rootId) {
+        throw new Error('Command Maker is not ready yet. Reopen the palette.');
+    }
+    const scriptNote = apiRef.startNote;
+    if (!scriptNote || !scriptNote.noteId) {
+        throw new Error('Cannot locate the Command Maker plugin note.');
+    }
+    const result = await backendAction('ensureTab', {
+        rootId: info.rootId,
+        scriptNoteId: scriptNote.noteId
+    });
+    if (typeof apiRef.openTabWithNote !== 'function') {
+        throw new Error('This Trilium version cannot open notes in a new tab.');
+    }
+    if (typeof apiRef.waitUntilSynced === 'function') {
+        await apiRef.waitUntilSynced();
+    }
+    await apiRef.openTabWithNote(result.tabNoteId, true);
+    return result.tabNoteId;
 }
 
 function controller() {
@@ -260,22 +633,140 @@ function controller() {
         load: load,
         copy: copyText,
         insert: insertText,
-        createCommand(title) {
-            return backendAction(Backend.ACTIONS.createCommand, { title: title });
+        version() {
+            return Version.VERSION;
         },
-        addOption(commandId, option) {
-            return backendAction(Backend.ACTIONS.addOption, { commandId: commandId, option: option });
+        repository() {
+            return Version.REPOSITORY;
         },
-        savePreset(commandId, name, values) {
-            return backendAction(Backend.ACTIONS.savePreset, {
-                commandId: commandId,
-                name: name,
-                values: values
+        checkLatestVersion: checkLatestVersion,
+
+        /** Surface a message in the Trilium UI; the footer keeps its own copy. */
+        message(text) {
+            try {
+                const apiRef = getApi();
+                if (apiRef && typeof apiRef.showMessage === 'function') {
+                    apiRef.showMessage(String(text));
+                }
+            } catch (error) {
+                // the footer status is the fallback
+            }
+        },
+
+        error(text) {
+            try {
+                const apiRef = getApi();
+                if (apiRef && typeof apiRef.showError === 'function') {
+                    apiRef.showError('Command Maker: ' + String(text));
+                }
+            } catch (error) {
+                // the footer status is the fallback
+            }
+        },
+
+        categories() {
+            const seen = new Set();
+            for (const item of index) {
+                if (item.category) {
+                    seen.add(item.category);
+                }
+            }
+            return Array.from(seen).sort();
+        },
+
+        async createTool(spec) {
+            const notes = Model.newToolNotes();
+            const created = await backendAction('createTool', {
+                toolsRootId: toolsRootId(),
+                category: spec.category,
+                title: spec.title,
+                base: spec.base,
+                description: spec.description,
+                content: notes.content,
+                install: notes.install,
+                usage: notes.usage,
+                help: notes.help
             });
+            await refresh();
+            return created;
         },
-        deletePreset(noteId) {
-            return backendAction(Backend.ACTIONS.deletePreset, { noteId: noteId });
-        }
+
+        addOption(toolId, option) {
+            return backendAction('addOption', { toolId: toolId, option: option });
+        },
+
+        exportTool(noteId) {
+            return exportTool(noteId);
+        },
+
+        async importTool(tool) {
+            const created = await backendAction('importTool', {
+                toolsRootId: toolsRootId(),
+                tool: tool,
+                newToolNotes: Model.newToolNotes()
+            });
+            await refresh();
+            return created;
+        },
+
+        importOptions(toolId, options) {
+            return backendAction('importOptions', { toolId: toolId, options: options || [] });
+        },
+
+        deleteOption(noteId) {
+            return backendAction('deleteOption', { noteId: noteId });
+        },
+
+        setToolBase(toolId, base) {
+            return backendAction('setToolBase', { toolId: toolId, base: base });
+        },
+
+        savePreset(toolId, name, values) {
+            return backendAction('savePreset', { toolId: toolId, name: name, values: values });
+        },
+
+        deletePreset(toolId, name) {
+            return backendAction('deletePreset', { toolId: toolId, name: name });
+        },
+
+        async currentToolsRoot() {
+            const root = await resolveToolsRoot();
+            return root ? { noteId: root.noteId, title: root.title } : null;
+        },
+
+        setToolsRoot(noteId) {
+            return setToolsRootAction(noteId);
+        },
+
+        async useActiveNoteAsToolsRoot() {
+            const apiRef = getApi();
+            const active = apiRef.getActiveContextNote();
+            if (!active) {
+                throw new Error('No active note to use as the Tools folder.');
+            }
+            return setToolsRootAction(active.noteId);
+        },
+
+        async activeNoteText() {
+            const apiRef = getApi();
+            const active = apiRef.getActiveContextNote();
+            if (!active) {
+                throw new Error('No active note.');
+            }
+            const text = await readNoteText(active);
+            return { noteId: active.noteId, title: active.title, text: text };
+        },
+
+        async openNote(noteId) {
+            const apiRef = getApi();
+            const note = await apiRef.getNote(noteId);
+            if (!note) {
+                throw new Error('Note not found: ' + noteId);
+            }
+            return apiRef.activateNote(note.getBestNotePathString());
+        },
+
+        openInTab: openInTab
     };
 }
 
@@ -286,7 +777,12 @@ function start() {
         return;
     }
     try {
-        UI.openPalette(controller());
+        const host = embeddedHost(apiRef);
+        if (host) {
+            UI.openPalette(controller(), { container: host });
+        } else {
+            UI.openPalette(controller());
+        }
     } catch (error) {
         console.error('[command-maker]', error);
         try {

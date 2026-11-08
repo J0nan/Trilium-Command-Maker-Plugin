@@ -1,0 +1,86 @@
+name: Release
+
+# Manual release: Actions -> Release -> Run workflow.
+# Enter the new version (major.minor); the job bumps
+# package.json and src/version.js, rebuilds dist/, commits, tags, and creates the GitHub release.
+#
+# If `main` is protected, allow GitHub Actions to bypass the protection (or run
+# the workflow on a branch you can push to and merge it before releasing).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (major.minor, e.g. 0.2)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark this release as a prerelease'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # The version input is untrusted shell text: it is passed through the
+      # environment so a value like `1.2"; rm -rf /` can never break out of the
+      # quoted argument.
+      - name: Bump the version in package.json and src/version.js
+        env:
+          VERSION: ${{ inputs.version }}
+        run: node tools/bump-version.mjs "$VERSION"
+
+      - name: Build the bundle and run the tests
+        run: npm run check
+
+      - name: Commit the version bump and push the tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json src/version.js dist
+          git commit -m "chore(release): v$VERSION"
+          git tag "v$VERSION"
+          git push origin HEAD:${{ github.ref_name }} --tags
+
+      - name: Create the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: v${{ inputs.version }}
+          prerelease: ${{ inputs.prerelease }}
+          body: |
+            ## Install
+
+            1. Create a note in Trilium, set its type to **Code** and its language to
+               **JavaScript (Trilium backend)**.
+            2. Paste `install.js` from this release into the note.
+            3. Press **Execute**, then `Ctrl+Shift+Space`.
+
+            `command-maker.js` is the frontend bundle for manual installs.
+          files: |
+            dist/command-maker.js
+            dist/install.js
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

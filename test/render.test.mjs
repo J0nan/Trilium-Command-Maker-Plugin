@@ -103,6 +103,12 @@ test('double quoting escapes quotes, dollars and backticks', () => {
     assert.equal(result.command, 'run "a \\"b\\" \\$c \\`d\\`"');
 });
 
+test('an unknown quote mode falls back to no quoting', () => {
+    const def = definition('run', [option({ quote: 'constructor', flag: '', placeholder: 'p' })]);
+    const result = Render.renderCommand(def, { 'note:n1': 'a b' });
+    assert.equal(result.command, 'run a b');
+});
+
 test('non-numeric values are rejected for number options', () => {
     const def = definition('run', [option({ type: 'number', placeholder: 'n', flag: '-n' })]);
     const result = Render.renderCommand(def, { 'note:n1': 'abc' });
@@ -124,6 +130,17 @@ test('an unresolved placeholder warns and leaves no gap', () => {
     const result = Render.renderCommand(def, {});
     assert.equal(result.command, 'run');
     assert.equal(result.warnings[0].code, 'missing-placeholder');
+});
+
+test('extra arguments are inserted after the base and before flags', () => {
+    const def = definition('docker', [option({ placeholder: 'detach', flag: '-d', type: 'boolean' })]);
+    const result = Render.renderCommand(def, { [Render.EXTRA_KEY]: 'run alpine', 'note:n1': true });
+    assert.equal(result.command, 'docker run alpine -d');
+});
+
+test('empty extra arguments do not add a gap', () => {
+    const def = definition('docker', [option({ placeholder: 'detach', flag: '-d', type: 'boolean' })]);
+    assert.equal(Render.renderCommand(def, { [Render.EXTRA_KEY]: '   ' }).command, 'docker');
 });
 
 test('a non-numeric placeholder value warns but still renders', () => {

@@ -38,7 +38,9 @@ __def("render", function (module, exports, __require) {
  */
 
 const PLACEHOLDER_RE = /\\?\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
-const PLACEHOLDER_SOURCE_RE = /\\?\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
+
+/** Value-map key for the free-text arguments inserted right after the base. */
+const EXTRA_KEY = 'cm:extra';
 
 const QUOTERS = {
     none(value) {
@@ -52,6 +54,12 @@ const QUOTERS = {
     }
 };
 
+/** Values are user labels, so only own quoter names are honoured. */
+function quoterFor(mode) {
+    const name = String(mode == null ? '' : mode);
+    return Object.prototype.hasOwnProperty.call(QUOTERS, name) ? QUOTERS[name] : QUOTERS.none;
+}
+
 function slugify(text) {
     return String(text == null ? '' : text)
         .toLowerCase()
@@ -61,8 +69,7 @@ function slugify(text) {
 }
 
 function quote(value, mode) {
-    const quoter = QUOTERS[mode] || QUOTERS.none;
-    return quoter(String(value));
+    return quoterFor(mode)(String(value));
 }
 
 function isEmpty(value) {
@@ -81,13 +88,13 @@ function isTruthyFlag(value) {
 function placeholderNames(base) {
     const names = [];
     const source = String(base == null ? '' : base);
-    PLACEHOLDER_SOURCE_RE.lastIndex = 0;
-    let match = PLACEHOLDER_SOURCE_RE.exec(source);
+    PLACEHOLDER_RE.lastIndex = 0;
+    let match = PLACEHOLDER_RE.exec(source);
     while (match !== null) {
         if (match[0].charAt(0) !== '\\' && names.indexOf(match[1]) === -1) {
             names.push(match[1]);
         }
-        match = PLACEHOLDER_SOURCE_RE.exec(source);
+        match = PLACEHOLDER_RE.exec(source);
     }
     return names;
 }
@@ -228,46 +235,1648 @@ function renderCommand(definition, values) {
         }
     }
 
-    const parts = [substituted.trim()].concat(segments).filter(function (part) {
-        return part !== '';
-    });
+    const parts = [substituted.trim()];
+    const extra = valueMap[EXTRA_KEY];
+    if (!isEmpty(extra)) {
+        parts.push(String(extra).trim());
+    }
+    for (const segment of segments) {
+        if (segment) {
+            parts.push(segment);
+        }
+    }
 
-    return { command: parts.join(' '), warnings: warnings };
+    return { command: parts.filter(function (part) { return part !== ''; }).join(' '), warnings: warnings };
 }
 
 module.exports = {
+    EXTRA_KEY,
     slugify,
     quote,
     isEmpty,
     isTruthyFlag,
     placeholderNames,
     valueKey,
+    compareOptions,
     formatValue,
     renderCommand
 };
+});
+__def("parse", function (module, exports, __require) {
+'use strict';
+
+/**
+ * Pure option importers (S7): plain `--help` output, a JSON options file or a
+ * markdown table all become canonical options. No Trilium API, no DOM, no
+ * external dependencies.
+ *
+ * A canonical option looks like:
+ * {
+ *   label: 'Input file', flag: '--input', aliases: ['-i', '--input'],
+ *   help: 'Input file to read.', type: 'path', values: [], defaultValue: '',
+ *   required: false, mode: 'flag', placeholder: 'input', order: 10
+ * }
+ *
+ * Every parser returns { options, warnings } and never throws: whatever it
+ * cannot understand becomes a warning the palette can show in the preview.
+ *
+ * Types come from Model's set: a help line with no metavar is a boolean; a
+ * JSON or table entry that carries no type at all falls back to 'string',
+ * matching Model.optionFromNote.
+ */
+
+const Model = __require("model");
+const Render = __require("render");
+
+const TYPES = Model.TYPES;
+const PATH_TOKENS = ['PATH', 'FILE', 'DIR', 'FOLDER'];
+const NUMBER_TOKENS = ['N', 'NUM', 'NUMBER', 'INT', 'INTEGER', 'COUNT', 'SIZE', 'SECONDS'];
+
+const NAMED_ENTITIES = {
+    nbsp: ' ',
+    amp: '&',
+    lt: '<',
+    gt: '>',
+    quot: '"',
+    apos: "'",
+    en: '\u2013',
+    em: '\u2014',
+    ndash: '\u2013',
+    mdash: '\u2014',
+    lsquo: '\u2018',
+    rsquo: '\u2019',
+    ldquo: '\u201c',
+    rdquo: '\u201d',
+    hellip: '\u2026',
+    middot: '\u00b7',
+    bull: '\u2022',
+    copy: '\u00a9',
+    reg: '\u00ae',
+    deg: '\u00b0'
+};
+
+const ENTITY_RE = /&(#[xX][0-9a-fA-F]+|#\d+|[A-Za-z][A-Za-z0-9]*);/g;
+const COMMENT_RE = /<!--[\s\S]*?-->/g;
+const PRE_RE = /<pre\b[^>]*>([\s\S]*?)<\/pre\s*>/gi;
+/** Tags whose end means "start a new line" in plain text. */
+const BLOCK_BREAK_RE = /<br\s*\/?>|<\/p\s*>|<\/li\s*>|<\/h[1-6]\s*>|<\/pre\s*>|<\/tr\s*>/gi;
+const TAG_RE = /<[^>]*>/g;
+/** 2+ spaces (or a tab) separate an option spec from its description. */
+const GAP_RE = /\t| {2,}/;
+/** `: ` or an em dash also start a description. */
+const LEADING_SEPARATOR_RE = /[:\u2014]\s+/;
+
+const TOKEN_FLAG_RE = /^(-{1,2})(?:\[(no-|on-)?\])?([A-Za-z0-9][A-Za-z0-9:._+@%~-]*)$/;
+const OPENERS = '<[({';
+const CLOSERS = '>])}';
+/** A help block header ends in a colon: "Options:", "Main arguments:". */
+const SECTION_HEADER_RE = /^[A-Za-z][A-Za-z0-9 ()/,.'\u2019-]*:$/;
+const USAGE_LINE_RE = /^(usage|synopsis|overview|syntax)\b/i;
+
+/** `&mdash;` / `&#8212;` / `&#x2014;` and friends, decoded in one pass. */
+function decodeEntities(text) {
+    return String(text == null ? '' : text).replace(ENTITY_RE, function (match, body) {
+        if (body.charAt(0) === '#') {
+            const isHex = body.charAt(1) === 'x' || body.charAt(1) === 'X';
+            const code = parseInt(isHex ? body.slice(2) : body.slice(1), isHex ? 16 : 10);
+            if (!isFinite(code) || code < 0 || code > 0x10ffff) {
+                return match;
+            }
+            try {
+                return String.fromCodePoint(code);
+            } catch (err) {
+                return match;
+            }
+        }
+        const named = Object.prototype.hasOwnProperty.call(NAMED_ENTITIES, body.toLowerCase())
+            ? NAMED_ENTITIES[body.toLowerCase()]
+            : undefined;
+        return named === undefined ? match : named;
+    });
+}
+
+/** Three or more consecutive line breaks become one blank line. */
+function collapseBlankLines(text) {
+    return String(text).replace(/\n{3,}/g, '\n\n');
+}
+
+/** HTML outside `<pre>`: block tags become newlines, the rest becomes prose. */
+function textChunk(html) {
+    const withoutTags = String(html)
+        .replace(COMMENT_RE, ' ')
+        .replace(BLOCK_BREAK_RE, '\n')
+        .replace(TAG_RE, '');
+    const lines = withoutTags.split(/\r?\n/).map(function (line) {
+        return line.replace(/[^\S\n]+/g, ' ').trim();
+    });
+    return collapseBlankLines(decodeEntities(lines.join('\n')));
+}
+
+/** HTML inside `<pre>`: its inner line breaks are kept exactly. */
+function preChunk(inner) {
+    const text = decodeEntities(String(inner).replace(TAG_RE, ''));
+    return text.replace(/^\r?\n/, '').replace(/\s+$/, '') + '\n';
+}
+
+/**
+ * HTML note body -> readable plain text. Blank runs of 3+ lines collapse to
+ * one; `<pre>` content keeps its own line breaks.
+ * @param {string} html
+ * @returns {string}
+ */
+function stripHtml(html) {
+    const source = String(html == null ? '' : html);
+    let out = '';
+    let cursor = 0;
+    PRE_RE.lastIndex = 0;
+    let match = PRE_RE.exec(source);
+    while (match !== null) {
+        out += textChunk(source.slice(cursor, match.index));
+        out += preChunk(match[1]);
+        cursor = match.index + match[0].length;
+        match = PRE_RE.exec(source);
+    }
+    out += textChunk(source.slice(cursor));
+    return out.replace(/^[ \t\n]+/, '').replace(/[\s\n]+$/, '');
+}
+
+function splitList(text) {
+    return String(text == null ? '' : text)
+        .split(',')
+        .map(function (entry) {
+            return entry.trim();
+        })
+        .filter(function (entry) {
+            return entry !== '';
+        });
+}
+
+function uniq(list) {
+    return Array.from(new Set(list));
+}
+
+function bracketDepth(token) {
+    let depth = 0;
+    for (const ch of token) {
+        if (OPENERS.indexOf(ch) !== -1) {
+            depth += 1;
+        } else if (CLOSERS.indexOf(ch) !== -1) {
+            depth -= 1;
+        }
+    }
+    return depth;
+}
+
+/** Whitespace tokens, then split on `,` `|` `;` outside brackets. */
+function tokenize(text) {
+    const out = [];
+    for (const rough of String(text == null ? '' : text).split(/\s+/)) {
+        if (rough === '') {
+            continue;
+        }
+        let depth = 0;
+        let current = '';
+        for (const ch of rough) {
+            if (OPENERS.indexOf(ch) !== -1) {
+                depth += 1;
+            } else if (CLOSERS.indexOf(ch) !== -1) {
+                depth -= 1;
+            }
+            if (depth === 0 && (ch === ',' || ch === '|' || ch === ';')) {
+                if (current !== '') {
+                    out.push(current);
+                    current = '';
+                }
+                continue;
+            }
+            current += ch;
+        }
+        if (current !== '') {
+            out.push(current);
+        }
+    }
+    // Rejoin tokens whose brackets span more than one token: `{a, b, c}`.
+    const merged = [];
+    let pending = '';
+    for (const token of out) {
+        if (pending !== '') {
+            pending += ' ' + token;
+            if (bracketDepth(pending) <= 0) {
+                merged.push(pending);
+                pending = '';
+            }
+            continue;
+        }
+        if (bracketDepth(token) > 0) {
+            pending = token;
+            continue;
+        }
+        merged.push(token);
+    }
+    if (pending !== '') {
+        merged.push(pending);
+    }
+    return merged;
+}
+
+/** One token -> { flags, metavar } or null when it is not a flag. */
+function flagsFromToken(token) {
+    let piece = String(token);
+    // `[--dry-run]`: the flag itself is wrapped in option brackets.
+    if (piece.charAt(0) === '[' && piece.slice(-1) === ']' && piece.charAt(1) === '-') {
+        piece = piece.slice(1, -1);
+    }
+    let match = TOKEN_FLAG_RE.exec(piece);
+    let attached = '';
+    if (!match) {
+        // `--output=FILE`, `--color[=WHEN]`, `--format=(choices)`, `-b:v{a|b}`: the tail is the metavar.
+        const open = piece.search(/[=<[{(]/);
+        if (open !== -1) {
+            attached = piece.slice(open)
+                .replace(/^[=[{\s]+/, '')
+                .replace(/[\])\s]+$/, '')
+                .replace(/=$/, '');
+            piece = piece.slice(0, open);
+        }
+        match = TOKEN_FLAG_RE.exec(piece);
+    }
+    if (!match) {
+        return null;
+    }
+    const dash = match[1];
+    const bare = match[3];
+    if (match[2] === 'no-') {
+        return { flags: [dash + bare, '--no-' + bare], metavar: attached, negated: true };
+    }
+    if (match[2] === 'on-') {
+        return { flags: ['--no-' + bare, dash + bare], metavar: attached, negated: true };
+    }
+    return { flags: [dash + bare], metavar: attached, negated: false };
+}
+
+function isMetavarToken(token, allowLowercase) {
+    if (token === '') {
+        return false;
+    }
+    if (OPENERS.indexOf(token.charAt(0)) !== -1) {
+        return true;
+    }
+    if (/^[A-Z][A-Za-z0-9_]*$/.test(token) && token.indexOf('-') === -1) {
+        return true;
+    }
+    // ffmpeg and other tools print lowercase single-word metavars: `-i url`,
+    // `-crf crf`. Only accept them when a 2+ gap already proved a description
+    // follows, so `-y overwrite output files` keeps its prose as the help.
+    if (allowLowercase) {
+        return /^[a-z][a-z0-9_.-]*$/.test(token);
+    }
+    return false;
+}
+
+function isSeparatorToken(token) {
+    return token === ',' || token === '|' || token === '/' || token === ';';
+}
+
+/**
+ * Walk leading flag tokens and their metavars; the rest is prose.
+ * Supports `-q QUEUE, --queue QUEUE` and `-m, --message <message>` by
+ * continuing after a metavar when another flag follows.
+ */
+function readTokens(tokens, allowLowercaseMetavar) {
+    const flags = [];
+    let metavar = '';
+    let negated = false;
+    let index = 0;
+    let awaitingMetavar = false;
+    while (index < tokens.length) {
+        const token = tokens[index];
+        if (isSeparatorToken(token)) {
+            index += 1;
+            continue;
+        }
+        const parsed = flagsFromToken(token);
+        if (parsed) {
+            for (const flag of parsed.flags) {
+                if (flags.indexOf(flag) === -1) {
+                    flags.push(flag);
+                }
+            }
+            if (metavar === '' && parsed.metavar !== '') {
+                metavar = parsed.metavar;
+            }
+            negated = negated || parsed.negated;
+            awaitingMetavar = true;
+            index += 1;
+            continue;
+        }
+        if (awaitingMetavar && isMetavarToken(token, allowLowercaseMetavar)) {
+            metavar = metavar === '' ? token : metavar;
+            awaitingMetavar = false;
+            index += 1;
+            continue;
+        }
+        break;
+    }
+    return { flags: flags, metavar: metavar, negated: negated, rest: tokens.slice(index) };
+}
+
+function readSpecText(text) {
+    return readTokens(tokenize(text), false);
+}
+
+function enumValuesFrom(spec, description) {
+    const candidates = [];
+    const shapes = [/\{([^{}]*)\}/g, /\(([^()]*)\)/g, /\[([^[\]]*)\]/g];
+    for (const shape of shapes) {
+        let match = shape.exec(String(spec == null ? '' : spec));
+        while (match !== null) {
+            candidates.push(splitList(match[1].split('|').join(',')));
+            match = shape.exec(String(spec == null ? '' : spec));
+        }
+    }
+    const prose = /\b(?:one of|possible values|valid values)\s*:?\s*([^\n.]+)/i.exec(String(description == null ? '' : description));
+    if (prose) {
+        candidates.push(splitList(prose[1].replace(/^["'`[]/, '').replace(/["'`\]]$/, '')));
+    }
+    for (const candidate of candidates) {
+        if (candidate.length >= 2 && candidate.every(function (value) {
+            return /^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(value);
+        })) {
+            return uniq(candidate);
+        }
+    }
+    return [];
+}
+
+function metavarTokens(metavar) {
+    return String(metavar == null ? '' : metavar)
+        .replace(/[-_]+/g, ' ')
+        .split(/[^A-Za-z0-9]+/)
+        .filter(function (token) {
+            return token !== '';
+        })
+        .map(function (token) {
+            return token.toUpperCase();
+        });
+}
+
+/**
+ * Best-effort option type from a metavar and its description.
+ * @returns {'boolean'|'path'|'number'|'enum'|'string'}
+ */
+function inferType(metavar, help) {
+    const met = String(metavar == null ? '' : metavar).trim();
+    if (enumValuesFrom(met, help).length > 0) {
+        return 'enum';
+    }
+    if (met === '') {
+        return 'boolean';
+    }
+    const tokens = metavarTokens(met);
+    if (tokens.some(function (token) {
+        return PATH_TOKENS.indexOf(token) !== -1;
+    })) {
+        return 'path';
+    }
+    if (tokens.some(function (token) {
+        return NUMBER_TOKENS.indexOf(token) !== -1;
+    })) {
+        return 'number';
+    }
+    // `-crf crf ... (default 23)` and numeric ranges are numeric even when the
+    // metavar itself says nothing.
+    const defaultValue = extractDefaultValue(help);
+    if (defaultValue !== '' && /^[-+]?\d+(?:\.\d+)?$/.test(defaultValue)) {
+        return 'number';
+    }
+    if (/\b(?:from|between)\s+[-+]?\d/i.test(String(help == null ? '' : help))) {
+        return 'number';
+    }
+    return 'string';
+}
+
+const DEFAULT_PATTERNS = [
+    /\(\s*defaults?\s*[:=]\s*([^()]*)\)/i,
+    /\(\s*defaults?\s+(?!to\b)([^()]+?)\)/i,
+    /\bdefaults?\s+to\s+(?:(?:(\d+(?:\.\d+)?|\S+)|"([^"]*)"|'([^']*)'|`([^`]*)`))((?:[ \t]+[^\s,.;:](?:[^\s,.;:]*))*)/i,
+    /\bdefault\s*[:=]\s*(\S[^(]*?)(?=\s+when\b|\s+(?:can|must|may|is|to|only|or|if)\b|[.,;]|\s*$)/i
+];
+
+/** `(default: X)`, `[default: X]`, `default: X`, `defaults to X`. */
+function extractDefaultValue(text) {
+    const source = String(text == null ? '' : text);
+    const square = /\[\s*defaults?\s*[:=]\s*([^\]]*)\]/i.exec(source);
+    if (square && square[1].trim() !== '') {
+        return square[1].trim();
+    }
+    for (const pattern of DEFAULT_PATTERNS) {
+        const match = pattern.exec(source);
+        if (!match) {
+            continue;
+        }
+        const value = match[1] !== undefined
+            ? String(match[1]) + (match[5] === undefined ? '' : match[5])
+            : (match[2] || match[3] || match[4] || '');
+        const trimmed = value.trim();
+        if (trimmed !== '') {
+            return trimmed;
+        }
+    }
+    return '';
+}
+
+function primaryFlag(flags) {
+    const long = flags.filter(function (flag) {
+        return flag.indexOf('--') === 0;
+    })[0];
+    return long || flags.filter(function (flag) {
+        return flag.length > 1;
+    })[0] || '';
+}
+
+/** `--video-codec` -> `Video codec`. */
+function labelFromFlags(flags) {
+    const words = primaryFlag(flags)
+        .replace(/^-+/, '')
+        .replace(/[-_]+/g, ' ')
+        .replace(/[:=/[\](){}<>,]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (words === '') {
+        return '';
+    }
+    return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** `--video-codec` -> `video_codec`, `-c:v` -> `c_v`, else the label slug. */
+function placeholderFrom(flags, fallback) {
+    const bare = primaryFlag(flags).replace(/^-+/, '').replace(/[=:<>\[\]{}()|]/g, ' ');
+    const slug = Render.slugify(bare);
+    return slug !== '' ? slug : Render.slugify(fallback);
+}
+
+function truthy(value) {
+    if (value === true) {
+        return true;
+    }
+    return ['true', '1', 'yes', 'on'].indexOf(String(value).trim().toLowerCase()) !== -1;
+}
+
+function warning(code, message, extra) {
+    const entry = { code: code, message: message };
+    if (extra && extra.line !== undefined) {
+        entry.line = extra.line;
+    }
+    if (extra && extra.text !== undefined) {
+        entry.text = extra.text;
+    }
+    return entry;
+}
+
+function booleanDefaultFrom(text) {
+    const match = /\bon\b|\byes\b|\benabled\b|\btrue\b/i.exec(String(text == null ? '' : text));
+    return match ? 'true' : '';
+}
+
+/**
+ * Canonical option from an internal source ({ flags, metavar, ... } or a loose
+ * JSON entry via { flag, aliases, ... }). Returns null when no flag is usable.
+ */
+function buildOption(source) {
+    const entry = source || {};
+    let flags = Array.isArray(entry.flags) ? entry.flags.filter(function (flag) {
+        return typeof flag === 'string' && flag.trim() !== '';
+    }).map(function (flag) {
+        return flag.trim();
+    }) : [];
+    let metavar = String(entry.metavar == null ? '' : entry.metavar).trim();
+    let negated = entry.negated === true;
+
+    if (flags.length === 0) {
+        const text = [entry.flag].concat(entry.aliases || [])
+            .filter(function (value) {
+                return value !== undefined && value !== null && String(value).trim() !== '';
+            })
+            .map(function (value) {
+                return String(value).trim();
+            })
+            .join(' ');
+        const parsed = readSpecText(text);
+        flags = parsed.flags;
+        negated = negated || parsed.negated;
+        if (metavar === '') {
+            metavar = parsed.metavar;
+        }
+    }
+    if (flags.length === 0) {
+        return null;
+    }
+
+    const flag = primaryFlag(flags);
+    const help = String(entry.help == null ? '' : entry.help).trim() || String(entry.doc == null ? '' : entry.doc).trim();
+
+    let values = [];
+    const rawValues = entry.values !== undefined && entry.values !== null ? entry.values : entry.enumValues;
+    if (rawValues !== undefined && rawValues !== null && rawValues !== '') {
+        values = Array.isArray(rawValues)
+            ? rawValues.map(function (value) {
+                return String(value).trim();
+            })
+            : splitList(rawValues);
+        values = uniq(values.filter(function (value) {
+            return value !== '';
+        }));
+    }
+    if (values.length === 0) {
+        values = enumValuesFrom(metavar, help);
+    }
+
+    let type = String(entry.type == null ? '' : entry.type).trim().toLowerCase();
+    if (TYPES.indexOf(type) === -1) {
+        type = '';
+    }
+    if (type === '' && values.length > 0) {
+        type = 'enum';
+    }
+    if (type === '') {
+        if (negated) {
+            type = 'boolean';
+        } else if (metavar === '' && entry.fromHelp !== true) {
+            // A JSON or table entry with no `type` and no metavar: same default as Model.optionFromNote.
+            type = 'string';
+        } else {
+            type = inferType(metavar, help);
+        }
+    }
+    if (type === 'boolean') {
+        values = [];
+    }
+
+    const label = String(entry.label == null ? '' : entry.label).trim() || labelFromFlags(flags);
+    let rawDefault = entry.defaultValue !== undefined && entry.defaultValue !== null
+        ? entry.defaultValue
+        : entry['default'];
+    let defaultValue;
+    if (rawDefault === undefined || rawDefault === null || rawDefault === '') {
+        defaultValue = extractDefaultValue(help) || (type === 'boolean' ? booleanDefaultFrom(help) : '');
+    } else if (typeof rawDefault === 'boolean') {
+        defaultValue = rawDefault ? 'true' : '';
+    } else {
+        defaultValue = String(rawDefault).trim();
+    }
+
+    const rawOrder = entry.order === '' || entry.order === undefined || entry.order === null
+        ? NaN
+        : Number(entry.order);
+    const order = isFinite(rawOrder)
+        ? rawOrder
+        : (typeof entry.index === 'number' ? (entry.index + 1) * 10 : 10);
+
+    return {
+        label: label,
+        flag: flag,
+        aliases: flags.slice(),
+        help: help,
+        type: type,
+        values: values,
+        defaultValue: String(defaultValue),
+        required: truthy(entry.required),
+        mode: String(entry.mode == null ? '' : entry.mode).trim().toLowerCase() === 'inline' ? 'inline' : 'flag',
+        placeholder: String(entry.placeholder == null ? '' : entry.placeholder).trim() || placeholderFrom(flags, label),
+        order: order
+    };
+}
+
+/**
+ * Loose JSON entry (or hand-built object) -> canonical option.
+ * @returns {object|null} null when the entry has no usable flag
+ */
+function normalizeOption(entry) {
+    return buildOption(entry);
+}
+
+/**
+ * One trimmed help line -> { flags, metavar, negated, description, loose }.
+ * `loose` marks a line whose flag was followed by prose the parser had to
+ * guess at, which is reported as unparsed. Null when not an option line.
+ */
+function readHelpLine(line) {
+    let spec = line;
+    let description = '';
+    const gap = GAP_RE.exec(line);
+    const separator = LEADING_SEPARATOR_RE.exec(line);
+    if (gap && (!separator || gap.index < separator.index)) {
+        spec = line.slice(0, gap.index);
+        description = line.slice(gap.index + gap[0].length).trim();
+    } else if (separator) {
+        spec = line.slice(0, separator.index);
+        description = line.slice(separator.index + separator[0].length).trim();
+    }
+
+    const parsed = readTokens(tokenize(spec), description !== '');
+    if (parsed.flags.length === 0) {
+        return null;
+    }
+    const inline = parsed.rest.join(' ');
+    let loose = false;
+    if (inline !== '' && description === '') {
+        description = inline;
+    } else if (inline !== '') {
+        // `-c CODEC extra words   real help`: the spec itself ran on.
+        loose = true;
+    }
+    return {
+        flags: parsed.flags,
+        metavar: parsed.metavar,
+        negated: parsed.negated,
+        description: description,
+        loose: loose
+    };
+}
+
+function pushOption(options, warnings, seen, option, origin) {
+    if (!option) {
+        return;
+    }
+    if (seen.has(option.flag)) {
+        warnings.push(warning('duplicate-flag', 'Option "' + option.flag + '" from ' + origin
+            + ' duplicates the earlier one on ' + seen.get(option.flag) + '; the first one wins.'));
+        return;
+    }
+    seen.set(option.flag, origin);
+    options.push(option);
+}
+
+/**
+ * Parse plain `--help` output into canonical options.
+ * @param {string} text
+ * @returns {{ options: Array, warnings: Array }}
+ */
+function parseHelpText(text) {
+    const options = [];
+    const warnings = [];
+    const seen = new Map();
+    const lines = String(text == null ? '' : text).split(/\r?\n/);
+    let current = null;
+    let currentIndent = 0;
+
+    for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index].replace(/\t/g, '    ').replace(/\s+$/, '');
+        const trimmed = line.trim();
+        if (trimmed === '' || /^[-=_*]{3,}$/.test(trimmed)) {
+            continue;
+        }
+        const indent = /^ */.exec(line)[0].length;
+
+        if (USAGE_LINE_RE.test(trimmed) || SECTION_HEADER_RE.test(trimmed)) {
+            current = null;
+            continue;
+        }
+
+        if (trimmed.charAt(0) !== '-') {
+            if (current !== null && indent > currentIndent) {
+                current.help = current.help === '' ? trimmed : current.help + ' ' + trimmed;
+                const added = extractDefaultValue(current.help);
+                if (added !== '') {
+                    current.defaultValue = added;
+                }
+            } else {
+                current = null;
+            }
+            continue;
+        }
+
+        const read = readHelpLine(trimmed);
+        if (!read || read.loose) {
+            warnings.push(warning('unparsed-option-line',
+                'Could not parse the option line "' + trimmed + '".', { line: index + 1, text: trimmed }));
+            current = null;
+            continue;
+        }
+        const option = buildOption({
+            flags: read.flags,
+            metavar: read.metavar,
+            negated: read.negated,
+            help: read.description,
+            fromHelp: true,
+            index: options.length
+        });
+        if (!option) {
+            warnings.push(warning('unparsed-option-line',
+                'Could not parse the option line "' + trimmed + '".', { line: index + 1, text: trimmed }));
+            current = null;
+            continue;
+        }
+        pushOption(options, warnings, seen, option, 'line ' + (index + 1));
+        current = option;
+        currentIndent = indent;
+    }
+    return { options: options, warnings: warnings };
+}
+
+/**
+ * Parse a JSON options file: a bare array, `{ "options": [...] }` or
+ * `{ "tool": { "options": [...] } }`.
+ * @param {string} text
+ * @returns {{ options: Array, warnings: Array }}
+ */
+function parseJsonOptions(text) {
+    const warnings = [];
+    const source = String(text == null ? '' : text);
+    if (source.trim() === '') {
+        return { options: [], warnings: [warning('invalid-json', 'The JSON import is empty.')] };
+    }
+    let data;
+    try {
+        data = JSON.parse(source);
+    } catch (err) {
+        return { options: [], warnings: [warning('invalid-json', 'Not valid JSON: ' + String(err && err.message || err))] };
+    }
+
+    let list = null;
+    if (Array.isArray(data)) {
+        list = data;
+    } else if (data && typeof data === 'object') {
+        if (Array.isArray(data.options)) {
+            list = data.options;
+        } else if (data.tool && typeof data.tool === 'object' && Array.isArray(data.tool.options)) {
+            list = data.tool.options;
+        }
+    }
+    if (list === null) {
+        return { options: [], warnings: [warning('invalid-json', 'No options array found in the JSON.')] };
+    }
+
+    const options = [];
+    const seen = new Map();
+    for (let index = 0; index < list.length; index += 1) {
+        const entry = list[index];
+        const origin = 'entry ' + (index + 1);
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+            warnings.push(warning('invalid-entry', origin + ' is not an object.', { line: index + 1 }));
+            continue;
+        }
+        if (entry.flag === undefined || entry.flag === null || String(entry.flag).trim() === '') {
+            warnings.push(warning('invalid-entry', origin + ' has no flag.', { line: index + 1 }));
+            continue;
+        }
+        const aliases = Array.isArray(entry.aliases)
+            ? entry.aliases.map(function (value) {
+                return String(value);
+            })
+            : (entry.aliases === undefined || entry.aliases === null ? [] : splitList(String(entry.aliases)));
+        const option = buildOption({
+            flag: entry.flag,
+            aliases: aliases,
+            help: entry.help,
+            doc: entry.doc,
+            label: entry.label,
+            type: entry.type,
+            values: entry.values !== undefined ? entry.values : entry.enumValues,
+            defaultValue: entry.defaultValue !== undefined ? entry.defaultValue : entry['default'],
+            required: entry.required,
+            mode: entry.mode,
+            placeholder: entry.placeholder,
+            order: entry.order,
+            index: options.length
+        });
+        if (!option) {
+            warnings.push(warning('invalid-entry', origin + ' has an unusable flag.', { line: index + 1 }));
+            continue;
+        }
+        pushOption(options, warnings, seen, option, origin);
+    }
+    return { options: options, warnings: warnings };
+}
+
+function cleanCell(cell) {
+    return String(cell == null ? '' : cell).trim().replace(/^`+/, '').replace(/`+$/, '')
+        .replace(/^\*+/, '').replace(/\*+$/, '').trim();
+}
+
+function splitRow(line) {
+    let row = line.trim();
+    if (row.charAt(0) === '|') {
+        row = row.slice(1);
+    }
+    if (row.slice(-1) === '|') {
+        row = row.slice(0, -1);
+    }
+    return row.split('|').map(cleanCell);
+}
+
+const FLAG_HEADER_RE = /^(flag|option|switch|argument|arg)\b/i;
+
+function columnHeader(header, pattern) {
+    for (let index = 0; index < header.length; index += 1) {
+        if (pattern.test(header[index])) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+/**
+ * Parse a markdown table of options: first cell flag, second cell help,
+ * optional third cell type. Separator rows are skipped.
+ * @param {string} text
+ * @returns {{ options: Array, warnings: Array }}
+ */
+function parseMarkdownTable(text) {
+    const warnings = [];
+    const source = String(text == null ? '' : text);
+    if (/^\s*<(?:table|tr|thead|tbody)\b/i.test(source)) {
+        warnings.push(warning('no-table', 'HTML tables are not supported; use a markdown table.'));
+        return { options: [], warnings: warnings };
+    }
+    const rows = [];
+    for (const line of source.split(/\r?\n/)) {
+        if (line.trim().charAt(0) !== '|') {
+            continue;
+        }
+        const cells = splitRow(line);
+        const separator = cells.every(function (cell) {
+            return cell === '' || /^:?-{2,}:?$/.test(cell);
+        });
+        if (!separator) {
+            rows.push(cells);
+        }
+    }
+    if (rows.length === 0) {
+        warnings.push(warning('no-table', 'No markdown table rows were found.'));
+        return { options: [], warnings: warnings };
+    }
+
+    const header = rows[0].map(function (cellValue) {
+        return cellValue.toLowerCase();
+    });
+    let flagColumn = columnHeader(header, FLAG_HEADER_RE);
+    let firstDataRow = 1;
+    if (flagColumn === -1) {
+        // A table written without a header row: its first column already holds flags.
+        const probe = readSpecText(rows[0][0] === undefined ? '' : rows[0][0]);
+        if (probe.flags.length > 0) {
+            flagColumn = 0;
+            firstDataRow = 0;
+        }
+    }
+    if (flagColumn === -1) {
+        warnings.push(warning('no-flag-column', 'The table header has no flag column.'));
+        return { options: [], warnings: warnings };
+    }
+    const named = function (pattern) {
+        return firstDataRow === 1 ? columnHeader(header, pattern) : -1;
+    };
+    const helpColumn = named(/^(help|description|doc|summary|meaning)\b/);
+    const typeColumn = named(/^(type|value type)\b/);
+    const labelColumn = named(/^(label|name|title)\b/);
+    const valuesColumn = named(/^(values|enum|allowed values)\b/);
+    const defaultColumn = named(/^(default|default value)\b/);
+    const requiredColumn = named(/^required\b/);
+    const orderColumn = named(/^order\b/);
+    const cell = function (columns, which) {
+        return which === -1 || columns[which] === undefined ? '' : String(columns[which]);
+    };
+
+    const options = [];
+    const seen = new Map();
+    for (let index = firstDataRow; index < rows.length; index += 1) {
+        const columns = rows[index];
+        const rawFlag = cell(columns, flagColumn);
+        const origin = 'table row ' + (index + 1);
+        if (rawFlag === '') {
+            warnings.push(warning('invalid-entry', origin + ' has no flag.', { line: index + 1 }));
+            continue;
+        }
+        const help = helpColumn === -1 ? cell(columns, flagColumn + 1) : cell(columns, helpColumn);
+        const type = cell(columns, typeColumn);
+        const option = buildOption({
+            flag: rawFlag,
+            help: help,
+            label: cell(columns, labelColumn),
+            type: type,
+            values: cell(columns, valuesColumn),
+            defaultValue: cell(columns, defaultColumn),
+            required: cell(columns, requiredColumn),
+            order: cell(columns, orderColumn),
+            index: options.length
+        });
+        if (!option) {
+            warnings.push(warning('invalid-entry', origin + ' has an unusable flag "' + rawFlag + '".', { line: index + 1 }));
+            continue;
+        }
+        if (typeColumn === -1 && type === '') {
+            const maybeType = cell(columns, flagColumn + 2).toLowerCase();
+            if (TYPES.indexOf(maybeType) !== -1) {
+                option.type = maybeType;
+                if (maybeType !== 'enum') {
+                    option.values = [];
+                }
+            }
+        }
+        pushOption(options, warnings, seen, option, origin);
+    }
+    return { options: options, warnings: warnings };
+}
+
+/**
+ * Detect the import format and parse it.
+ * @param {string} text
+ * @returns {{ format: 'json'|'table'|'help', options: Array, warnings: Array }}
+ */
+function parseImport(text) {
+    const trimmed = String(text == null ? '' : text).trim();
+    if (trimmed.charAt(0) === '{' || trimmed.charAt(0) === '[') {
+        const result = parseJsonOptions(text);
+        return { format: 'json', options: result.options, warnings: result.warnings };
+    }
+    if (trimmed.charAt(0) === '|') {
+        const result = parseMarkdownTable(text);
+        return { format: 'table', options: result.options, warnings: result.warnings };
+    }
+    const result = parseHelpText(text);
+    return { format: 'help', options: result.options, warnings: result.warnings };
+}
+
+module.exports = {
+    TYPES,
+    decodeEntities,
+    stripHtml,
+    inferType,
+    normalizeOption,
+    parseHelpText,
+    parseJsonOptions,
+    parseMarkdownTable,
+    parseImport
+};
+
+});
+__def("sections", function (module, exports, __require) {
+'use strict';
+
+/**
+ * Pure readers for the parts of a tool note the palette shows (S3, S5, S11):
+ * the three H2 sections, their links, and the Usage examples.
+ * No Trilium API, no DOM, no external dependencies.
+ *
+ * parseToolNote(html)  -> { whatIs, officialLinks, usefulLinks, links, sections }
+ * parseExamples(html, base) -> string[]   (at most 50, source order)
+ */
+
+const Parse = __require("parse");
+
+const H2_RE = /<h2\b[^>]*>([\s\S]*?)<\/h2\s*>/gi;
+const ANCHOR_RE = /<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi;
+const HREF_RE = /href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`<>]+))/i;
+/** Only these schemes may become a clickable link. */
+const SAFE_URL_RE = /^(?:https?|mailto):/i;
+/** `<pre>`, `<p>` and `<li>` blocks, in source order. */
+const BLOCK_RE = /<(pre|p|li)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi;
+
+const WHAT_IS = 'what is';
+const OFFICIAL = 'official links';
+const USEFUL = 'useful links';
+
+const MAX_EXAMPLES = 50;
+
+/** Tags that survive install-note rendering; everything else loses its markup. */
+const ALLOWED_TAGS = new Set([
+    'p', 'br', 'div', 'span',
+    'strong', 'b', 'em', 'i', 'u', 's', 'strike', 'del',
+    'code', 'pre',
+    'ul', 'ol', 'li',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'a', 'blockquote', 'hr',
+    'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td',
+    'dl', 'dt', 'dd'
+]);
+const DROP_ELEMENT_RE = /<(script|style|iframe|object|embed|svg|math|form|input|textarea|select|button|link|meta)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
+const TAG_TOKEN_RE = /<\/?([a-zA-Z][A-Za-z0-9:-]*)([^>]*)>/g;
+const COMMENT_RE = /<!--[\s\S]*?-->/g;
+
+function trim(value) {
+    return String(value == null ? '' : value).trim();
+}
+
+/** Heading text used for lookup: lowercase, single-spaced, punctuation-free. */
+function normalizeHeading(value) {
+    return trim(value)
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .replace(/[?？:;.,!\u2026]+/g, '')
+        .trim();
+}
+
+/** The exact section key: lowercased, trimmed heading text. */
+function sectionKey(value) {
+    return trim(Parse.stripHtml(String(value == null ? '' : value).replace(/\s+/g, ' '))).toLowerCase();
+}
+
+function sectionBodies(source) {
+    const marks = [];
+    H2_RE.lastIndex = 0;
+    let match = H2_RE.exec(source);
+    while (match !== null) {
+        marks.push({ key: sectionKey(match[1]), bodyStart: match.index + match[0].length, start: match.index });
+        match = H2_RE.exec(source);
+    }
+    return marks.map(function (mark, index) {
+        const end = index + 1 < marks.length ? marks[index + 1].start : source.length;
+        return { key: mark.key, html: source.slice(mark.bodyStart, end) };
+    });
+}
+
+/** Every http(s)/mailto anchor inside a section's HTML. */
+function linksInSection(html, section) {
+    const links = [];
+    const source = String(html == null ? '' : html);
+    ANCHOR_RE.lastIndex = 0;
+    let match = ANCHOR_RE.exec(source);
+    while (match !== null) {
+        const hrefMatch = HREF_RE.exec(match[1]);
+        const href = hrefMatch ? Parse.decodeEntities(trim(hrefMatch[1] || hrefMatch[2] || hrefMatch[3])) : '';
+        if (href !== '' && SAFE_URL_RE.test(href)) {
+            const text = Parse.stripHtml(match[2]);
+            links.push({ text: text === '' ? href : text, href: href, section: section });
+        }
+        match = ANCHOR_RE.exec(source);
+    }
+    return links;
+}
+
+function findSectionKey(sections, wanted) {
+    const needle = normalizeHeading(wanted);
+    for (const heading of Object.keys(sections)) {
+        if (normalizeHeading(heading) === needle) {
+            return heading;
+        }
+    }
+    return null;
+}
+
+/**
+ * Tool note HTML -> the three H2 sections, their links and the "What is?" text.
+ * @param {string} html
+ * @returns {{ whatIs: string, officialLinks: Array, usefulLinks: Array, links: Array, sections: object }}
+ */
+function parseToolNote(html) {
+    const source = String(html == null ? '' : html);
+    // Heading text is note content, so keys are collected in a Map first: a
+    // heading named `__proto__` must become an ordinary section, never a
+    // prototype assignment.
+    const found = new Map();
+    const rawBodies = new Map();
+    for (const body of sectionBodies(source)) {
+        const key = body.key === '' ? 'untitled' : body.key;
+        if (found.has(key)) {
+            continue;
+        }
+        found.set(key, Parse.stripHtml(body.html));
+        rawBodies.set(key, body.html);
+    }
+    const sections = Object.fromEntries(found);
+
+    const officialKey = findSectionKey(sections, OFFICIAL);
+    const usefulKey = findSectionKey(sections, USEFUL);
+    const officialLinks = linksInSection(officialKey === null ? '' : rawBodies.get(officialKey), 'official');
+    const usefulLinks = linksInSection(usefulKey === null ? '' : rawBodies.get(usefulKey), 'useful');
+
+    const whatIsKey = findSectionKey(sections, WHAT_IS);
+    return {
+        whatIs: whatIsKey === null ? Parse.stripHtml(source) : trim(sections[whatIsKey]),
+        officialLinks: officialLinks,
+        usefulLinks: usefulLinks,
+        links: officialLinks.concat(usefulLinks),
+        sections: sections
+    };
+}
+
+function firstToken(base) {
+    return trim(base).split(/\s+/)[0] || '';
+}
+
+function addExample(out, text) {
+    if (text === '' || out.indexOf(text) !== -1) {
+        return;
+    }
+    out.push(text);
+}
+
+function looksLikeCommand(text, token) {
+    if (text === '' || /\n/.test(text) || token === '') {
+        return false;
+    }
+    if (/[.!?\u00a1\u00bf]$/.test(text)) {
+        return false;
+    }
+    if (text.slice(0, token.length).toLowerCase() !== token.toLowerCase()) {
+        return false;
+    }
+    return text.length === token.length || /\s/.test(text.charAt(token.length));
+}
+
+/**
+ * Usage note HTML -> example command lines.
+ * Code blocks always count; a single-line `<p>`/`<li>` that starts with the
+ * command name and does not end in a period counts too.
+ * @param {string} html
+ * @param {string} base the tool command, e.g. `ffmpeg` or `git commit`
+ * @returns {Array<string>}
+ */
+function parseExamples(html, base) {
+    const source = String(html == null ? '' : html);
+    const token = firstToken(base);
+    const out = [];
+    BLOCK_RE.lastIndex = 0;
+    let match = BLOCK_RE.exec(source);
+    while (match !== null) {
+        const tag = match[1].toLowerCase();
+        const text = Parse.stripHtml(match[0]);
+        if (text !== '') {
+            if (tag === 'pre') {
+                addExample(out, text);
+            } else if (looksLikeCommand(text, token)) {
+                addExample(out, text);
+            }
+        }
+        match = BLOCK_RE.exec(source);
+    }
+    return out.slice(0, MAX_EXAMPLES);
+}
+
+/**
+ * Usage note stored as a code note -> one example per non-empty line.
+ * @param {string} text
+ * @returns {Array<string>}
+ */
+function parseExampleLines(text) {
+    const out = [];
+    String(text == null ? '' : text).split(/\r?\n/).forEach(function (line) {
+        const trimmed = line.trim();
+        if (trimmed === '' || trimmed.charAt(0) === '#' || trimmed.slice(0, 2) === '//') {
+            return;
+        }
+        addExample(out, trimmed);
+    });
+    return out.slice(0, MAX_EXAMPLES);
+}
+
+function escapeAttribute(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+/** Same rules as escapeAttribute: safe for text and for double-quoted attributes. */
+const escapeHtml = escapeAttribute;
+
+function safeHref(raw) {
+    const decoded = Parse.decodeEntities(String(raw == null ? '' : raw)).trim();
+    return SAFE_URL_RE.test(decoded) ? decoded : '';
+}
+
+/**
+ * Install-note HTML -> the same formatting with only safe tags and attributes.
+ * Keeps paragraphs, lists, headings, code blocks, emphasis and http(s)/mailto
+ * links; removes scripts, styles, event handlers, classes and inline styles.
+ * @param {string} html
+ * @returns {string}
+ */
+function sanitizeNoteHtml(html) {
+    const source = String(html == null ? '' : html).replace(COMMENT_RE, '');
+    const cleaned = source.replace(DROP_ELEMENT_RE, '');
+    return cleaned.replace(TAG_TOKEN_RE, function (match, rawName, rawAttrs) {
+        const tag = String(rawName).toLowerCase();
+        if (!ALLOWED_TAGS.has(tag)) {
+            return '';
+        }
+        if (match.charAt(1) === '/') {
+            return '</' + tag + '>';
+        }
+        if (tag === 'a') {
+            const found = HREF_RE.exec(rawAttrs || '');
+            const href = found
+                ? safeHref(found[1] !== undefined ? found[1] : (found[2] !== undefined ? found[2] : found[3]))
+                : '';
+            return href === ''
+                ? '<a>'
+                : '<a href="' + escapeAttribute(href) + '" target="_blank" rel="noreferrer">';
+        }
+        return '<' + tag + '>';
+    });
+}
+
+/**
+ * Wrap every `<pre>` block in a relative container that can hold a copy button.
+ * Inline `<code>` is left alone.
+ * @param {string} html
+ * @param {string} buttonHtml trusted markup for the copy control
+ * @returns {string}
+ */
+function wrapCodeBlocks(html, buttonHtml) {
+    return String(html == null ? '' : html).replace(/<pre\b[^>]*>[\s\S]*?<\/pre\s*>/gi, function (block) {
+        return '<div class="cm-code-block">' + (buttonHtml || '') + block + '</div>';
+    });
+}
+
+module.exports = {
+    parseToolNote,
+    parseExamples,
+    parseExampleLines,
+    sanitizeNoteHtml,
+    escapeHtml,
+    wrapCodeBlocks
+};
+
+});
+__def("toolfile", function (module, exports, __require) {
+'use strict';
+
+/**
+ * Portable tool files: one JSON document that holds everything needed to
+ * recreate a tool note (metadata, the three H2 sections, the standard child
+ * notes and every option).
+ *
+ * The palette exports a tool with buildToolFile() and imports one with
+ * parseToolFile(). Both are pure: no Trilium API, no DOM, no file system.
+ *
+ * Shape:
+ * {
+ *   kind: 'command-maker-tool',
+ *   version: 1,
+ *   tool: {
+ *     title, category, base, description,
+ *     content, install, usage, help,
+ *     options: [ option, ... ]
+ *   }
+ * }
+ *
+ * An option uses the same fields the backend option notes store, with the
+ * portable names label/help/values/default so an AI model can fill it in
+ * without knowing Trilium's labels.
+ */
+
+const Model = __require("model");
+
+const TOOL_KIND = 'command-maker-tool';
+const FILE_VERSION = 1;
+
+function text(value) {
+    return value === undefined || value === null ? '' : String(value);
+}
+
+function trimmed(value) {
+    return text(value).trim();
+}
+
+function nonEmpty(value) {
+    return trimmed(value) !== '';
+}
+
+function truthy(value) {
+    if (value === true) {
+        return true;
+    }
+    return ['true', '1', 'yes', 'on'].indexOf(trimmed(value).toLowerCase()) !== -1;
+}
+
+function splitValues(value) {
+    if (value === undefined || value === null || value === '') {
+        return [];
+    }
+    const list = Array.isArray(value) ? value : String(value).split(',');
+    const out = [];
+    for (const entry of list) {
+        const next = trimmed(entry);
+        if (next !== '' && out.indexOf(next) === -1) {
+            out.push(next);
+        }
+    }
+    return out;
+}
+
+function normaliseType(raw, warnings) {
+    const value = trimmed(raw).toLowerCase();
+    if (value === '') {
+        return 'string';
+    }
+    if (Model.TYPES.indexOf(value) !== -1) {
+        return value;
+    }
+    warnings.push({
+        code: 'invalid-type',
+        message: 'Unknown option type "' + value + '"; using string.'
+    });
+    return 'string';
+}
+
+function normaliseDefault(raw) {
+    if (raw === undefined || raw === null || raw === '') {
+        return '';
+    }
+    if (typeof raw === 'boolean') {
+        return raw ? 'true' : '';
+    }
+    return trimmed(raw);
+}
+
+/** Loose option entry -> the option shape the backend importer understands. */
+function normaliseOption(entry, index, warnings) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        warnings.push({
+            code: 'invalid-option',
+            message: 'Option entry ' + (index + 1) + ' is not an object.'
+        });
+        return null;
+    }
+
+    const flag = trimmed(entry.flag);
+    const label = trimmed(
+        entry.label !== undefined ? entry.label
+            : (entry.title !== undefined ? entry.title : entry.name)
+    );
+    if (label === '' && flag === '') {
+        warnings.push({
+            code: 'invalid-option',
+            message: 'Option entry ' + (index + 1) + ' has no label and no flag.'
+        });
+        return null;
+    }
+
+    const type = normaliseType(entry.type, warnings);
+    let values = splitValues(entry.values !== undefined ? entry.values : entry.enumValues);
+    if (type === 'boolean') {
+        values = [];
+    }
+
+    const rawDefault = entry.default !== undefined ? entry.default : entry.defaultValue;
+    const rawOrder = entry.order === undefined || entry.order === null || trimmed(entry.order) === ''
+        ? NaN
+        : Number(entry.order);
+    const quote = Model.QUOTES.indexOf(trimmed(entry.quote).toLowerCase()) === -1
+        ? 'none'
+        : trimmed(entry.quote).toLowerCase();
+
+    return {
+        label: label === '' ? flag : label,
+        flag: flag,
+        help: trimmed(entry.help !== undefined ? entry.help : entry.doc),
+        type: type,
+        values: values,
+        default: normaliseDefault(rawDefault),
+        required: truthy(entry.required),
+        mode: trimmed(entry.mode).toLowerCase() === 'inline' ? 'inline' : 'flag',
+        placeholder: trimmed(entry.placeholder),
+        order: isFinite(rawOrder) ? rawOrder : (index + 1) * 10,
+        quote: quote,
+        sep: trimmed(entry.sep) === '=' || trimmed(entry.separator) === '=' ? '=' : ' '
+    };
+}
+
+/** Tool object (exported or hand-written) -> the canonical portable tool. */
+function normaliseTool(spec, warnings) {
+    const source = spec && typeof spec === 'object' && !Array.isArray(spec) ? spec : {};
+    const options = [];
+    if (Array.isArray(source.options)) {
+        for (let index = 0; index < source.options.length; index += 1) {
+            const option = normaliseOption(source.options[index], index, warnings);
+            if (option) {
+                options.push(option);
+            }
+        }
+    } else if (source.options !== undefined && source.options !== null) {
+        warnings.push({
+            code: 'invalid-options',
+            message: 'The tool "options" field is not an array; no options were read.'
+        });
+    }
+
+    return {
+        title: trimmed(source.title),
+        category: trimmed(source.category),
+        base: trimmed(source.base),
+        description: trimmed(source.description),
+        content: text(source.content),
+        install: text(source.install),
+        usage: text(source.usage),
+        help: text(source.help),
+        options: options
+    };
+}
+
+/**
+ * Tool data -> a portable file object ready for JSON.stringify.
+ * @param {object} tool
+ * @returns {{ kind: string, version: number, tool: object }}
+ */
+function buildToolFile(tool) {
+    return {
+        kind: TOOL_KIND,
+        version: FILE_VERSION,
+        tool: normaliseTool(tool, [])
+    };
+}
+
+/**
+ * Parse a tool file. Accepts the exported envelope, `{ tool: {...} }` or a bare
+ * tool object. Never throws; unusable input becomes warnings.
+ * @param {string} source
+ * @returns {{ tool: object|null, warnings: Array }}
+ */
+function parseToolFile(source) {
+    const warnings = [];
+    const raw = text(source).trim();
+    if (raw === '') {
+        warnings.push({ code: 'invalid-json', message: 'The tool file is empty.' });
+        return { tool: null, warnings: warnings };
+    }
+
+    let data;
+    try {
+        data = JSON.parse(raw);
+    } catch (error) {
+        warnings.push({
+            code: 'invalid-json',
+            message: 'Not valid JSON: ' + (error && error.message ? error.message : error)
+        });
+        return { tool: null, warnings: warnings };
+    }
+
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        warnings.push({ code: 'invalid-json', message: 'The tool file must be a JSON object.' });
+        return { tool: null, warnings: warnings };
+    }
+
+    const spec = data.tool && typeof data.tool === 'object' && !Array.isArray(data.tool)
+        ? data.tool
+        : data;
+    const tool = normaliseTool(spec, warnings);
+    if (!nonEmpty(tool.title)) {
+        warnings.push({ code: 'missing-title', message: 'The tool file has no "title".' });
+        return { tool: null, warnings: warnings };
+    }
+
+    return { tool: tool, warnings: warnings };
+}
+
+module.exports = {
+    TOOL_KIND,
+    FILE_VERSION,
+    normaliseOption,
+    normaliseTool,
+    buildToolFile,
+    parseToolFile
+};
+});
+__def("prompt", function (module, exports, __require) {
+'use strict';
+
+/**
+ * The prompt a user copies into any AI model together with the output of a
+ * tool's `--help` command. The model answers with the JSON tool file that the
+ * palette's "Import tool" action understands (see src/toolfile.js).
+ */
+
+const SCHEMA = [
+    '{',
+    '  "kind": "command-maker-tool",',
+    '  "version": 1,',
+    '  "tool": {',
+    '    "title": "<command name, e.g. git commit>",',
+    '    "category": "<short group, e.g. Version control>",',
+    '    "base": "<command the user types, e.g. git commit>",',
+    '    "description": "<one sentence>",',
+    '    "content": "<h2>What is?</h2><p>...</p><h2>Official links</h2><ul><li><a href=\\"https://...\\">...</a></li></ul><h2>Useful links</h2><ul><li><a href=\\"https://...\\">...</a></li></ul>",',
+    '    "install": "<p>Install on Windows:</p><pre><code>winget install tool</code></pre>",',
+    '    "usage": "<p>Example:</p><pre><code>...</code></pre>",',
+    '    "help": "<the exact --help output, unchanged>",',
+    '    "options": [',
+    '      {',
+    '        "label": "Input file",',
+    '        "flag": "-i",',
+    '        "help": "Input file to read.",',
+    '        "type": "path",',
+    '        "values": [],',
+    '        "default": "",',
+    '        "required": true,',
+    '        "mode": "flag",',
+    '        "placeholder": "input",',
+    '        "order": 10,',
+    '        "quote": "none",',
+    '        "sep": " "',
+    '      }',
+    '    ]',
+    '  }',
+    '}'
+].join('\n');
+
+const RULES = [
+    '- title: the command name. base: the exact command the user types (keep subcommands, e.g. "git commit").',
+    '- category: a short group such as "Network", "Media" or "Version control".',
+    '- description: one sentence that explains what the tool does.',
+    '- content: HTML with exactly three <h2> sections in this order: "What is?", "Official links", "Useful links".',
+    '  Put a <p> summary under "What is?" and one <ul><li><a href="...">...</a></li></ul> list under each links section.',
+    '  If no URL is known, leave an empty <ul></ul>; never invent links.',
+    '- install: HTML install steps (Windows, macOS, Linux) when known; otherwise a short placeholder paragraph.',
+    '  Put every install command in its own <pre><code>command</code></pre> block. Never use inline <code> for install commands;',
+    '  inline code is only for short words, file names or values mentioned in prose.',
+    '- usage: HTML with two or three realistic <pre><code>command</code></pre> examples.',
+    '- help: the raw --help text, unchanged.',
+    '- options: one entry per documented option or positional argument.',
+    '  - flag: the primary flag ("-i", "--ignore-case"), or "" for a positional argument.',
+    '  - label: a short human name ("Ignore case"); required when flag is "".',
+    '  - help: what the option does, taken from the help output.',
+    '  - type: "boolean" when it takes no value, "path" for files or directories, "number" for counts or sizes,',
+    '    "enum" when there is a fixed set of values, "string" otherwise.',
+    '  - values: the enum choices only, otherwise [].',
+    '  - default: the default stated in the help output, otherwise "".',
+    '  - required: true only for positional arguments or options the tool requires.',
+    '  - placeholder: a short unique identifier ("input", "url").',
+    '  - order: 10, 20, 30... in the order the options appear.',
+    '  - quote: "double" for free text or URLs that may contain spaces, otherwise "none".',
+    '  - sep: " " normally, "=" only for --flag=value style options.',
+    '  - mode: "flag" unless the base command itself must contain {{placeholder}}.',
+    'Do not invent options that are not in the help output.'
+].join('\n');
+
+function clean(value) {
+    return String(value == null ? '' : value).trim();
+}
+
+/**
+ * @param {{ title?: string, helpText?: string }} [options]
+ * @returns {string}
+ */
+function buildToolPrompt(options) {
+    const safe = options || {};
+    const title = clean(safe.title);
+    const helpText = clean(safe.helpText);
+
+    const lines = [
+        'You convert command-line tool documentation into a Command Maker tool file.',
+        '',
+        'Return only the JSON object. Do not wrap it in a markdown code fence, do not add commentary,',
+        'and do not omit fields. Use this exact shape:',
+        '',
+        SCHEMA,
+        '',
+        'Rules:',
+        RULES,
+        '',
+        'Input:',
+        title === '' ? 'Tool name: <tool name>' : 'Tool name: ' + title,
+        '--help output:',
+        helpText === '' ? "<paste the output of the tool's --help command here>" : helpText,
+        '',
+        'Convert the input above now. Return only the JSON object.'
+    ];
+    return lines.join('\n');
+}
+
+module.exports = { buildToolPrompt };
 });
 __def("model", function (module, exports, __require) {
 'use strict';
 
 /**
- * Turns a plain note snapshot into a command definition.
- * Pure: the runtime is responsible for reading FNote objects and passing
- * { noteId, title, content, labels, optionNotes } snapshots.
+ * Turns a plain tool snapshot into a command definition.
+ * Pure: the runtime reads FNote objects and passes
+ * { noteId, title, category, content, labels, optionNotes, examples } snapshots.
+ *
+ * A tool definition looks like:
+ * {
+ *   noteId, title, category, description, tags, base,
+ *   options: [ option, ... ],
+ *   inferred: [ option, ... ],
+ *   placeholders: [ name, ... ],
+ *   warnings: [ { code, message } ]
+ * }
  */
 
 const Render = __require("render");
 
 const LABELS = {
+    // structure
     root: 'cmRoot',
-    command: 'cmCommand',
-    template: 'cmTemplate',
-    optionTemplate: 'cmOptionTemplate',
+    tools: 'cmTools',
+    category: 'cmCategory',
+    tool: 'cmTool',
+    install: 'cmInstall',
+    usage: 'cmUsage',
+    helpNote: 'cmHelpNote',
     options: 'cmOptions',
+    option: 'cmOption',
     presets: 'cmPresets',
-    preset: 'cmPreset',
+    tab: 'cmTab',
+    tabHtml: 'cmTabHtml',
+    // tool metadata
     description: 'cmDesc',
     tags: 'cmTags',
     base: 'cmBase',
+    // option metadata
     flag: 'cmFlag',
     mode: 'cmMode',
     placeholder: 'cmPlaceholder',
@@ -277,7 +1886,14 @@ const LABELS = {
     required: 'cmRequired',
     order: 'cmOrder',
     quote: 'cmQuote',
-    separator: 'cmSep'
+    separator: 'cmSep',
+    doc: 'cmDoc',
+    // bookkeeping
+    seeded: 'cmSeeded',
+    managed: 'cmManaged',
+    version: 'cmVersion',
+    // note presentation
+    icon: 'iconClass',
 };
 
 const LABEL_NAMES = Object.keys(LABELS).map(function (key) {
@@ -286,6 +1902,14 @@ const LABEL_NAMES = Object.keys(LABELS).map(function (key) {
 
 const TYPES = ['string', 'path', 'number', 'boolean', 'enum'];
 const QUOTES = ['none', 'single', 'double'];
+
+/** Boxicons classes for the standard child notes. */
+const ICONS = {
+    install: 'bx bx-download',
+    usage: 'bx bx-terminal',
+    help: 'bx bx-help-circle',
+    options: 'bx bx-cog'
+};
 
 function readString(labels, name, fallback) {
     const value = labels ? labels[name] : undefined;
@@ -309,6 +1933,36 @@ function readNumber(labels, name, fallback) {
     return isFinite(parsed) ? parsed : fallback;
 }
 
+function splitValues(value) {
+    return String(value == null ? '' : value)
+        .split(',')
+        .map(function (entry) {
+            return entry.trim();
+        })
+        .filter(function (entry) {
+            return entry !== '';
+        });
+}
+
+/** Default command name for a tool note: its title, safely lowercased. */
+function deriveBase(title) {
+    return String(title == null ? '' : title)
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9._+\- ]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function optionPlaceholder(snapshot, flag, title) {
+    const explicit = readString(snapshot.labels, LABELS.placeholder, '');
+    if (explicit.trim() !== '') {
+        return explicit.trim();
+    }
+    const fromFlag = String(flag || '').replace(/^-+/, '');
+    return Render.slugify(fromFlag !== '' ? fromFlag : title);
+}
+
 function optionFromNote(note) {
     const snapshot = note || {};
     const labels = snapshot.labels || {};
@@ -324,25 +1978,21 @@ function optionFromNote(note) {
         quote = 'none';
     }
 
-    const enumValues = readString(labels, LABELS.enumValues, '')
-        .split(',')
-        .map(function (entry) {
-            return entry.trim();
-        })
-        .filter(function (entry) {
-            return entry !== '';
-        });
+    const enumValues = splitValues(readString(labels, LABELS.enumValues, ''));
 
     const rawDefault = labels[LABELS.defaultValue];
     const defaultValue = rawDefault === undefined || rawDefault === null
         ? (type === 'boolean' ? false : '')
         : String(rawDefault);
 
+    const flag = readString(labels, LABELS.flag, '');
+
     return {
         noteId: snapshot.noteId || null,
         title: title,
-        placeholder: readString(labels, LABELS.placeholder, Render.slugify(title)),
-        flag: readString(labels, LABELS.flag, ''),
+        help: readString(labels, LABELS.doc, '').trim(),
+        placeholder: optionPlaceholder(snapshot, flag, title),
+        flag: flag,
         mode: readString(labels, LABELS.mode, 'flag').trim().toLowerCase() === 'inline' ? 'inline' : 'flag',
         type: type,
         enumValues: enumValues,
@@ -355,28 +2005,25 @@ function optionFromNote(note) {
 }
 
 function sortOptions(left, right) {
-    if (left.order !== right.order) {
-        return left.order - right.order;
-    }
-    if (left.title !== right.title) {
-        return left.title < right.title ? -1 : 1;
-    }
-    return String(left.noteId) < String(right.noteId) ? -1 : 1;
+    return Render.compareOptions(left, right);
 }
 
-function buildCommand(note) {
+function buildTool(note) {
     const snapshot = note || {};
     const labels = snapshot.labels || {};
 
-    const base = labels[LABELS.base] !== undefined && labels[LABELS.base] !== null
-        ? String(labels[LABELS.base])
-        : String(snapshot.content || '');
+    const configuredBase = labels[LABELS.base];
+    const base = configuredBase !== undefined && configuredBase !== null && String(configuredBase).trim() !== ''
+        ? String(configuredBase)
+        : deriveBase(snapshot.title);
 
     const optionNotes = Array.isArray(snapshot.optionNotes) ? snapshot.optionNotes : [];
     const options = optionNotes.map(optionFromNote).sort(sortOptions);
 
     const warnings = [];
-    const byPlaceholder = {};
+    // Placeholders and flags come from note labels, so the maps must not inherit
+    // Object.prototype: a `__proto__` name would otherwise be treated as a duplicate.
+    const byPlaceholder = new Map();
     for (const option of options) {
         if (!option.placeholder) {
             warnings.push({
@@ -385,25 +2032,41 @@ function buildCommand(note) {
             });
             continue;
         }
-        if (byPlaceholder[option.placeholder]) {
+        if (byPlaceholder.has(option.placeholder)) {
             warnings.push({
                 code: 'duplicate-placeholder',
                 message: 'Two options share the placeholder "' + option.placeholder + '"; the first one wins.'
             });
             continue;
         }
-        byPlaceholder[option.placeholder] = option;
+        byPlaceholder.set(option.placeholder, option);
+    }
+
+    const byFlag = new Set();
+    for (const option of options) {
+        if (!option.flag) {
+            continue;
+        }
+        if (byFlag.has(option.flag)) {
+            warnings.push({
+                code: 'duplicate-flag',
+                message: 'Two options use the flag "' + option.flag + '"; the command will repeat it.'
+            });
+            continue;
+        }
+        byFlag.add(option.flag);
     }
 
     const declared = Render.placeholderNames(base);
     const inferred = declared
         .filter(function (name) {
-            return !byPlaceholder[name];
+            return !byPlaceholder.has(name);
         })
         .map(function (name) {
             return {
                 noteId: null,
                 title: name,
+                help: '',
                 placeholder: name,
                 flag: '',
                 mode: 'inline',
@@ -421,19 +2084,161 @@ function buildCommand(note) {
     return {
         noteId: snapshot.noteId || '',
         title: String(snapshot.title || ''),
+        category: String(snapshot.category || ''),
         description: readString(labels, LABELS.description, ''),
         tags: readString(labels, LABELS.tags, ''),
         base: base,
         options: options,
         inferred: inferred,
         placeholders: declared,
-        warnings: warnings
+        warnings: warnings,
+        examples: Array.isArray(snapshot.examples) ? snapshot.examples.slice() : [],
+        searchText: String(snapshot.searchText || '')
     };
+}
+
+/** Split a shell-ish command into tokens, keeping quoted values together. */
+function tokenizeCommand(command) {
+    const tokens = [];
+    let current = '';
+    let quote = '';
+    let escaped = false;
+    const text = String(command == null ? '' : command);
+    for (let index = 0; index < text.length; index += 1) {
+        const char = text.charAt(index);
+        if (escaped) {
+            current += char;
+            escaped = false;
+            continue;
+        }
+        if (char === '\\') {
+            escaped = true;
+            continue;
+        }
+        if (quote !== '') {
+            if (char === quote) {
+                quote = '';
+            } else {
+                current += char;
+            }
+            continue;
+        }
+        if (char === '"' || char === "'") {
+            quote = char;
+            continue;
+        }
+        if (/\s/.test(char)) {
+            if (current !== '') {
+                tokens.push(current);
+                current = '';
+            }
+            continue;
+        }
+        current += char;
+    }
+    if (current !== '') {
+        tokens.push(current);
+    }
+    return tokens;
+}
+
+/**
+ * Turn a rendered example back into a value map for the palette form.
+ * Known flags are matched, and unconsumed tokens fill positional options in
+ * order. Subcommands and placeholders stay in the example preview.
+ */
+function valuesFromExample(definition, command) {
+    const safe = definition || {};
+    const options = Array.isArray(safe.options) ? safe.options : [];
+    const inferred = Array.isArray(safe.inferred) ? safe.inferred : [];
+    const values = {};
+    for (const option of options) {
+        values[Render.valueKey(option)] = option.type === 'boolean' ? false : '';
+    }
+    for (const option of inferred) {
+        values[Render.valueKey(option)] = '';
+    }
+    values[Render.EXTRA_KEY] = '';
+
+    let tokens = tokenizeCommand(command);
+    const base = String(safe.base == null ? '' : safe.base);
+    const canMapPositionals = base.indexOf('{{') === -1;
+    if (canMapPositionals) {
+        const baseTokens = tokenizeCommand(base);
+        let matches = baseTokens.length > 0 && baseTokens.length <= tokens.length;
+        for (let index = 0; matches && index < baseTokens.length; index += 1) {
+            if (tokens[index] !== baseTokens[index]) {
+                matches = false;
+            }
+        }
+        if (matches) {
+            tokens = tokens.slice(baseTokens.length);
+        }
+    }
+
+    const byFlag = {};
+    for (const option of options) {
+        if (option.flag) {
+            byFlag[option.flag] = option;
+        }
+    }
+
+    const positionals = [];
+    let unknownFlag = false;
+    for (let index = 0; index < tokens.length; index += 1) {
+        const token = tokens[index];
+        if (token === '') {
+            continue;
+        }
+        if (token.charAt(0) !== '-' || token.length < 2) {
+            positionals.push(token);
+            continue;
+        }
+        let flag = token;
+        let inlineValue = null;
+        const equals = token.indexOf('=');
+        if (token.slice(0, 2) === '--' && equals > 2) {
+            flag = token.slice(0, equals);
+            inlineValue = token.slice(equals + 1);
+        }
+        const option = byFlag[flag];
+        if (!option) {
+            unknownFlag = true;
+            continue;
+        }
+        const key = Render.valueKey(option);
+        if (option.type === 'boolean') {
+            values[key] = true;
+            continue;
+        }
+        if (inlineValue !== null) {
+            values[key] = inlineValue;
+            continue;
+        }
+        const next = tokens[index + 1];
+        const nextIsKnownFlag = next !== undefined && next.charAt(0) === '-' && next.length > 1 && byFlag[next];
+        if (next !== undefined && !nextIsKnownFlag) {
+            values[key] = next;
+            index += 1;
+        }
+    }
+
+    if (!unknownFlag && canMapPositionals && positionals.length) {
+        const positionalOptions = options.filter(function (option) {
+            return !option.flag && option.mode !== 'inline';
+        });
+        for (let index = 0; index < positionalOptions.length && index < positionals.length; index += 1) {
+            values[Render.valueKey(positionalOptions[index])] = positionals[index];
+        }
+    }
+
+    return values;
 }
 
 function defaultValueMap(definition) {
     const values = {};
     const safeDefinition = definition || {};
+    values[Render.EXTRA_KEY] = '';
     for (const option of safeDefinition.options || []) {
         values[Render.valueKey(option)] = option.defaultValue;
     }
@@ -443,29 +2248,176 @@ function defaultValueMap(definition) {
     return values;
 }
 
-function matches(definition, query) {
+/** Search text for raw option snapshots, used while indexing a tool tree. */
+function optionNotesText(snapshots) {
+    return (snapshots || []).map(function (snapshot) {
+        const labels = (snapshot && snapshot.labels) || {};
+        return [
+            snapshot ? snapshot.title : '',
+            labels[LABELS.flag],
+            labels[LABELS.doc],
+            labels[LABELS.enumValues]
+        ].join(' ');
+    }).join(' ');
+}
+
+/**
+ * Everything a tool can be found by. One definition on purpose: the index and
+ * `matches` must never disagree about what is searchable.
+ */
+function searchableText(snapshot) {
+    const safe = snapshot || {};
+    const optionText = safe.optionText
+        || (safe.options || []).map(function (option) {
+            return [option.title, option.flag, option.help, (option.enumValues || []).join(' ')].join(' ');
+        }).join(' ');
+    return [
+        safe.title,
+        safe.category,
+        safe.description,
+        safe.tags,
+        safe.base,
+        safe.whatIs,
+        optionText,
+        (safe.optionTitles || []).join(' '),
+        (safe.examples || []).join(' '),
+        safe.searchText
+    ].join(' ');
+}
+
+/** True when every whitespace-separated query term appears in the haystack. */
+function matchesText(haystack, query) {
     const needle = String(query == null ? '' : query).trim().toLowerCase();
     if (needle === '') {
         return true;
     }
-    const safeDefinition = definition || {};
-    const optionText = (safeDefinition.options || [])
-        .map(function (option) {
-            return [option.title, option.flag, (option.enumValues || []).join(' ')].join(' ');
-        })
-        .join(' ');
-    const haystack = [
-        safeDefinition.title,
-        safeDefinition.description,
-        safeDefinition.tags,
-        safeDefinition.base,
-        optionText,
-        (safeDefinition.optionTitles || []).join(' ')
-    ].join(' ').toLowerCase();
-
+    const text = String(haystack == null ? '' : haystack).toLowerCase();
     return needle.split(/\s+/).every(function (term) {
-        return haystack.indexOf(term) !== -1;
+        return text.indexOf(term) !== -1;
     });
+}
+
+function matches(definition, query) {
+    return matchesText(searchableText(definition), query);
+}
+
+/** Content template for a new tool note: exactly the three H2 sections. */
+function toolTemplate() {
+    return [
+        '<h2>What is?</h2>',
+        '<p>Describe what this tool does and when to use it.</p>',
+        '<h2>Official links</h2>',
+        '<p>Add the official documentation, repository or website links here.</p>',
+        '<h2>Useful links</h2>',
+        '<p>Add useful guides, cheat sheets or articles here.</p>'
+    ].join('\n');
+}
+
+/** Starting content for the three standard child notes plus the tool body. */
+function newToolNotes() {
+    return {
+        content: toolTemplate(),
+        install: '<p>Add the installation steps or commands for this tool.</p>',
+        usage: '<p>Add examples of commands with this tool. Put each example in a code block.</p>',
+        help: ''
+    };
+}
+
+function seedTools() {
+    return [
+        {
+            category: 'Version control',
+            title: 'git commit',
+            base: 'git commit',
+            description: 'Record staged changes in the current Git repository.',
+            content: [
+                '<h2>What is?</h2>',
+                '<p><code>git commit</code> records the staged changes of the repository as a new commit.</p>',
+                '<h2>Official links</h2>',
+                '<ul><li><a href="https://git-scm.com/docs/git-commit">Official git-commit documentation</a></li></ul>',
+                '<h2>Useful links</h2>',
+                '<ul><li><a href="https://www.conventionalcommits.org/">Conventional Commits</a></li></ul>'
+            ].join('\n'),
+            install: '<p><strong>Windows:</strong> <code>winget install Git.Git</code></p><p><strong>macOS:</strong> <code>brew install git</code></p><p><strong>Debian/Ubuntu:</strong> <code>sudo apt install git</code></p>',
+            usage: [
+                '<p>Commit with a message:</p>',
+                '<pre><code>git commit -m "fix: handle empty input"</code></pre>',
+                '<p>Add all tracked changes and commit:</p>',
+                '<pre><code>git commit -am "chore: update dependencies"</code></pre>',
+                '<p>Amend the last commit without changing its message:</p>',
+                '<pre><code>git commit --amend --no-edit</code></pre>'
+            ].join('\n'),
+            help: [
+                'usage: git commit [-a | --interactive | --patch] [-s] [-v] [-u<mode>] [--amend]',
+                '                  [--dry-run] [(-c | -C | --squash) <commit> | --fixup [(amend|reword):]<commit>]',
+                '                  [-F <file> | -m <msg>] [--reset-author] [--allow-empty]',
+                '',
+                '    -m, --message <message>  use the given message as the commit message',
+                '    -a, --all                commit all changed files',
+                '    --amend                  amend the previous commit',
+                '    --allow-empty            allow recording an empty commit',
+                '    --no-verify              bypass the pre-commit and commit-msg hooks',
+                '    --author <author>        override the author'
+            ].join('\n'),
+            options: [
+                { label: 'Message', flag: '-m', type: 'string', doc: 'Commit message. Repeat the flag to add paragraphs.', order: 10, required: true },
+                { label: 'All changes', flag: '-a', type: 'boolean', doc: 'Stage all tracked changes before committing.', order: 20 },
+                { label: 'Amend last commit', flag: '--amend', type: 'boolean', doc: 'Replace the previous commit instead of creating a new one.', order: 30 },
+                { label: 'Allow empty', flag: '--allow-empty', type: 'boolean', doc: 'Record a commit with no changes.', order: 40 },
+                { label: 'Skip hooks', flag: '--no-verify', type: 'boolean', doc: 'Bypass pre-commit and commit-msg hooks.', order: 50 },
+                { label: 'Author', flag: '--author', type: 'string', doc: 'Override the commit author, for example "Name <mail@example.com>".', order: 60 },
+                { label: 'Date', flag: '--date', type: 'string', doc: 'Override the author date.', order: 70 }
+            ]
+        },
+        {
+            category: 'Network',
+            title: 'curl',
+            base: 'curl',
+            description: 'Transfer data from or to a server with the curl command-line client.',
+            content: [
+                '<h2>What is?</h2>',
+                '<p>curl is a command-line tool for transferring data with URLs. It supports HTTP, HTTPS, FTP and many other protocols.</p>',
+                '<h2>Official links</h2>',
+                '<ul><li><a href="https://curl.se/docs/">Official curl documentation</a></li></ul>',
+                '<h2>Useful links</h2>',
+                '<ul><li><a href="https://curl.se/docs/manpage.html">curl man page</a></li></ul>'
+            ].join('\n'),
+            install: '<p><strong>Windows:</strong> <code>winget install curl.curl</code></p><p><strong>macOS:</strong> <code>brew install curl</code></p><p><strong>Debian/Ubuntu:</strong> <code>sudo apt install curl</code></p>',
+            usage: [
+                '<p>POST JSON:</p>',
+                '<pre><code>curl -X POST -H "Content-Type: application/json" -d "{\\"name\\":\\"value\\"}" https://api.example.com/items</code></pre>',
+                '<p>Download a file, following redirects:</p>',
+                '<pre><code>curl -L -o file.zip https://example.com/file.zip</code></pre>',
+                '<p>Show only the response headers:</p>',
+                '<pre><code>curl -sSI https://example.com</code></pre>'
+            ].join('\n'),
+            help: [
+                'Usage: curl [options...] <url>',
+                '',
+                ' -X, --request <method>      specify request method to use',
+                ' -H, --header <header/@file> pass custom header(s) to server',
+                ' -d, --data <data>           HTTP POST data',
+                ' -o, --output <file>         write to file instead of stdout',
+                ' -L, --location              follow redirects',
+                ' -s, --silent                silent mode',
+                ' -u, --user <user:password>  server user and password',
+                '     --compressed            request compressed response',
+                ' -k, --insecure              allow insecure server connections'
+            ].join('\n'),
+            options: [
+                { label: 'Request method', flag: '-X', type: 'enum', values: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'], doc: 'HTTP request method.', order: 10 },
+                { label: 'Header', flag: '-H', type: 'string', doc: 'Add a request header, for example "Content-Type: application/json".', order: 20 },
+                { label: 'Data', flag: '-d', type: 'string', doc: 'Request body sent to the server.', order: 30 },
+                { label: 'Output file', flag: '-o', type: 'path', doc: 'Write the response body to this file instead of stdout.', order: 40 },
+                { label: 'Follow redirects', flag: '-L', type: 'boolean', doc: 'Follow HTTP redirects.', order: 50 },
+                { label: 'Silent', flag: '-s', type: 'boolean', doc: 'Do not show progress or error messages.', order: 60 },
+                { label: 'Compressed', flag: '--compressed', type: 'boolean', doc: 'Ask the server for a compressed response and decompress it.', order: 70 },
+                { label: 'User', flag: '-u', type: 'string', doc: 'Server credentials as user:password.', order: 80 },
+                { label: 'Insecure', flag: '-k', type: 'boolean', doc: 'Allow insecure TLS connections (skip certificate checks).', order: 90 },
+                { label: 'URL', flag: '', type: 'string', placeholder: 'url', quote: 'double', doc: 'URL to request. Positional; appended last.', order: 100, required: true }
+            ]
+        }
+    ];
 }
 
 module.exports = {
@@ -473,427 +2425,193 @@ module.exports = {
     LABEL_NAMES,
     TYPES,
     QUOTES,
+    ICONS,
+    EXTRA_KEY: Render.EXTRA_KEY,
+    deriveBase,
     optionFromNote,
     sortOptions,
-    buildCommand,
+    buildTool,
     defaultValueMap,
-    matches
+    valuesFromExample,
+    tokenizeCommand,
+    matches,
+    matchesText,
+    searchableText,
+    optionNotesText,
+    toolTemplate,
+    newToolNotes,
+    seedTools
 };
 });
-__def("backend", function (module, exports, __require) {
+__def("version", function (module, exports, __require) {
 'use strict';
 
 /**
- * Backend operations.
- *
- * Everything runs through a single `beRun(params)` function because Trilium's
- * `api.runOnBackend` serialises the function by source: inner helpers travel
- * with it, outer helpers would not. `params.labels` carries the attribute names
- * so the schema lives in one place (model.js) instead of being duplicated here.
- *
- * Actions: bootstrap | createCommand | addOption | savePreset | deletePreset
+ * Single source of truth for the installed plugin version and where to look for
+ * a newer one. `tools/build.mjs` fails the build when VERSION and package.json
+ * disagree.
  */
+const VERSION = '0.1';
+const REPOSITORY = 'https://github.com/J0nan/Trilium-Command-Maker-Plugin';
+const LATEST_RELEASE_API = 'https://api.github.com/repos/J0nan/Trilium-Command-Maker-Plugin/releases/latest';
+const LATEST_TAGS_API = 'https://api.github.com/repos/J0nan/Trilium-Command-Maker-Plugin/tags?per_page=50';
+const LATEST_RAW = 'https://raw.githubusercontent.com/J0nan/Trilium-Command-Maker-Plugin/main/package.json';
 
-const ACTIONS = {
-    bootstrap: 'bootstrap',
-    createCommand: 'createCommand',
-    addOption: 'addOption',
-    savePreset: 'savePreset',
-    deletePreset: 'deletePreset'
+module.exports = {
+    VERSION,
+    REPOSITORY,
+    LATEST_RELEASE_API,
+    LATEST_TAGS_API,
+    LATEST_RAW
 };
-
-function beRun(params) {
-    const options = params || {};
-    const labels = options.labels || {};
-
-    function hasLabel(note, name) {
-        if (typeof note.hasLabel === 'function') {
-            return note.hasLabel(name);
-        }
-        const value = note.getLabelValue(name);
-        return value !== null && value !== undefined;
-    }
-
-    function hasRelation(note, name) {
-        if (typeof note.hasRelation === 'function') {
-            return note.hasRelation(name);
-        }
-        const value = note.getRelationValue(name);
-        return value !== null && value !== undefined;
-    }
-
-    function findChild(parent, label) {
-        const children = parent.getChildNotes();
-        for (let index = 0; index < children.length; index += 1) {
-            if (hasLabel(children[index], label)) {
-                return children[index];
-            }
-        }
-        return null;
-    }
-
-    function findChildByTitle(parent, title) {
-        const children = parent.getChildNotes();
-        for (let index = 0; index < children.length; index += 1) {
-            if (children[index].title === title) {
-                return children[index];
-            }
-        }
-        return null;
-    }
-
-    function ensureFolder(parent, label, title) {
-        const existing = findChild(parent, label);
-        if (existing) {
-            return existing;
-        }
-        const note = api.createNewNote({
-            parentNoteId: parent.noteId,
-            title: title,
-            type: 'text',
-            content: ''
-        }).note;
-        note.setLabel(label, '');
-        return note;
-    }
-
-    function slugify(text) {
-        return String(text == null ? '' : text)
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, '_')
-            .replace(/^_+|_+$/g, '');
-    }
-
-    function createOption(commandNote, spec) {
-        const optionTemplate = api.getNoteWithLabel(labels.optionTemplate);
-        const folder = ensureFolder(commandNote, labels.options, 'Options');
-        const note = api.createNewNote({
-            parentNoteId: folder.noteId,
-            title: spec.label || 'Option',
-            type: 'text',
-            content: ''
-        }).note;
-
-        if (optionTemplate && !hasRelation(note, 'template')) {
-            note.setRelation('template', optionTemplate.noteId);
-        }
-        if (spec.flag) {
-            note.setLabel(labels.flag, spec.flag);
-        }
-        if (spec.type) {
-            note.setLabel(labels.type, spec.type);
-        }
-        if (spec.mode) {
-            note.setLabel(labels.mode, spec.mode);
-        }
-        if (spec.placeholder !== undefined && spec.placeholder !== null) {
-            note.setLabel(labels.placeholder, String(spec.placeholder));
-        } else {
-            note.setLabel(labels.placeholder, slugify(spec.label));
-        }
-        if (spec.enumValues && spec.enumValues.length) {
-            note.setLabel(labels.enumValues, spec.enumValues.join(','));
-        }
-        if (spec.defaultValue !== undefined && spec.defaultValue !== null) {
-            note.setLabel(labels.defaultValue, String(spec.defaultValue));
-        }
-        if (spec.quote) {
-            note.setLabel(labels.quote, spec.quote);
-        }
-        if (spec.sep) {
-            note.setLabel(labels.separator, spec.sep);
-        }
-        if (spec.order !== undefined && spec.order !== null) {
-            note.setLabel(labels.order, String(spec.order));
-        }
-        if (spec.required) {
-            note.setLabel(labels.required, 'true');
-        }
-        return note;
-    }
-
-    function parentForRoot() {
-        if (options.parentId) {
-            return options.parentId;
-        }
-        try {
-            const parents = api.currentNote.getParentNotes();
-            if (parents && parents.length) {
-                return parents[0].noteId;
-            }
-        } catch (error) {
-            // currentNote has no parents (root) — fall through
-        }
-        return api.getTodayNote().noteId;
-    }
-
-    function seedCommand(title, base, specs) {
-        const note = api.createNewNote({
-            parentNoteId: api.getNoteWithLabel(labels.root).noteId,
-            title: title,
-            type: 'code',
-            mime: 'text/x-sh',
-            content: base
-        }).note;
-        const template = api.getNoteWithLabel(labels.template);
-        note.setRelation('template', template.noteId);
-        note.setLabel(labels.command, '');
-        note.setLabel(labels.description, '');
-        note.setContent(base);
-        ensureFolder(note, labels.options, 'Options');
-        ensureFolder(note, labels.presets, 'Presets');
-        for (let index = 0; index < specs.length; index += 1) {
-            createOption(note, specs[index]);
-        }
-        return note;
-    }
-
-    function hasSeededCommands(templateId) {
-        const candidates = api.getNotesWithLabel(labels.command);
-        for (let index = 0; index < candidates.length; index += 1) {
-            if (candidates[index].noteId !== templateId) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    function bootstrap() {
-        let root = api.getNoteWithLabel(labels.root);
-        if (!root) {
-            root = api.createNewNote({
-                parentNoteId: parentForRoot(),
-                title: 'Command Maker',
-                type: 'text',
-                content: 'Commands live in this subtree. Press Ctrl+Shift+Space to open the palette.'
-            }).note;
-            root.setLabel(labels.root, '');
-        }
-
-        let template = api.getNoteWithLabel(labels.template);
-        if (!template) {
-            template = api.createNewNote({
-                parentNoteId: root.noteId,
-                title: 'Command Template',
-                type: 'code',
-                mime: 'text/x-sh',
-                content: 'command goes here'
-            }).note;
-            template.setLabel('template', '');
-            template.setLabel(labels.template, '');
-            template.setLabel(labels.command, '');
-            template.setLabel(labels.description, 'One line describing the command.');
-        }
-
-        let optionTemplate = api.getNoteWithLabel(labels.optionTemplate);
-        if (!optionTemplate) {
-            optionTemplate = api.createNewNote({
-                parentNoteId: root.noteId,
-                title: 'Option Template',
-                type: 'text',
-                content: ''
-            }).note;
-            optionTemplate.setLabel('template', '');
-            optionTemplate.setLabel(labels.optionTemplate, '');
-            optionTemplate.setLabel(labels.type, 'string');
-            optionTemplate.setLabel(labels.quote, 'none');
-            optionTemplate.setLabel(labels.order, '100');
-        }
-
-        const optionsFolder = ensureFolder(template, labels.options, 'Options');
-        if (!hasRelation(optionsFolder, 'child:template')) {
-            optionsFolder.setRelation('child:template', optionTemplate.noteId);
-        }
-        ensureFolder(template, labels.presets, 'Presets');
-
-        if (!hasSeededCommands(template.noteId)) {
-            seedCommand('ffmpeg compress', 'ffmpeg -i "{{input}}"', [
-                { label: 'Input file', flag: '-i', type: 'path', placeholder: 'input', order: 10 },
-                { label: 'Video codec', flag: '-c:v', type: 'enum', enumValues: ['libx264', 'libx265', 'libvpx-vp9'], defaultValue: 'libx264', order: 20 },
-                { label: 'CRF quality', flag: '-crf', type: 'number', defaultValue: '23', order: 30 },
-                { label: 'Overwrite output', flag: '-y', type: 'boolean', order: 40 }
-            ]);
-            seedCommand('git commit', 'git commit -m "{{message}}"', [
-                { label: 'Message', flag: '', type: 'string', placeholder: 'message', order: 10 },
-                { label: 'Amend last commit', flag: '--amend', type: 'boolean', order: 20 },
-                { label: 'Skip hooks', flag: '--no-verify', type: 'boolean', order: 30 }
-            ]);
-        }
-
-        return {
-            rootId: root.noteId,
-            templateId: template.noteId,
-            optionTemplateId: optionTemplate.noteId
-        };
-    }
-
-    function createCommand() {
-        const root = api.getNoteWithLabel(labels.root);
-        const template = api.getNoteWithLabel(labels.template);
-        if (!root || !template) {
-            throw new Error('Command Maker is not installed. Run the installer first.');
-        }
-        const title = String(options.title || '').trim() || 'New command';
-        const base = String(options.base || 'command goes here');
-        const note = api.createNewNote({
-            parentNoteId: root.noteId,
-            title: title,
-            type: 'code',
-            mime: 'text/x-sh',
-            content: base
-        }).note;
-        note.setRelation('template', template.noteId);
-        note.setLabel(labels.command, '');
-        note.setLabel(labels.description, '');
-        note.setContent(base);
-        ensureFolder(note, labels.options, 'Options');
-        ensureFolder(note, labels.presets, 'Presets');
-        return { noteId: note.noteId };
-    }
-
-    function addOption() {
-        const command = api.getNote(options.commandId);
-        if (!command) {
-            throw new Error('Command note not found: ' + options.commandId);
-        }
-        const note = createOption(command, options.option || {});
-        return { noteId: note.noteId };
-    }
-
-    function savePreset() {
-        const command = api.getNote(options.commandId);
-        if (!command) {
-            throw new Error('Command note not found: ' + options.commandId);
-        }
-        const folder = ensureFolder(command, labels.presets, 'Presets');
-        const name = String(options.name || '').trim() || 'Preset';
-        const payload = JSON.stringify({ v: 1, values: options.values || {} });
-        const existing = findChildByTitle(folder, name);
-        if (existing) {
-            existing.setContent(payload);
-            return { noteId: existing.noteId };
-        }
-        const note = api.createNewNote({
-            parentNoteId: folder.noteId,
-            title: name,
-            type: 'code',
-            mime: 'application/json',
-            content: payload
-        }).note;
-        note.setLabel(labels.preset, '');
-        return { noteId: note.noteId };
-    }
-
-    function deletePreset() {
-        const note = api.getNote(options.noteId);
-        if (!note) {
-            throw new Error('Preset not found: ' + options.noteId);
-        }
-        note.deleteNote();
-        return { ok: true };
-    }
-
-    switch (options.action) {
-        case 'bootstrap':
-            return bootstrap();
-        case 'createCommand':
-            return createCommand();
-        case 'addOption':
-            return addOption();
-        case 'savePreset':
-            return savePreset();
-        case 'deletePreset':
-            return deletePreset();
-        default:
-            throw new Error('Unknown action: ' + options.action);
-    }
-}
-
-module.exports = { beRun, ACTIONS };
 });
-__def("ui", function (module, exports, __require) {
+__def("styles", function (module, exports, __require) {
 'use strict';
 
 /**
- * Palette UI. Plain DOM on purpose: no JSX compile step, no Preact version
- * coupling, and it keeps the installed note to a single script.
+ * Palette stylesheet. Kept in its own module so the UI logic stays readable and
+ * the whole sheet can be inspected (and asserted on) in one place.
  *
- * The UI is driven by a controller (see runtime.js):
- *   refresh(): Promise<void>
- *   search(query): Promise<Array<{ noteId, title, description }>>
- *   load(noteId): Promise<{ definition, presets }>
- *   copy(text): Promise<boolean>
- *   insert(text): void
- *   createCommand(title): Promise<{ noteId }>
- *   addOption(commandId, option): Promise<void>
- *   savePreset(commandId, name, values): Promise<void>
- *   deletePreset(noteId): Promise<void>
+ * Colours fall back to Trilium theme variables and then to sensible defaults, so
+ * the palette follows the active theme.
  */
-
-const Model = __require("model");
-const Render = __require("render");
 
 const STYLE_ID = 'cm-palette-style';
 
 const CSS = [
     '.cm-overlay{position:fixed;inset:0;z-index:99999;display:flex;justify-content:center;align-items:flex-start;padding:7vh 16px;background:rgba(0,0,0,.45);}',
-    '.cm-panel{display:flex;flex-direction:column;width:min(960px,100%);max-height:86vh;border-radius:10px;overflow:hidden;background:var(--main-background-color,#fff);color:var(--main-text-color,#222);box-shadow:0 24px 64px rgba(0,0,0,.4);font-size:14px;}',
+    '.cm-panel{position:relative;display:flex;flex-direction:column;width:min(1040px,100%);max-height:86vh;border-radius:10px;overflow:hidden;background:var(--main-background-color,#fff);color:var(--main-text-color,#222);box-shadow:0 24px 64px rgba(0,0,0,.4);font-size:14px;}',
     '.cm-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--main-border-color,#ddd);}',
     '.cm-search{flex:1;padding:8px 10px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--input-background-color,#fafafa);color:inherit;font-size:15px;}',
     '.cm-close{border:0;background:transparent;color:inherit;font-size:16px;cursor:pointer;padding:4px 8px;}',
+    '.cm-open-tab{border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer;padding:4px 10px;white-space:nowrap;}',
+    '.cm-open-tab:hover{background:var(--accented-background-color,#eef2ff);}',
+    '.cm-open-tab:disabled{opacity:.5;cursor:default;}',
+    '.cm-tab-root{display:flex;flex-direction:column;height:100%;min-height:60vh;}',
+    '.cm-tab-view{position:relative;display:flex;flex-direction:column;width:100%;height:100%;min-height:60vh;}',
+    '.cm-tab-view .cm-panel{width:100%;max-width:none;max-height:none;height:100%;flex:1;min-height:0;border-radius:0;box-shadow:none;}',
     '.cm-body{display:flex;min-height:0;flex:1;}',
-    '.cm-list{width:280px;flex-shrink:0;overflow-y:auto;border-right:1px solid var(--main-border-color,#ddd);padding:6px;}',
+    '.cm-list{width:300px;flex-shrink:0;overflow-y:auto;border-right:1px solid var(--main-border-color,#ddd);padding:6px;}',
     '.cm-result{display:block;width:100%;text-align:left;padding:8px 10px;border:0;border-radius:6px;background:transparent;color:inherit;cursor:pointer;}',
     '.cm-result:hover{background:var(--hover-item-background-color,#0000001a);color:var(--hover-item-text-color,inherit);}',
     '.cm-result.is-active{background:var(--accented-background-color,#eef2ff);box-shadow:inset 3px 0 0 var(--link-color,#4f8cff);}',
     '.cm-result-title{font-weight:600;}',
-    '.cm-result-desc{opacity:.7;font-size:12px;margin-top:2px;}',
-    '.cm-detail{flex:1;min-width:0;overflow-y:auto;padding:14px 16px;}',
-    '.cm-title{margin:0 0 4px;font-size:17px;}',
-    '.cm-subtitle{margin:0 0 12px;opacity:.7;}',
-    '.cm-form{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;}',
-    '.cm-row{display:flex;align-items:center;gap:8px;}',
-    '.cm-row-label{flex:0 0 180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
-    '.cm-row .cm-control{flex:1;}',
-    '.cm-control{padding:6px 8px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--input-background-color,#fafafa);color:inherit;font:inherit;}',
-    // Native <select> draws its own arrow while Trilium adds a themed one on hover/focus, so a
-    // select would show two. Hide the native control and keep a single themed arrow in every state.
+    '.cm-result-meta{display:flex;gap:6px;align-items:center;margin-top:2px;}',
+    '.cm-result-desc{opacity:.7;font-size:12px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+    '.cm-cat{font-size:11px;padding:1px 6px;border-radius:999px;background:var(--accented-background-color,#eef2ff);opacity:.85;white-space:nowrap;}',
+    '.cm-detail{flex:1;min-width:0;overflow-y:auto;padding:14px 16px;user-select:text;}',
+    '.cm-detail-head{margin:0 0 8px;}',
+    '.cm-title{margin:0 0 4px;font-size:18px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}',
+    '.cm-subtitle{margin:0 0 4px;opacity:.75;}',
+    '.cm-section{margin:14px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.06em;opacity:.6;}',
+    '.cm-what{white-space:pre-wrap;margin:0 0 4px;line-height:1.5;}',
+    '.cm-links{display:flex;flex-wrap:wrap;gap:6px 14px;margin:0 0 4px;}',
+    '.cm-link{color:var(--link-color,#4f8cff);text-decoration:none;}',
+    '.cm-link:hover{text-decoration:underline;}',
+    '.cm-base-row{display:flex;gap:6px;align-items:center;margin:0 0 4px;}',
+    '.cm-base-label{flex:0 0 110px;opacity:.75;}',
+    '.cm-option{display:flex;align-items:flex-start;gap:12px;padding:6px 8px;border-radius:6px;}',
+    '.cm-option.cm-option-bool{cursor:pointer;}',
+    '.cm-option-group{display:flex;flex-direction:column;gap:2px;margin-bottom:8px;}',
+    '.cm-option-group-title{font-size:11px;text-transform:uppercase;letter-spacing:.06em;opacity:.65;margin:4px 0 2px;}',
+    '.cm-option:hover{background:var(--hover-item-background-color,#00000010);}',
+    '.cm-opt-main{flex:1;min-width:0;}',
+    '.cm-opt-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}',
+    '.cm-opt-title{font-weight:600;}',
+    '.cm-opt-flag{font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;opacity:.8;background:var(--accented-background-color,#eef2ff);padding:0 5px;border-radius:4px;}',
+    '.cm-opt-help{font-size:12px;opacity:.7;margin-top:2px;line-height:1.4;}',
+    '.cm-opt-control{flex:0 0 210px;max-width:45%;}',
+    '.cm-opt-check{flex:0 0 auto;margin-left:auto;align-self:center;}',
+    '.cm-filter{width:100%;box-sizing:border-box;margin-bottom:4px;}',
+    '.cm-form{display:flex;flex-direction:column;gap:6px;margin-bottom:10px;}',
+    '.cm-control{padding:6px 8px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--input-background-color,#fafafa);color:inherit;font:inherit;box-sizing:border-box;}',
     ':root .cm-control.cm-select{appearance:none;-webkit-appearance:none;background-color:var(--input-background-color);background-image:var(--select-arrow-svg,url(\'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="none" stroke="%23888888" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m2 5 6 6 6-6"/></svg>\'));background-position:right 0.75rem center;background-size:15px 20px;background-repeat:no-repeat;padding-inline-end:calc(15px + 1.5rem);}',
     ':root .cm-control.cm-select:hover{background-color:var(--input-hover-background);color:var(--input-hover-color,inherit);}',
     ':root .cm-control.cm-select:focus{background-color:var(--select-focus-background);color:var(--select-focus-text-color,inherit);}',
-    // `:root` outranks Trilium's global `textarea:hover` / `textarea:focus` rules, which would
-    // otherwise repaint the preview with the input colours as soon as the pointer or caret enters.
     ':root .cm-preview{width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid var(--main-border-color,#ccc);background:var(--input-background-color);color:inherit;font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:13px;resize:vertical;}',
     ':root .cm-preview:hover,:root .cm-preview:focus{background:var(--input-background-color);color:inherit;}',
     '.cm-warnings{display:flex;flex-direction:column;gap:4px;margin-top:6px;}',
     '.cm-warning{color:#b45309;font-size:12px;}',
-    '.cm-actions{display:flex;gap:8px;margin:12px 0;}',
+    '.cm-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0;}',
     '.cm-button{padding:6px 12px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--button-background-color,#fff);color:inherit;cursor:pointer;font:inherit;}',
     '.cm-button:hover{background:var(--accented-background-color,#eef2ff);}',
-    '.cm-danger{color:#b91c1c;}',
-    '.cm-presets{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--main-border-color,#ddd);padding-top:10px;}',
-    '.cm-section{margin:8px 0 4px;font-size:12px;text-transform:uppercase;letter-spacing:.06em;opacity:.6;}',
+    '.cm-button:disabled{opacity:.5;cursor:default;}',
+    '.cm-danger{color:#b91c1c;border-color:#fca5a5;}',
+    '.cm-danger:hover{background:#fee2e2;}',
+    '.cm-danger-armed{background:#dc2626;border-color:#b91c1c;color:#fff;}',
+    '.cm-danger-armed:hover{background:#b91c1c;color:#fff;}',
+    '.cm-presets,.cm-examples,.cm-fold-block{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--main-border-color,#ddd);padding-top:10px;margin-top:12px;}',
+    '.cm-row{display:flex;align-items:center;gap:8px;}',
+    '.cm-field{display:flex;flex-direction:column;gap:4px;}',
+    '.cm-field-label{font-size:12px;opacity:.75;}',
+    '.cm-field .cm-control{width:100%;}',
     '.cm-empty{opacity:.6;padding:8px;}',
     '.cm-foot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 12px;border-top:1px solid var(--main-border-color,#ddd);}',
-    '.cm-inline{display:flex;gap:6px;align-items:center;flex:1;min-width:220px;}',
-    '.cm-status{margin-left:auto;font-size:12px;opacity:.75;}',
+    '.cm-inline{display:flex;flex-wrap:wrap;gap:6px;align-items:center;width:100%;}',
+    '.cm-inline .cm-control{flex:1;min-width:120px;}',
+    '.cm-status{margin-left:auto;font-size:12px;opacity:.75;max-width:420px;overflow-wrap:anywhere;}',
     '.cm-status.is-error{color:#b91c1c;opacity:1;}',
+    '.cm-version{font-size:12px;opacity:.7;border:0;background:transparent;color:inherit;cursor:pointer;padding:2px 6px;font:inherit;}',
+    '.cm-version:hover{opacity:1;text-decoration:underline;}',
+    '.cm-version-link{font-size:11px;opacity:.6;color:inherit;text-decoration:none;padding:2px 4px;}',
+    '.cm-version-link:hover{opacity:1;text-decoration:underline;}',
     '.cm-badge{font-size:11px;padding:1px 6px;border-radius:999px;background:var(--accented-background-color,#eef2ff);opacity:.8;}',
-    '@media (max-width:720px){.cm-body{flex-direction:column;}.cm-list{width:auto;max-height:180px;border-right:0;border-bottom:1px solid var(--main-border-color,#ddd);}.cm-row-label{flex-basis:120px;}}'
+    '.cm-example{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:6px;}',
+    '.cm-example:hover{background:var(--hover-item-background-color,#00000010);}',
+    '.cm-example-text{flex:1;min-width:0;font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;overflow-wrap:anywhere;}',
+    '.cm-fold summary{cursor:pointer;font-size:12px;text-transform:uppercase;letter-spacing:.06em;opacity:.7;}',
+    '.cm-pre{margin:8px 0 0;padding:10px;border-radius:8px;background:var(--input-background-color,#fafafa);border:1px solid var(--main-border-color,#ddd);font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;white-space:pre-wrap;overflow-x:auto;}',
+    '.cm-install{font-size:13px;line-height:1.55;user-select:text;}',
+    '.cm-install p{margin:0 0 8px;}',
+    '.cm-install ul,.cm-install ol{margin:0 0 8px;padding-left:22px;}',
+    '.cm-install h1,.cm-install h2,.cm-install h3,.cm-install h4,.cm-install h5,.cm-install h6{margin:10px 0 6px;font-size:14px;}',
+    '.cm-install pre{margin:0;padding:0;border:0;border-radius:6px;background:var(--accented-background-color,var(--input-background-color,#fafafa));box-shadow:var(--code-block-box-shadow,none);overflow:hidden;font-size:12px;}',
+    '.cm-install code{font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;background:var(--accented-background-color,#eef2ff);padding:1px 5px;border-radius:4px;}',
+    '.cm-install pre code{display:block;padding:0.75em 3em 0.75em 1em;background:transparent;border-radius:0;white-space:pre;overflow-x:auto;}',
+    '.cm-code-block{position:relative;margin:8px 0;}',
+    '.cm-code-copy{position:absolute;top:0.4em;inset-inline-end:0.4em;z-index:1;display:flex;align-items:center;justify-content:center;width:1.8em;height:1.8em;padding:0;border:0;border-radius:4px;background:transparent;color:inherit;opacity:.6;cursor:pointer;transition:opacity 150ms ease;}',
+    '.cm-code-copy:hover{background:var(--hover-item-background-color,#0000001a);}',
+    '.cm-code-copy:focus-visible{opacity:1;}',
+    '.cm-code-block:hover .cm-code-copy{opacity:1;}',
+    '.cm-code-copy svg{width:16px;height:16px;fill:currentColor;}',
+    '@media (hover:none){.cm-code-copy{opacity:1;}}',
+    '.cm-install a{color:var(--link-color,#4f8cff);}',
+    '.cm-install blockquote{margin:8px 0;padding-left:10px;border-left:3px solid var(--main-border-color,#ddd);opacity:.85;}',
+    '.cm-install table{border-collapse:collapse;margin:8px 0;}',
+    '.cm-install th,.cm-install td{border:1px solid var(--main-border-color,#ddd);padding:4px 8px;text-align:left;}',
+    '.cm-modal{position:absolute;inset:0;display:flex;justify-content:center;align-items:flex-start;padding:4vh 16px;background:rgba(0,0,0,.45);z-index:2;}',
+    '.cm-modal-panel{display:flex;flex-direction:column;width:min(760px,100%);max-height:100%;border-radius:10px;overflow:hidden;background:var(--main-background-color,#fff);color:inherit;box-shadow:0 20px 48px rgba(0,0,0,.4);}',
+    '.cm-modal-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--main-border-color,#ddd);flex:0 0 auto;}',
+    '.cm-modal-title{flex:1;font-weight:600;}',
+    '.cm-modal-body{overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;min-height:0;flex:1 1 auto;user-select:text;}',
+    '.cm-modal-actions{display:flex;flex-wrap:wrap;gap:8px;padding:10px 12px;border-top:1px solid var(--main-border-color,#ddd);flex:0 0 auto;}',
+    '.cm-tabs{display:flex;gap:6px;flex-wrap:wrap;}',
+    '.cm-tab{padding:4px 10px;border-radius:999px;border:1px solid var(--main-border-color,#ccc);background:transparent;color:inherit;cursor:pointer;font:inherit;font-size:12px;}',
+    '.cm-tab.is-active{background:var(--accented-background-color,#eef2ff);border-color:var(--link-color,#4f8cff);}',
+    '.cm-import-list{display:flex;flex-direction:column;gap:2px;max-height:36vh;overflow-y:auto;border:1px solid var(--main-border-color,#ddd);border-radius:8px;padding:6px;}',
+    '.cm-import-row{display:flex;gap:8px;align-items:flex-start;padding:4px 6px;border-radius:6px;}',
+    '.cm-import-row:hover{background:var(--hover-item-background-color,#00000010);}',
+    '.cm-import-select{display:flex;align-items:center;}',
+    '.cm-import-required{display:flex;align-items:center;gap:4px;font-size:11px;opacity:.8;white-space:nowrap;}',
+    '.cm-import-main{flex:1;min-width:0;}',
+    '.cm-import-flag{font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;}',
+    '.cm-import-help{font-size:12px;opacity:.7;}',
+    '.cm-note{font-size:12px;opacity:.7;}',
+    '@media (max-width:720px){.cm-body{flex-direction:column;}.cm-list{width:auto;max-height:180px;border-right:0;border-bottom:1px solid var(--main-border-color,#ddd);}.cm-opt-control{flex-basis:150px;}}'
 ].join('\n');
 
-let instance = null;
+module.exports = { STYLE_ID, CSS };
+});
+__def("dom", function (module, exports, __require) {
+'use strict';
 
-function ensureStyle() {
-    if (document.getElementById(STYLE_ID)) {
-        return;
-    }
-    const style = document.createElement('style');
-    style.id = STYLE_ID;
-    style.textContent = CSS;
-    document.head.appendChild(style);
-}
+/**
+ * Small DOM helpers shared by the palette. Nothing here knows about Trilium:
+ * the palette receives its data through the controller (see runtime.js), which
+ * keeps this module testable with a plain DOM.
+ */
 
+/** Create an element with an optional class name and text. */
 function el(tag, className, text) {
     const node = document.createElement(tag);
     if (className) {
@@ -905,11 +2623,44 @@ function el(tag, className, text) {
     return node;
 }
 
+/** Inject one stylesheet per document, no matter how often the palette opens. */
+function ensureStyle(id, css) {
+    if (document.getElementById(id)) {
+        return;
+    }
+    const style = document.createElement('style');
+    style.id = id;
+    style.textContent = css;
+    document.head.appendChild(style);
+}
+
+/** Drop a view mounted by an earlier render of the same tab note. */
+function clearEmbeddedView(container, viewClass) {
+    let stale = null;
+    if (typeof container.querySelector === 'function') {
+        stale = container.querySelector('.' + viewClass);
+    } else if (container.children) {
+        for (let index = 0; index < container.children.length; index += 1) {
+            const child = container.children[index];
+            if (child && String(child.className || '').split(/\s+/).indexOf(viewClass) !== -1) {
+                stale = child;
+                break;
+            }
+        }
+    }
+    if (!stale) {
+        return;
+    }
+    if (typeof stale.remove === 'function') {
+        stale.remove();
+    } else if (stale.parentNode && typeof stale.parentNode.removeChild === 'function') {
+        stale.parentNode.removeChild(stale);
+    }
+}
+
 /**
- * Trilium code blocks borrow their colours from the active highlight.js theme, which is not
- * exposed as a CSS variable. Probe a hidden `.hljs` element to read the exact background and
- * foreground the current theme gives a code block, so the preview matches it in any theme.
- * Returns null when the stylesheet or `getComputedStyle` is unavailable.
+ * Read the code-block colours of the active Trilium theme so the command
+ * preview looks like every other code block. Null when the theme cannot be read.
  */
 function codeBlockTheme() {
     let resolveStyle = null;
@@ -950,105 +2701,1108 @@ function codeBlockTheme() {
     }
 }
 
-function openPalette(controller) {
-    if (instance) {
-        instance.focus();
-        return instance;
+/** Copy text, using the clipboard API and falling back to the legacy command. */
+async function copyText(text) {
+    try {
+        if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+    } catch (error) {
+        // fall through to the execCommand fallback
     }
-    if (typeof window !== 'undefined' && window.__cmPaletteInstance) {
-        window.__cmPaletteInstance.focus();
-        return window.__cmPaletteInstance;
+    const area = document.createElement('textarea');
+    try {
+        area.value = text;
+        area.setAttribute('readonly', '');
+        area.style.position = 'fixed';
+        area.style.opacity = '0';
+        document.body.appendChild(area);
+        area.select();
+        return Boolean(document.execCommand('copy'));
+    } catch (error) {
+        return false;
+    } finally {
+        if (area.parentNode && typeof area.parentNode.removeChild === 'function') {
+            area.parentNode.removeChild(area);
+        } else if (typeof area.remove === 'function') {
+            area.remove();
+        }
+    }
+}
+
+/** Save text as a local file. Throws when the runtime has no Blob/URL support. */
+function downloadText(filename, value, mime) {
+    if (typeof Blob === 'undefined' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
+        throw new Error('This environment cannot download files. Copy the text instead.');
+    }
+    const blob = new Blob([value], { type: mime || 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(function () {
+        URL.revokeObjectURL(url);
+    }, 0);
+}
+
+/** Read a File chosen by the user, preferring the modern File.text(). */
+function readFileText(file) {
+    if (file && typeof file.text === 'function') {
+        return Promise.resolve(file.text());
+    }
+    return new Promise(function (resolve, reject) {
+        if (typeof FileReader === 'undefined') {
+            reject(new Error('This browser cannot read local files.'));
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = function () {
+            resolve(String(reader.result || ''));
+        };
+        reader.onerror = function () {
+            reject(new Error('Could not read the selected file.'));
+        };
+        reader.readAsText(file);
+    });
+}
+
+module.exports = {
+    el,
+    ensureStyle,
+    clearEmbeddedView,
+    codeBlockTheme,
+    copyText,
+    downloadText,
+    readFileText
+};
+});
+__def("sourcePicker", function (module, exports, __require) {
+'use strict';
+
+/**
+ * The "where does the input come from" panel shared by both import dialogs:
+ * pasted text, the active note, or a local file. It only collects text; the
+ * caller decides how to parse and store it.
+ */
+
+const Dom = __require("dom");
+
+const SOURCES = [
+    { id: 'paste', label: 'Paste text' },
+    { id: 'note', label: 'Active note' },
+    { id: 'file', label: 'File' }
+];
+
+/**
+ * @param {object} config
+ * @param {object} config.controller palette controller (activeNoteText)
+ * @param {string} [config.hint] helper line above the tabs
+ * @param {string} [config.placeholder] textarea placeholder
+ * @param {string} [config.accept] file input accept list
+ * @param {function(string, boolean)} [config.onStatus] status reporter
+ * @param {function(Error)} [config.onError] error reporter
+ * @returns {{ node: Element, getText: function(): string }}
+ */
+function createSourcePicker(config) {
+    const settings = config || {};
+    const controller = settings.controller || {};
+    const onStatus = typeof settings.onStatus === 'function' ? settings.onStatus : function () {};
+    const onError = typeof settings.onError === 'function' ? settings.onError : function () {};
+
+    const node = Dom.el('div', '');
+    const tabs = Dom.el('div', 'cm-tabs');
+    const tabNodes = {};
+    for (const source of SOURCES) {
+        const tab = Dom.el('button', 'cm-tab' + (source.id === 'paste' ? ' is-active' : ''), source.label);
+        tab.type = 'button';
+        tabNodes[source.id] = tab;
+        tabs.appendChild(tab);
     }
 
-    ensureStyle();
+    const hint = Dom.el('div', 'cm-note', settings.hint || '');
+
+    const textArea = document.createElement('textarea');
+    textArea.className = 'cm-control cm-preview';
+    textArea.rows = 12;
+    textArea.placeholder = settings.placeholder || '';
+
+    const notePreview = Dom.el('div', 'cm-note', '');
+    const readNoteButton = Dom.el('button', 'cm-button', 'Read active note');
+    readNoteButton.type = 'button';
+    readNoteButton.style.display = 'none';
+
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.className = 'cm-control';
+    fileInput.accept = settings.accept || '.txt,.json,.md,.markdown,.log,.help,.text';
+    fileInput.style.display = 'none';
+
+    let source = 'paste';
+    let sourceText = '';
+
+    function setSource(next) {
+        source = next;
+        for (const entry of SOURCES) {
+            tabNodes[entry.id].classList.toggle('is-active', entry.id === next);
+        }
+        textArea.style.display = next === 'paste' ? '' : 'none';
+        readNoteButton.style.display = next === 'note' ? '' : 'none';
+        notePreview.style.display = next === 'note' && notePreview.textContent ? '' : 'none';
+        fileInput.style.display = next === 'file' ? '' : 'none';
+    }
+
+    function showRead(label, text) {
+        sourceText = text;
+        notePreview.textContent = 'Read "' + label + '" (' + text.length + ' characters).';
+        notePreview.style.display = '';
+    }
+
+    for (const entry of SOURCES) {
+        tabNodes[entry.id].addEventListener('click', function () {
+            setSource(entry.id);
+        });
+    }
+
+    readNoteButton.addEventListener('click', async function () {
+        try {
+            const note = await controller.activeNoteText();
+            showRead(note.title, note.text);
+            onStatus('Note read.');
+        } catch (error) {
+            onError(error);
+        }
+    });
+
+    fileInput.addEventListener('change', async function () {
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) {
+            return;
+        }
+        try {
+            showRead(file.name || 'file', await Dom.readFileText(file));
+            onStatus('File read.');
+        } catch (error) {
+            onError(error);
+        }
+    });
+
+    function getText() {
+        return source === 'paste' ? textArea.value : sourceText;
+    }
+
+    node.appendChild(tabs);
+    node.appendChild(hint);
+    node.appendChild(textArea);
+    node.appendChild(readNoteButton);
+    node.appendChild(notePreview);
+    node.appendChild(fileInput);
+    setSource('paste');
+
+    return { node: node, getText: getText };
+}
+
+module.exports = { createSourcePicker };
+});
+__def("backend", function (module, exports, __require) {
+'use strict';
+
+/**
+ * Backend operations for the tools registry.
+ *
+ * Everything runs through a single `beRun(params)` function because Trilium's
+ * `api.runOnBackend` serialises the function by source: inner helpers travel
+ * with it, outer helpers would not. `params.labels` carries the attribute
+ * names from Model.LABELS so the label schema lives in one place instead of
+ * being duplicated here. Consequently `beRun` must never reference a
+ * module-scope binding and dispatches on literal action strings only.
+ *
+ * Actions: bootstrap | createCategory | createTool | importTool | addOption |
+ * importOptions | deleteOption | setToolBase | setToolsRoot | savePreset |
+ * deletePreset | ensureTab
+ */
+
+function beRun(params) {
+    const options = params || {};
+    const labels = options.labels || {};
+    const icons = options.icons || {
+        install: 'bx bx-download',
+        usage: 'bx bx-terminal',
+        help: 'bx bx-help-circle',
+        options: 'bx bx-cog'
+    };
+
+    function nonEmpty(value) {
+        return value !== undefined && value !== null && String(value).trim() !== '';
+    }
+
+    function hasLabel(note, name) {
+        if (!note || !name) {
+            return false;
+        }
+        if (typeof note.hasLabel === 'function') {
+            return note.hasLabel(name);
+        }
+        const value = note.getLabelValue(name);
+        return value !== null && value !== undefined;
+    }
+
+    function requireNote(noteId, message) {
+        const note = api.getNote(noteId);
+        if (!note) {
+            throw new Error(message + ': ' + noteId);
+        }
+        return note;
+    }
+
+    function findChildWithLabel(parent, name) {
+        const children = parent.getChildNotes();
+        for (let index = 0; index < children.length; index += 1) {
+            if (hasLabel(children[index], name)) {
+                return children[index];
+            }
+        }
+        return null;
+    }
+
+    /** Set a note icon only when the note has none, so a user's choice wins. */
+    function ensureIcon(note, className) {
+        if (!note || !labels.icon || !nonEmpty(className)) {
+            return;
+        }
+        if (hasLabel(note, labels.icon)) {
+            return;
+        }
+        note.setLabel(labels.icon, String(className));
+    }
+
+    function findCategory(toolsRoot, name) {
+        const children = toolsRoot.getChildNotes();
+        for (let index = 0; index < children.length; index += 1) {
+            if (children[index].title === name && hasLabel(children[index], labels.category)) {
+                return children[index];
+            }
+        }
+        return null;
+    }
+
+    function ensureCategory(toolsRoot, name) {
+        const existing = findCategory(toolsRoot, name);
+        if (existing) {
+            return existing;
+        }
+        const note = api.createNewNote({
+            parentNoteId: toolsRoot.noteId,
+            title: name,
+            type: 'text',
+            content: ''
+        }).note;
+        note.setLabel(labels.category, '');
+        return note;
+    }
+
+    function ensureOptionsFolder(toolNote) {
+        const existing = findChildWithLabel(toolNote, labels.options);
+        if (existing) {
+            return existing;
+        }
+        const note = api.createNewNote({
+            parentNoteId: toolNote.noteId,
+            title: 'Options',
+            type: 'text',
+            content: ''
+        }).note;
+        note.setLabel(labels.options, '');
+        ensureIcon(note, icons.options);
+        return note;
+    }
+
+    function ensurePresetsNote(optionsFolder) {
+        const existing = findChildWithLabel(optionsFolder, labels.presets);
+        if (existing) {
+            return existing;
+        }
+        const note = api.createNewNote({
+            parentNoteId: optionsFolder.noteId,
+            title: 'Presets',
+            type: 'code',
+            mime: 'application/json',
+            content: '{"v":1,"presets":[]}'
+        }).note;
+        note.setLabel(labels.presets, '');
+        return note;
+    }
+
+    /** Validate the tool and make sure its Options folder and Presets note exist. */
+    function presetsLocation(toolId) {
+        const tool = requireNote(toolId, 'Tool note not found');
+        const folder = ensureOptionsFolder(tool);
+        return { tool: tool, folder: folder, presets: ensurePresetsNote(folder) };
+    }
+
+    function readPresets(note) {
+        let data = null;
+        let valid = true;
+        try {
+            data = JSON.parse(note.getContent() || '');
+        } catch (error) {
+            valid = false;
+        }
+        if (!data || typeof data !== 'object' || !Array.isArray(data.presets)) {
+            valid = false;
+        }
+        if (!valid) {
+            data = { v: 1, presets: [] };
+        }
+        return { data: data, valid: valid };
+    }
+
+    /** Tool body: the caller's template when it passes one, else the three H2 sections. */
+    function defaultToolContent(fallbacks) {
+        if (fallbacks && nonEmpty(fallbacks.content)) {
+            return String(fallbacks.content);
+        }
+        return [
+            '<h2>What is?</h2>',
+            '<p>Describe what this tool does and when to use it.</p>',
+            '<h2>Official links</h2>',
+            '<p>Add the official documentation, repository or website links here.</p>',
+            '<h2>Useful links</h2>',
+            '<p>Add useful guides, cheat sheets or articles here.</p>'
+        ].join('\n');
+    }
+
+    function childContent(value, fallback) {
+        if (nonEmpty(value)) {
+            return String(value);
+        }
+        return nonEmpty(fallback) ? String(fallback) : '';
+    }
+
+    /** Shared creation path for createTool, bootstrap seeding and the importer. */
+    function createToolNote(toolsRoot, spec, fallbacks) {
+        const safeSpec = spec || {};
+        const safeFallbacks = fallbacks || {};
+        const categoryName = nonEmpty(safeSpec.category) ? String(safeSpec.category) : 'Uncategorized';
+        const title = nonEmpty(safeSpec.title) ? String(safeSpec.title) : 'New tool';
+        const category = ensureCategory(toolsRoot, categoryName);
+        const note = api.createNewNote({
+            parentNoteId: category.noteId,
+            title: title,
+            type: 'text',
+            content: nonEmpty(safeSpec.content) ? String(safeSpec.content) : defaultToolContent(safeFallbacks)
+        }).note;
+        note.setLabel(labels.tool, '');
+        if (nonEmpty(safeSpec.base)) {
+            note.setLabel(labels.base, String(safeSpec.base));
+        }
+        if (nonEmpty(safeSpec.description)) {
+            note.setLabel(labels.description, String(safeSpec.description));
+        }
+
+        const install = api.createNewNote({
+            parentNoteId: note.noteId,
+            title: 'Install',
+            type: 'text',
+            content: childContent(safeSpec.install, safeFallbacks.install)
+        }).note;
+        install.setLabel(labels.install, '');
+
+        const usage = api.createNewNote({
+            parentNoteId: note.noteId,
+            title: 'Usage',
+            type: 'text',
+            content: childContent(safeSpec.usage, safeFallbacks.usage)
+        }).note;
+        usage.setLabel(labels.usage, '');
+
+        const help = api.createNewNote({
+            parentNoteId: note.noteId,
+            title: 'Help',
+            type: 'code',
+            mime: 'text/x-sh',
+            content: childContent(safeSpec.help, safeFallbacks.help)
+        }).note;
+        help.setLabel(labels.helpNote, '');
+
+        ensureIcon(install, icons.install);
+        ensureIcon(usage, icons.usage);
+        ensureIcon(help, icons.help);
+
+        const folder = ensureOptionsFolder(note);
+        ensurePresetsNote(folder);
+        const specs = Array.isArray(safeSpec.options) ? safeSpec.options : [];
+        for (let index = 0; index < specs.length; index += 1) {
+            createOptionNote(folder, specs[index]);
+        }
+        return note;
+    }
+
+    /** Create one option note under a tool's Options folder. */
+    function createOptionNote(folder, spec) {
+        const safe = spec || {};
+        const title = nonEmpty(safe.label) ? String(safe.label) : 'Option';
+        const note = api.createNewNote({
+            parentNoteId: folder.noteId,
+            title: title,
+            type: 'text',
+            content: safe.content == null ? '' : String(safe.content)
+        }).note;
+        note.setLabel(labels.option, '');
+        if (nonEmpty(safe.flag)) {
+            note.setLabel(labels.flag, String(safe.flag));
+        }
+        const doc = safe.help || safe.doc;
+        if (nonEmpty(doc)) {
+            note.setLabel(labels.doc, String(doc));
+        }
+        if (nonEmpty(safe.type)) {
+            note.setLabel(labels.type, String(safe.type));
+        }
+        const enumValues = safe.values !== undefined && safe.values !== null ? safe.values : safe.enumValues;
+        if (Array.isArray(enumValues)) {
+            if (enumValues.length > 0) {
+                note.setLabel(labels.enumValues, enumValues.join(','));
+            }
+        } else if (nonEmpty(enumValues)) {
+            note.setLabel(labels.enumValues, String(enumValues));
+        }
+        let rawDefault = undefined;
+        if (safe.default !== undefined && safe.default !== null) {
+            rawDefault = safe.default;
+        } else if (safe.defaultValue !== undefined && safe.defaultValue !== null) {
+            rawDefault = safe.defaultValue;
+        }
+        if (rawDefault !== undefined) {
+            note.setLabel(labels.defaultValue, String(rawDefault));
+        }
+        if (safe.required) {
+            note.setLabel(labels.required, 'true');
+        }
+        if (safe.mode === 'inline') {
+            note.setLabel(labels.mode, 'inline');
+        }
+        if (nonEmpty(safe.placeholder)) {
+            note.setLabel(labels.placeholder, String(safe.placeholder));
+        }
+        if (safe.order !== undefined && safe.order !== null && String(safe.order).trim() !== '') {
+            note.setLabel(labels.order, String(safe.order));
+        }
+        if (nonEmpty(safe.quote)) {
+            note.setLabel(labels.quote, String(safe.quote));
+        }
+        if (safe.sep === '=' || safe.separator === '=') {
+            note.setLabel(labels.separator, '=');
+        }
+        return note;
+    }
+
+    function parentForRoot() {
+        if (options.parentId) {
+            return options.parentId;
+        }
+        try {
+            const parents = api.currentNote.getParentNotes();
+            if (parents && parents.length) {
+                return parents[0].noteId;
+            }
+        } catch (error) {
+            // currentNote has no parents (root) — fall through
+        }
+        return api.getTodayNote().noteId;
+    }
+
+    /** Give existing standard children their icons, preserving any user choice. */
+    function backfillIcons() {
+        if (!labels.icon) {
+            return;
+        }
+        const tools = api.getNotesWithLabel(labels.tool);
+        for (let index = 0; index < tools.length; index += 1) {
+            const tool = tools[index];
+            ensureIcon(findChildWithLabel(tool, labels.install), icons.install);
+            ensureIcon(findChildWithLabel(tool, labels.usage), icons.usage);
+            ensureIcon(findChildWithLabel(tool, labels.helpNote), icons.help);
+            ensureIcon(findChildWithLabel(tool, labels.options), icons.options);
+        }
+    }
+
+    function bootstrap() {
+        let root = api.getNoteWithLabel(labels.root);
+        if (!root) {
+            root = api.createNewNote({
+                parentNoteId: parentForRoot(),
+                title: 'Command Maker',
+                type: 'text',
+                content: 'Command Maker settings. The plugin finds this note through its label.'
+            }).note;
+            root.setLabel(labels.root, '');
+        }
+
+        if (nonEmpty(options.version) && root.getLabelValue(labels.version) !== String(options.version)) {
+            root.setLabel(labels.version, String(options.version));
+        }
+
+        let toolsRoot = api.getNoteWithLabel(labels.tools);
+        if (!toolsRoot) {
+            toolsRoot = api.createNewNote({
+                parentNoteId: root.noteId,
+                title: 'Tools',
+                type: 'text',
+                content: 'Tool notes live in this folder, grouped by category. Move it anywhere; the label is what matters.'
+            }).note;
+            toolsRoot.setLabel(labels.tools, '');
+            toolsRoot.setLabel(labels.managed, '');
+        }
+
+        let seeded = false;
+        // Only a Tools folder the plugin created itself is seeded. A folder the
+        // user chose (or labelled by hand) is never touched.
+        if (options.seed && hasLabel(toolsRoot, labels.managed) && !hasLabel(toolsRoot, labels.seeded)) {
+            const specs = Array.isArray(options.seedTools) ? options.seedTools : [];
+            const fallbacks = options.newToolNotes || {};
+            for (let index = 0; index < specs.length; index += 1) {
+                createToolNote(toolsRoot, specs[index], fallbacks);
+            }
+            toolsRoot.setLabel(labels.seeded, '');
+            seeded = true;
+        }
+
+        backfillIcons();
+        return { rootId: root.noteId, toolsRootId: toolsRoot.noteId, seeded: seeded };
+    }
+
+    function createCategory() {
+        const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
+        const name = nonEmpty(options.name) ? String(options.name) : 'Uncategorized';
+        return { noteId: ensureCategory(toolsRoot, name).noteId };
+    }
+
+    function createTool() {
+        const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
+        const note = createToolNote(
+            toolsRoot,
+            {
+                category: options.category,
+                title: options.title,
+                base: options.base,
+                description: options.description,
+                content: options.content,
+                install: options.install,
+                usage: options.usage,
+                help: options.help,
+                options: options.options
+            },
+            options.newToolNotes || {}
+        );
+        const folder = findChildWithLabel(note, labels.options);
+        const presets = folder ? findChildWithLabel(folder, labels.presets) : null;
+        return {
+            noteId: note.noteId,
+            optionsFolderId: folder ? folder.noteId : null,
+            presetsId: presets ? presets.noteId : null
+        };
+    }
+
+    /** Recreate a tool from a portable tool file (see src/toolfile.js). */
+    function importTool() {
+        const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
+        const note = createToolNote(toolsRoot, options.tool || {}, options.newToolNotes || {});
+        const folder = findChildWithLabel(note, labels.options);
+        const presets = folder ? findChildWithLabel(folder, labels.presets) : null;
+        return {
+            noteId: note.noteId,
+            optionsFolderId: folder ? folder.noteId : null,
+            presetsId: presets ? presets.noteId : null
+        };
+    }
+
+    function addOption() {
+        const location = presetsLocation(options.toolId);
+        const note = createOptionNote(location.folder, options.option || {});
+        return { noteId: note.noteId };
+    }
+
+    function importOptions() {
+        const location = presetsLocation(options.toolId);
+        const specs = Array.isArray(options.options) ? options.options : [];
+        // Flag text comes from imported JSON; a plain object would confuse
+        // `__proto__` and friends with membership.
+        const seenFlags = new Set();
+        const existing = location.folder.getChildNotes();
+        for (let index = 0; index < existing.length; index += 1) {
+            const flag = existing[index].getLabelValue(labels.flag);
+            if (nonEmpty(flag)) {
+                seenFlags.add(String(flag));
+            }
+        }
+        const noteIds = [];
+        let skipped = 0;
+        for (let index = 0; index < specs.length; index += 1) {
+            const spec = specs[index] || {};
+            const flag = spec.flag;
+            if (nonEmpty(flag) && seenFlags.has(String(flag))) {
+                skipped += 1;
+                continue;
+            }
+            if (nonEmpty(flag)) {
+                seenFlags.add(String(flag));
+            }
+            noteIds.push(createOptionNote(location.folder, spec).noteId);
+        }
+        return { created: noteIds.length, skipped: skipped, noteIds: noteIds };
+    }
+
+    /**
+     * Delete one option note. The target must carry the option label, so a wrong
+     * or hostile note id can never remove an unrelated note.
+     */
+    function deleteOption() {
+        const note = requireNote(options.noteId, 'Option note not found');
+        if (!hasLabel(note, labels.option)) {
+            throw new Error('Note is not an option of a tool: ' + note.noteId);
+        }
+        note.deleteNote();
+        return { ok: true };
+    }
+
+    function setToolBase() {
+        const tool = requireNote(options.toolId, 'Tool note not found');
+        if (nonEmpty(options.base)) {
+            tool.setLabel(labels.base, String(options.base));
+        } else if (typeof tool.removeLabel === 'function') {
+            tool.removeLabel(labels.base);
+        } else {
+            tool.setLabel(labels.base, '');
+        }
+        return { ok: true };
+    }
+
+    function setToolsRoot() {
+        const target = requireNote(options.noteId, 'Note not found');
+        if (options.oldToolsRootId && options.oldToolsRootId !== options.noteId) {
+            const old = api.getNote(options.oldToolsRootId);
+            if (old && typeof old.removeLabel === 'function') {
+                old.removeLabel(labels.tools);
+            }
+        }
+        target.setLabel(labels.tools, '');
+        // A folder the user picks is theirs: never seed examples into it.
+        target.setLabel(labels.seeded, '');
+        return { ok: true };
+    }
+
+    function savePreset() {
+        const location = presetsLocation(options.toolId);
+        const read = readPresets(location.presets);
+        if (!read.valid) {
+            throw new Error('The Presets note is not valid JSON. Fix or delete it before saving a preset.');
+        }
+        const data = read.data;
+        const name = nonEmpty(options.name) ? String(options.name) : 'Preset';
+        const values = options.values && typeof options.values === 'object' && !Array.isArray(options.values)
+            ? options.values
+            : {};
+        let updated = false;
+        for (let index = 0; index < data.presets.length; index += 1) {
+            const entry = data.presets[index];
+            if (entry && entry.name === name) {
+                entry.values = values;
+                updated = true;
+                break;
+            }
+        }
+        if (!updated) {
+            data.presets.push({ name: name, values: values });
+        }
+        data.v = 1;
+        location.presets.setContent(JSON.stringify(data));
+        return { noteId: location.presets.noteId };
+    }
+
+    function deletePreset() {
+        const location = presetsLocation(options.toolId);
+        const read = readPresets(location.presets);
+        if (!read.valid) {
+            throw new Error('The Presets note is not valid JSON. Fix or delete it before deleting a preset.');
+        }
+        const data = read.data;
+        const name = String(options.name == null ? '' : options.name);
+        const kept = [];
+        for (let index = 0; index < data.presets.length; index += 1) {
+            const entry = data.presets[index];
+            if (entry && entry.name !== name) {
+                kept.push(entry);
+            }
+        }
+        data.presets = kept;
+        location.presets.setContent(JSON.stringify(data));
+        return { ok: true };
+    }
+
+    /**
+     * Create (once) the Render Note that hosts the palette in a normal Trilium
+     * tab, including the HTML wrapper and a clone of the plugin script that
+     * mounts the UI into that wrapper. All pieces are looked up by label, so the
+     * user can move them freely and re-clicking never duplicates anything.
+     */
+    function ensureTab() {
+        const root = requireNote(options.rootId, 'Command Maker settings note not found');
+        let html = api.getNoteWithLabel(labels.tabHtml);
+        if (!html) {
+            html = api.createNewNote({
+                parentNoteId: root.noteId,
+                title: 'Command Maker tab',
+                type: 'code',
+                mime: 'text/html',
+                content: '<div class="cm-tab-root"></div>'
+            }).note;
+            html.setLabel(labels.tabHtml, '');
+        }
+        let tab = api.getNoteWithLabel(labels.tab);
+        if (!tab) {
+            tab = api.createNewNote({
+                parentNoteId: root.noteId,
+                title: 'Command Maker',
+                type: 'render',
+                content: ''
+            }).note;
+            tab.setLabel(labels.tab, '');
+        }
+        if (tab.getRelationValue('renderNote') !== html.noteId) {
+            tab.setRelation('renderNote', html.noteId);
+        }
+        if (nonEmpty(options.scriptNoteId)) {
+            // A clone shares the content: updates to the plugin script reach the
+            // tab renderer without copying the bundle into a second note.
+            api.ensureNoteIsPresentInParent(String(options.scriptNoteId), html.noteId, '');
+        }
+        return { tabNoteId: tab.noteId, htmlNoteId: html.noteId };
+    }
+
+    switch (options.action) {
+        case 'bootstrap':
+            return bootstrap();
+        case 'createCategory':
+            return createCategory();
+        case 'createTool':
+            return createTool();
+        case 'importTool':
+            return importTool();
+        case 'addOption':
+            return addOption();
+        case 'importOptions':
+            return importOptions();
+        case 'deleteOption':
+            return deleteOption();
+        case 'setToolBase':
+            return setToolBase();
+        case 'setToolsRoot':
+            return setToolsRoot();
+        case 'savePreset':
+            return savePreset();
+        case 'deletePreset':
+            return deletePreset();
+        case 'ensureTab':
+            return ensureTab();
+        default:
+            throw new Error('Unknown action: ' + options.action);
+    }
+}
+
+module.exports = { beRun };
+
+});
+__def("ui", function (module, exports, __require) {
+'use strict';
+
+/**
+ * Palette UI. Plain DOM on purpose: no JSX compile step, no Preact version
+ * coupling, and it keeps the installed note to a single script.
+ *
+ * The UI is driven by a controller (see runtime.js):
+ *   refresh(): Promise<void>
+ *   search(query): Array<{ noteId, title, category, description, base }>
+ *   load(noteId): Promise<{ definition, presets, whatIs, links, usageExamples,
+ *                            helpText, installText, ... }>
+ *   copy(text): Promise<boolean>
+ *   insert(text): void
+ *   message(text): void            show a non-blocking Trilium message
+ *   error(text): void              show a Trilium error message
+ *   categories(): string[]
+ *   createTool(spec): Promise<{ noteId }>
+ *   importTool(tool): Promise<{ noteId }>
+ *   exportTool(noteId): Promise<{ kind, version, tool }>
+ *   importOptions(toolId, options): Promise<{ created, skipped }>
+ *   savePreset(toolId, name, values): Promise<void>
+ *   deletePreset(toolId, name): Promise<void>
+ *   addOption(toolId, option): Promise<void>
+ *   deleteOption(noteId): Promise<void>
+ *   setToolBase(toolId, base): Promise<void>
+ *   currentToolsRoot(): Promise<{ noteId, title } | null>
+ *   setToolsRoot(noteId): Promise<void>
+ *   useActiveNoteAsToolsRoot(): Promise<void>
+ *   activeNoteText(): Promise<{ noteId, title, text }>
+ *   openNote(noteId): Promise<void>
+ *   openInTab(): Promise<string>
+ *   version(): string
+ *   repository(): string
+ *   checkLatestVersion(): Promise<{ current, latest, outdated, error }>
+ *
+ * This module never touches the Trilium `api` global: everything goes through
+ * the controller, which keeps the DOM code testable with a plain DOM.
+ */
+
+const Model = __require("model");
+const Render = __require("render");
+const Parse = __require("parse");
+const Sections = __require("sections");
+const ToolFile = __require("toolfile");
+const Prompt = __require("prompt");
+const Dom = __require("dom");
+const Styles = __require("styles");
+const SourcePicker = __require("sourcePicker");
+
+/** Copy icon and control injected into every code block of the Install note. */
+const CODE_COPY_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 2H10c-1.103 0-2 .897-2 2v4H4c-1.103 0-2 .897-2 2v10c0 1.103.897 2 2 2h10c1.103 0 2-.897 2-2v-4h4c1.103 0 2-.897 2-2V4c0-1.103-.897-2-2-2zM4 20V10h10l.002 10H4zm16-6h-4v-4c0-1.103-.897-2-2-2h-4V4h10v10z"></path></svg>';
+const CODE_COPY_BUTTON = '<button type="button" class="cm-code-copy" title="Copy to clipboard" aria-label="Copy to clipboard">' + CODE_COPY_ICON + '</button>';
+
+const NEW_CATEGORY = '__new__';
+
+let instance = null;
+
+/** Resolve after the handler, so a rejected promise becomes a status message. */
+function guarded(handler, onError) {
+    return function (event) {
+        try {
+            const result = handler(event);
+            if (result && typeof result.then === 'function') {
+                result.catch(onError);
+            }
+        } catch (error) {
+            onError(error);
+        }
+    };
+}
+
+function openPalette(controller, options) {
+    const container = options && options.container ? options.container : null;
+    const embedded = Boolean(container);
+
+    // Only the overlay is a singleton. The tab renderer is rendered by Trilium
+    // next to a possibly open overlay, so it always mounts its own instance.
+    if (!embedded) {
+        if (instance) {
+            instance.focus();
+            return instance;
+        }
+        if (typeof window !== 'undefined' && window.__cmPaletteInstance) {
+            window.__cmPaletteInstance.focus();
+            return window.__cmPaletteInstance;
+        }
+    }
+
+    Dom.ensureStyle(Styles.STYLE_ID, Styles.CSS);
 
     const state = {
         items: [],
         active: -1,
         current: null,
+        loaded: null,
         definition: null,
         presets: [],
         values: {},
         edited: false,
+        exampleLoaded: false,
+        optionRows: [],
+        optionGroups: [],
         previewEl: null,
         warningsEl: null,
         presetSelect: null,
-        presetName: null
+        presetName: null,
+        footerRow: null,
+        modal: null,
+        importParsed: null,
+        importRows: [],
+        importToolParsed: null
     };
 
-    const overlay = el('div', 'cm-overlay');
-    const panel = el('div', 'cm-panel');
+    const overlay = embedded ? null : Dom.el('div', 'cm-overlay');
+    const shell = embedded ? Dom.el('div', 'cm-tab-view') : overlay;
+    const panel = Dom.el('div', 'cm-panel');
 
-    const head = el('div', 'cm-head');
+    const head = Dom.el('div', 'cm-head');
     const searchInput = document.createElement('input');
     searchInput.type = 'search';
     searchInput.className = 'cm-search';
-    searchInput.placeholder = 'Search commands…';
-    const closeButton = el('button', 'cm-close', '✕');
+    searchInput.placeholder = 'Search tools…';
+    searchInput.setAttribute('aria-label', 'Search tools');
+    const openTabButton = embedded ? null : Dom.el('button', 'cm-open-tab', 'Open in tab');
+    if (openTabButton) {
+        openTabButton.type = 'button';
+        openTabButton.title = 'Open Command Maker in a new Trilium tab';
+    }
+    const closeButton = Dom.el('button', 'cm-close', '✕');
     closeButton.type = 'button';
     closeButton.title = 'Close (Esc)';
+    closeButton.setAttribute('aria-label', 'Close palette');
     head.appendChild(searchInput);
-    head.appendChild(closeButton);
+    if (openTabButton) {
+        head.appendChild(openTabButton);
+    }
+    if (!embedded) {
+        head.appendChild(closeButton);
+    }
 
-    const body = el('div', 'cm-body');
-    const list = el('div', 'cm-list');
-    const detail = el('div', 'cm-detail');
+    const body = Dom.el('div', 'cm-body');
+    const list = Dom.el('div', 'cm-list');
+    const detail = Dom.el('div', 'cm-detail');
     body.appendChild(list);
     body.appendChild(detail);
 
-    const footer = el('div', 'cm-foot');
-    const newCommandButton = el('button', 'cm-button', 'New command');
-    newCommandButton.type = 'button';
-    const addOptionButton = el('button', 'cm-button', 'Add option');
+    const footer = Dom.el('div', 'cm-foot');
+    const newToolButton = Dom.el('button', 'cm-button', 'New tool');
+    newToolButton.type = 'button';
+    const importToolButton = Dom.el('button', 'cm-button', 'Import tool');
+    importToolButton.type = 'button';
+    const exportToolButton = Dom.el('button', 'cm-button', 'Export tool');
+    exportToolButton.type = 'button';
+    const importButton = Dom.el('button', 'cm-button', 'Import options');
+    importButton.type = 'button';
+    const addOptionButton = Dom.el('button', 'cm-button', 'Add option');
     addOptionButton.type = 'button';
-    const statusEl = el('span', 'cm-status', '');
-    footer.appendChild(newCommandButton);
+    const toolsButton = Dom.el('button', 'cm-button', 'Tools folder');
+    toolsButton.type = 'button';
+    const statusEl = Dom.el('span', 'cm-status', '');
+    statusEl.setAttribute('role', 'status');
+    const versionButton = Dom.el('button', 'cm-version', 'v' + controller.version());
+    versionButton.type = 'button';
+    versionButton.title = 'Check for updates';
+    const repoLink = document.createElement('a');
+    repoLink.className = 'cm-version-link';
+    repoLink.textContent = 'Repository';
+    repoLink.href = controller.repository();
+    repoLink.target = '_blank';
+    repoLink.rel = 'noreferrer';
+    footer.appendChild(newToolButton);
+    footer.appendChild(importToolButton);
+    footer.appendChild(importButton);
     footer.appendChild(addOptionButton);
+    footer.appendChild(exportToolButton);
+    footer.appendChild(toolsButton);
     footer.appendChild(statusEl);
+    footer.appendChild(versionButton);
+    footer.appendChild(repoLink);
+
+    const modalHost = Dom.el('div', 'cm-modal-host');
 
     panel.appendChild(head);
     panel.appendChild(body);
     panel.appendChild(footer);
-    overlay.appendChild(panel);
-    document.body.appendChild(overlay);
+    if (embedded) {
+        Dom.clearEmbeddedView(container, 'cm-tab-view');
+        shell.appendChild(panel);
+        // The modal lives on the shell, not inside the panel: the panel shrinks
+        // to its content when no tool is selected, which used to clip the modal.
+        shell.appendChild(modalHost);
+        container.appendChild(shell);
+    } else {
+        overlay.appendChild(panel);
+        // The modal lives on the overlay, not inside the panel: the panel shrinks
+        // to its content when no tool is selected, which used to clip the modal.
+        overlay.appendChild(modalHost);
+        document.body.appendChild(overlay);
+    }
 
     let searchTimer = null;
-    let newCommandRow = null;
-    let addOptionRow = null;
 
+    /** Update the footer and surface the same text as a Trilium message. */
     function setStatus(message, isError) {
-        statusEl.textContent = message || '';
+        const value = message === undefined || message === null ? '' : String(message);
+        statusEl.textContent = value;
         statusEl.classList.toggle('is-error', Boolean(isError));
+        if (value.trim() === '') {
+            return;
+        }
+        if (isError) {
+            controller.error(value);
+        } else {
+            controller.message(value);
+        }
     }
 
     function notify(error) {
-        const message = error && error.message ? error.message : String(error);
-        setStatus(message, true);
-        try {
-            if (typeof api !== 'undefined' && typeof api.showError === 'function') {
-                api.showError('Command Maker: ' + message);
-            }
-        } catch (ignored) {
-            // showing the message in the footer is enough
+        setStatus(error && error.message ? error.message : String(error), true);
+    }
+
+    async function checkForUpdates() {
+        if (typeof controller.checkLatestVersion !== 'function') {
+            setStatus('Update check is unavailable.', true);
+            return;
+        }
+        setStatus('Checking for updates…');
+        const info = await controller.checkLatestVersion();
+        if (info.error) {
+            setStatus('v' + info.current + ' — ' + info.error + ' See the Repository link.', true);
+            return;
+        }
+        if (info.latest && info.latest !== info.current) {
+            versionButton.textContent = 'v' + info.current + ' → v' + info.latest;
+            versionButton.title = 'Installed v' + info.current + '; latest v' + info.latest + '. Click to check again.';
+        }
+
+        if (info.latest && info.latest === info.current) {
+            setStatus('v' + info.current + ' is the latest version.');
+        } else if (info.outdated) {
+            setStatus('v' + info.current + ' installed · latest is v' + info.latest + '.');
+        } else if (info.latest) {
+            setStatus('v' + info.current + ' is newer than the latest published tag (v' + info.latest + ').');
+        } else {
+            setStatus('v' + info.current + ' — no published version found.');
         }
     }
 
     function button(label, handler, className) {
-        const node = el('button', 'cm-button' + (className ? ' ' + className : ''), label);
+        const node = Dom.el('button', 'cm-button' + (className ? ' ' + className : ''), label);
         node.type = 'button';
         node.addEventListener('click', function (event) {
             event.preventDefault();
-            Promise.resolve()
-                .then(handler)
-                .catch(notify);
+            guarded(handler, notify)();
         });
         return node;
     }
 
+    function closeModal() {
+        if (!state.modal) {
+            return;
+        }
+        state.modal.remove();
+        state.modal = null;
+        state.importParsed = null;
+        state.importRows = [];
+        state.importToolParsed = null;
+    }
+
     function close() {
+        closeModal();
         if (searchTimer) {
             clearTimeout(searchTimer);
             searchTimer = null;
+        }
+        if (shell) {
+            shell.removeEventListener('keydown', onKeyDown);
+        }
+        if (embedded) {
+            if (shell && shell.parentNode && typeof shell.parentNode.removeChild === 'function') {
+                shell.parentNode.removeChild(shell);
+            } else if (shell) {
+                shell.remove();
+            }
+            return;
         }
         overlay.removeEventListener('keydown', onKeyDown);
         overlay.remove();
@@ -1061,12 +3815,16 @@ function openPalette(controller) {
     function onKeyDown(event) {
         if (event.key === 'Escape') {
             event.preventDefault();
-            close();
+            if (state.modal) {
+                closeModal();
+            } else if (!embedded) {
+                close();
+            }
             return;
         }
         if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
             event.preventDefault();
-            copy();
+            copy().catch(notify);
             return;
         }
         if (document.activeElement !== searchInput) {
@@ -1087,19 +3845,26 @@ function openPalette(controller) {
     function renderList() {
         list.textContent = '';
         if (!state.items.length) {
-            list.appendChild(el('div', 'cm-empty', 'No commands match.'));
+            list.appendChild(Dom.el('div', 'cm-empty', 'No tools match.'));
             return;
         }
         state.items.forEach(function (item, index) {
-            const row = el('button', 'cm-result' + (index === state.active ? ' is-active' : ''));
+            const row = Dom.el('button', 'cm-result' + (index === state.active ? ' is-active' : ''));
             row.type = 'button';
-            row.appendChild(el('div', 'cm-result-title', item.title));
-            if (item.description) {
-                row.appendChild(el('div', 'cm-result-desc', item.description));
+            row.appendChild(Dom.el('div', 'cm-result-title', item.title));
+            const meta = Dom.el('div', 'cm-result-meta');
+            if (item.category) {
+                meta.appendChild(Dom.el('span', 'cm-cat', item.category));
             }
-            row.addEventListener('click', function () {
-                selectItem(item).catch(notify);
-            });
+            if (item.description) {
+                meta.appendChild(Dom.el('div', 'cm-result-desc', item.description));
+            }
+            if (meta.children.length) {
+                row.appendChild(meta);
+            }
+            row.addEventListener('click', guarded(function () {
+                return selectItem(item);
+            }, notify));
             list.appendChild(row);
         });
     }
@@ -1121,8 +3886,6 @@ function openPalette(controller) {
     }
 
     function pickActive() {
-        // Enter still opens the best match when nothing has been highlighted yet, but the
-        // list keeps no selected row until the user navigates or clicks.
         const index = state.active >= 0 ? state.active : (state.items.length ? 0 : -1);
         if (index < 0 || !state.items[index]) {
             return;
@@ -1131,14 +3894,10 @@ function openPalette(controller) {
     }
 
     async function runSearch() {
-        try {
-            const items = await Promise.resolve(controller.search(searchInput.value));
-            state.items = Array.isArray(items) ? items : [];
-            state.active = -1;
-            renderList();
-        } catch (error) {
-            notify(error);
-        }
+        const items = await Promise.resolve(controller.search(searchInput.value));
+        state.items = Array.isArray(items) ? items : [];
+        state.active = -1;
+        renderList();
     }
 
     function onSearchInput() {
@@ -1147,7 +3906,7 @@ function openPalette(controller) {
         }
         searchTimer = setTimeout(function () {
             searchTimer = null;
-            runSearch();
+            runSearch().catch(notify);
         }, 120);
     }
 
@@ -1161,29 +3920,49 @@ function openPalette(controller) {
         }
     }
 
-    async function selectItem(item) {
+    async function selectItem(item, selectOptions) {
+        const preserve = Boolean(selectOptions && selectOptions.preserveValues);
+        const previousValues = preserve ? state.values : null;
+        const previousEdited = preserve ? state.edited : false;
+        const previousPreview = preserve && state.previewEl ? state.previewEl.value : '';
         state.current = item;
         state.edited = false;
+        state.exampleLoaded = false;
         markActive(item);
         try {
             const loaded = await controller.load(item.noteId);
+            state.loaded = loaded;
             state.definition = loaded.definition;
             state.presets = loaded.presets || [];
             state.values = Model.defaultValueMap(state.definition);
+            if (previousValues) {
+                state.values = Object.assign(state.values, previousValues);
+            }
             renderDetail();
+            if (previousEdited && state.previewEl) {
+                state.previewEl.value = previousPreview;
+                state.edited = true;
+            }
             setStatus('');
         } catch (error) {
+            state.loaded = null;
             state.definition = null;
             renderDetail();
             notify(error);
         }
     }
 
-    function optionRow(option, inferred) {
-        const row = el('label', 'cm-row' + (inferred ? ' cm-row-inferred' : ''));
-        const key = Render.valueKey(option);
-        row.appendChild(el('span', 'cm-row-label', option.title + (option.required ? ' *' : '')));
+    function setValue(key, value) {
+        state.values[key] = value;
+        if (state.exampleLoaded) {
+            state.edited = false;
+            state.exampleLoaded = false;
+        }
+        updatePreview(false);
+    }
 
+    function optionControl(option) {
+        const key = Render.valueKey(option);
         let control;
         if (option.type === 'boolean') {
             control = document.createElement('input');
@@ -1192,13 +3971,14 @@ function openPalette(controller) {
             control.addEventListener('change', function () {
                 setValue(key, control.checked);
             });
+            control.className = 'cm-opt-check';
         } else if (option.type === 'enum') {
             control = document.createElement('select');
             const empty = document.createElement('option');
             empty.value = '';
             empty.textContent = '—';
             control.appendChild(empty);
-            option.enumValues.forEach(function (value) {
+            (option.enumValues || []).forEach(function (value) {
                 const entry = document.createElement('option');
                 entry.value = value;
                 entry.textContent = value;
@@ -1208,6 +3988,7 @@ function openPalette(controller) {
             control.addEventListener('change', function () {
                 setValue(key, control.value);
             });
+            control.className = 'cm-control cm-select cm-opt-control';
         } else {
             control = document.createElement('input');
             control.type = option.type === 'number' ? 'number' : 'text';
@@ -1216,21 +3997,50 @@ function openPalette(controller) {
             control.addEventListener('input', function () {
                 setValue(key, control.value);
             });
+            control.className = 'cm-control cm-opt-control';
         }
-
-        control.className = option.type === 'boolean'
-            ? ''
-            : 'cm-control' + (option.type === 'enum' ? ' cm-select' : '');
-        row.appendChild(control);
-        if (inferred) {
-            row.appendChild(el('span', 'cm-badge', 'inferred'));
-        }
-        return row;
+        control.setAttribute('aria-label', option.title);
+        return control;
     }
 
-    function setValue(key, value) {
-        state.values[key] = value;
-        updatePreview(false);
+    function optionRow(option, inferred) {
+        const row = Dom.el('div', 'cm-option' + (inferred ? ' cm-option-inferred' : ''));
+        const main = Dom.el('div', 'cm-opt-main');
+        const headRow = Dom.el('div', 'cm-opt-head');
+        headRow.appendChild(Dom.el('span', 'cm-opt-title', option.title));
+        if (option.flag) {
+            headRow.appendChild(Dom.el('code', 'cm-opt-flag', option.flag));
+        }
+        if (inferred) {
+            headRow.appendChild(Dom.el('span', 'cm-badge', 'inferred'));
+        }
+        main.appendChild(headRow);
+        if (option.help) {
+            main.appendChild(Dom.el('div', 'cm-opt-help', option.help));
+        }
+        row.appendChild(main);
+        const control = optionControl(option);
+        row.appendChild(control);
+        if (option.type === 'boolean') {
+            row.classList.add('cm-option-bool');
+            row.addEventListener('click', function (event) {
+                if (event.target === control) {
+                    return;
+                }
+                control.checked = !control.checked;
+                setValue(Render.valueKey(option), control.checked);
+            });
+        }
+        state.optionRows.push({
+            node: row,
+            search: [
+                option.title,
+                option.flag,
+                option.help,
+                (option.enumValues || []).join(' ')
+            ].join(' ').toLowerCase()
+        });
+        return row;
     }
 
     function renderWarnings(warnings) {
@@ -1238,8 +4048,9 @@ function openPalette(controller) {
             return;
         }
         state.warningsEl.textContent = '';
-        (warnings || []).forEach(function (warning) {
-            state.warningsEl.appendChild(el('div', 'cm-warning', warning.message));
+        const definitionWarnings = state.definition && state.definition.warnings ? state.definition.warnings : [];
+        definitionWarnings.concat(warnings || []).forEach(function (warning) {
+            state.warningsEl.appendChild(Dom.el('div', 'cm-warning', warning.message));
         });
     }
 
@@ -1260,6 +4071,13 @@ function openPalette(controller) {
             return;
         }
         state.presetSelect.textContent = '';
+        if (state.loaded && state.loaded.presetsInvalid) {
+            const broken = document.createElement('option');
+            broken.value = '';
+            broken.textContent = 'Presets note needs fixing';
+            state.presetSelect.appendChild(broken);
+            return;
+        }
         if (!state.presets.length) {
             const empty = document.createElement('option');
             empty.value = '';
@@ -1268,27 +4086,30 @@ function openPalette(controller) {
         }
         state.presets.forEach(function (preset) {
             const entry = document.createElement('option');
-            entry.value = preset.noteId;
-            entry.textContent = preset.title;
+            entry.value = preset.name;
+            entry.textContent = preset.name;
             state.presetSelect.appendChild(entry);
         });
+    }
+
+    async function copyTextToClipboard(text, message) {
+        if (!String(text || '').trim()) {
+            notify(new Error('Nothing to copy.'));
+            return;
+        }
+        const ok = await controller.copy(text);
+        if (ok) {
+            setStatus(message || 'Copied to the clipboard.');
+        } else {
+            notify(new Error('Could not write to the clipboard.'));
+        }
     }
 
     async function copy() {
         if (!state.previewEl) {
             return;
         }
-        const text = state.previewEl.value;
-        if (!text.trim()) {
-            notify(new Error('Nothing to copy.'));
-            return;
-        }
-        const ok = await controller.copy(text);
-        if (ok) {
-            setStatus('Copied to the clipboard.');
-        } else {
-            notify(new Error('Could not write to the clipboard.'));
-        }
+        await copyTextToClipboard(state.previewEl.value);
     }
 
     function insert() {
@@ -1303,10 +4124,10 @@ function openPalette(controller) {
         }
     }
 
-    async function loadPreset() {
-        const noteId = state.presetSelect ? state.presetSelect.value : '';
+    function loadPreset() {
+        const name = state.presetSelect ? state.presetSelect.value : '';
         const preset = state.presets.filter(function (entry) {
-            return entry.noteId === noteId;
+            return entry.name === name;
         })[0];
         if (!preset) {
             notify(new Error('Pick a preset first.'));
@@ -1314,6 +4135,7 @@ function openPalette(controller) {
         }
         state.values = Object.assign(Model.defaultValueMap(state.definition), preset.values || {});
         state.edited = false;
+        state.exampleLoaded = false;
         renderDetail();
         setStatus('Preset loaded.');
     }
@@ -1329,42 +4151,82 @@ function openPalette(controller) {
         }
         await controller.savePreset(state.definition.noteId, name, state.values);
         const loaded = await controller.load(state.definition.noteId);
+        state.loaded = loaded;
         state.presets = loaded.presets || [];
         renderDetail();
         setStatus('Preset saved.');
     }
 
     async function deletePreset() {
-        const noteId = state.presetSelect ? state.presetSelect.value : '';
-        if (!noteId) {
+        const name = state.presetSelect ? state.presetSelect.value : '';
+        if (!name) {
             notify(new Error('Pick a preset first.'));
             return;
         }
-        await controller.deletePreset(noteId);
+        await controller.deletePreset(state.definition.noteId, name);
         const loaded = await controller.load(state.definition.noteId);
+        state.loaded = loaded;
         state.presets = loaded.presets || [];
         renderDetail();
         setStatus('Preset deleted.');
     }
 
     function presetBlock() {
-        const block = el('div', 'cm-presets');
-        block.appendChild(el('div', 'cm-section', 'Presets'));
+        const block = Dom.el('div', 'cm-presets');
+        block.appendChild(Dom.el('div', 'cm-section', 'Presets'));
+        if (state.loaded && state.loaded.presetsInvalid) {
+            block.appendChild(Dom.el('div', 'cm-warning', 'The Presets note is not valid JSON. Fix or delete it before saving a preset.'));
+        }
 
-        const row = el('div', 'cm-row');
+        const row = Dom.el('div', 'cm-row');
         const select = document.createElement('select');
         select.className = 'cm-control cm-select';
+        select.setAttribute('aria-label', 'Preset');
         state.presetSelect = select;
         row.appendChild(select);
         row.appendChild(button('Load', loadPreset));
-        row.appendChild(button('Delete', deletePreset, 'cm-danger'));
+
+        const deleteButton = Dom.el('button', 'cm-button cm-danger', 'Delete');
+        deleteButton.type = 'button';
+        let deleteArmed = false;
+        let deleteTimer = null;
+        function disarmDelete() {
+            deleteArmed = false;
+            deleteButton.textContent = 'Delete';
+            deleteButton.classList.remove('cm-danger-armed');
+            if (deleteTimer) {
+                clearTimeout(deleteTimer);
+                deleteTimer = null;
+            }
+        }
+        deleteButton.addEventListener('click', function (event) {
+            event.preventDefault();
+            const name = state.presetSelect ? state.presetSelect.value : '';
+            if (!name) {
+                notify(new Error('Pick a preset first.'));
+                return;
+            }
+            if (!deleteArmed) {
+                deleteArmed = true;
+                deleteButton.textContent = 'Confirm delete';
+                deleteButton.classList.add('cm-danger-armed');
+                setStatus('Press Delete again to remove "' + name + '".');
+                deleteTimer = setTimeout(disarmDelete, 5000);
+                return;
+            }
+            disarmDelete();
+            deletePreset().catch(notify);
+        });
+        select.addEventListener('change', disarmDelete);
+        row.appendChild(deleteButton);
         block.appendChild(row);
 
-        const saveRow = el('div', 'cm-row');
+        const saveRow = Dom.el('div', 'cm-row');
         const nameInput = document.createElement('input');
         nameInput.type = 'text';
         nameInput.className = 'cm-control';
         nameInput.placeholder = 'Preset name';
+        nameInput.setAttribute('aria-label', 'Preset name');
         state.presetName = nameInput;
         saveRow.appendChild(nameInput);
         saveRow.appendChild(button('Save preset', savePreset));
@@ -1374,47 +4236,237 @@ function openPalette(controller) {
         return block;
     }
 
+    function examplesBlock() {
+        if (!state.loaded || !(state.loaded.usageExamples || []).length) {
+            return null;
+        }
+        const block = Dom.el('div', 'cm-examples');
+        block.appendChild(Dom.el('div', 'cm-section', 'Examples'));
+        state.loaded.usageExamples.forEach(function (example) {
+            const row = Dom.el('div', 'cm-example');
+            row.appendChild(Dom.el('code', 'cm-example-text', example));
+            row.appendChild(button('Use', function () {
+                state.values = Model.valuesFromExample(state.definition, example);
+                state.edited = false;
+                state.exampleLoaded = false;
+                renderDetail();
+                if (state.previewEl) {
+                    state.previewEl.value = example;
+                    state.edited = true;
+                    state.exampleLoaded = true;
+                }
+                setStatus('Example loaded into the form.');
+            }));
+            row.appendChild(button('Copy', function () {
+                return copyTextToClipboard(example);
+            }));
+            block.appendChild(row);
+        });
+        return block;
+    }
+
+    function linksBlock() {
+        if (!state.loaded || !state.loaded.links.length) {
+            return null;
+        }
+        const block = Dom.el('div', 'cm-links');
+        state.loaded.links.forEach(function (link) {
+            const anchor = document.createElement('a');
+            anchor.className = 'cm-link';
+            anchor.textContent = link.text;
+            anchor.href = link.href;
+            anchor.target = '_blank';
+            anchor.rel = 'noreferrer';
+            block.appendChild(anchor);
+        });
+        return block;
+    }
+
+    function foldBlock(title, text, className) {
+        if (!text) {
+            return null;
+        }
+        const details = document.createElement('details');
+        details.className = 'cm-fold-block';
+        const summary = document.createElement('summary');
+        summary.textContent = title;
+        details.appendChild(summary);
+        const pre = Dom.el('pre', 'cm-pre' + (className ? ' ' + className : ''), text);
+        details.appendChild(pre);
+        return details;
+    }
+
+    /** Same fold, but the body keeps the formatting of a rich-text note. */
+    function foldHtmlBlock(title, html) {
+        if (!html) {
+            return null;
+        }
+        const details = document.createElement('details');
+        details.className = 'cm-fold-block';
+        const summary = document.createElement('summary');
+        summary.textContent = title;
+        details.appendChild(summary);
+        const box = Dom.el('div', 'cm-install');
+        // Only allowlisted tags and attributes reach the DOM; the copy control is
+        // our own trusted markup.
+        box.innerHTML = Sections.wrapCodeBlocks(Sections.sanitizeNoteHtml(html), CODE_COPY_BUTTON);
+        box.addEventListener('click', function (event) {
+            const target = event.target;
+            if (!target || typeof target.closest !== 'function') {
+                return;
+            }
+            const control = target.closest('.cm-code-copy');
+            if (!control) {
+                return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            const wrapper = control.parentNode;
+            const pre = wrapper && typeof wrapper.querySelector === 'function'
+                ? wrapper.querySelector('pre')
+                : null;
+            copyTextToClipboard(pre ? pre.textContent : '', 'Code copied to the clipboard.').catch(notify);
+        });
+        details.appendChild(box);
+        return details;
+    }
+
+    function baseRow() {
+        const row = Dom.el('div', 'cm-base-row');
+        row.appendChild(Dom.el('span', 'cm-base-label', 'Base command'));
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'cm-control';
+        input.value = state.definition.base;
+        input.setAttribute('aria-label', 'Base command');
+        input.addEventListener('change', function () {
+            const value = input.value.trim();
+            guarded(async function () {
+                await controller.setToolBase(state.definition.noteId, value);
+                state.definition.base = value || Model.deriveBase(state.definition.title);
+                state.values = Object.assign(Model.defaultValueMap(state.definition), state.values);
+                state.exampleLoaded = false;
+                renderDetail();
+                setStatus('Base command updated.');
+            }, notify)();
+        });
+        row.appendChild(input);
+        return row;
+    }
+
     function renderDetail() {
         detail.textContent = '';
         state.previewEl = null;
         state.warningsEl = null;
         state.presetSelect = null;
         state.presetName = null;
+        state.optionRows = [];
+        state.optionGroups = [];
 
         if (!state.definition) {
-            detail.appendChild(el('div', 'cm-empty', 'Pick a command from the list.'));
+            detail.appendChild(Dom.el('div', 'cm-empty', 'Pick a tool from the list.'));
             return;
         }
 
         const definition = state.definition;
-        const header = el('div', 'cm-detail-head');
-        header.appendChild(el('h2', 'cm-title', definition.title));
+        const header = Dom.el('div', 'cm-detail-head');
+        const title = Dom.el('h2', 'cm-title');
+        title.appendChild(Dom.el('span', '', definition.title));
+        if (definition.category) {
+            title.appendChild(Dom.el('span', 'cm-cat', definition.category));
+        }
+        header.appendChild(title);
         if (definition.description) {
-            header.appendChild(el('p', 'cm-subtitle', definition.description));
+            header.appendChild(Dom.el('p', 'cm-subtitle', definition.description));
         }
         detail.appendChild(header);
 
-        const form = el('div', 'cm-form');
-        if (!definition.options.length && !definition.inferred.length) {
-            form.appendChild(el('div', 'cm-empty', 'This command has no options yet. Use "Add option".'));
+        if (state.loaded && state.loaded.whatIs) {
+            detail.appendChild(Dom.el('div', 'cm-section', 'What is?'));
+            detail.appendChild(Dom.el('p', 'cm-what', state.loaded.whatIs));
         }
-        definition.options.forEach(function (option) {
-            form.appendChild(optionRow(option, false));
-        });
-        if (definition.inferred.length) {
-            form.appendChild(el('div', 'cm-section', 'Placeholders without an option'));
-            definition.inferred.forEach(function (option) {
-                form.appendChild(optionRow(option, true));
+
+        const links = linksBlock();
+        if (links) {
+            detail.appendChild(links);
+        }
+
+        detail.appendChild(baseRow());
+        detail.appendChild(presetBlock());
+
+        detail.appendChild(Dom.el('div', 'cm-section', 'Options (' + definition.options.length + ')'));
+        const filter = document.createElement('input');
+        filter.type = 'search';
+        filter.className = 'cm-control cm-filter';
+        filter.placeholder = 'Filter options…';
+        filter.setAttribute('aria-label', 'Filter options');
+        filter.addEventListener('input', function () {
+            const needle = String(filter.value || '').trim().toLowerCase();
+            state.optionRows.forEach(function (entry) {
+                const match = needle === '' || entry.search.indexOf(needle) !== -1;
+                entry.node.style.display = match ? '' : 'none';
             });
+            state.optionGroups.forEach(function (group) {
+                const visible = group.rows.some(function (row) {
+                    return row.style.display !== 'none';
+                });
+                group.node.style.display = visible ? '' : 'none';
+            });
+        });
+        detail.appendChild(filter);
+
+        const form = Dom.el('div', 'cm-form');
+        const requiredOptions = definition.options
+            .filter(function (option) {
+                return option.required;
+            })
+            .concat(definition.inferred);
+        const optionalOptions = definition.options.filter(function (option) {
+            return !option.required;
+        });
+
+        function optionGroup(title, options) {
+            if (!options.length) {
+                return;
+            }
+            const group = Dom.el('div', 'cm-option-group');
+            group.appendChild(Dom.el('div', 'cm-option-group-title', title));
+            const rows = [];
+            options.forEach(function (option) {
+                const row = optionRow(option, Boolean(option.inferred));
+                rows.push(row);
+                group.appendChild(row);
+            });
+            form.appendChild(group);
+            state.optionGroups.push({ node: group, rows: rows });
         }
+
+        if (!requiredOptions.length && !optionalOptions.length) {
+            form.appendChild(Dom.el('div', 'cm-empty', 'This tool has no options yet. Use "Import options" or add option notes under Options.'));
+        }
+        optionGroup('Required', requiredOptions);
+        optionGroup('Optional', optionalOptions);
         detail.appendChild(form);
 
-        detail.appendChild(el('div', 'cm-section', 'Command'));
+        detail.appendChild(Dom.el('div', 'cm-section', 'Extra arguments'));
+        const extra = document.createElement('input');
+        extra.type = 'text';
+        extra.className = 'cm-control';
+        extra.placeholder = 'Positional arguments or subcommands, inserted after the base';
+        extra.setAttribute('aria-label', 'Extra arguments');
+        extra.value = state.values[Render.EXTRA_KEY] === undefined ? '' : String(state.values[Render.EXTRA_KEY]);
+        extra.addEventListener('input', function () {
+            setValue(Render.EXTRA_KEY, extra.value);
+        });
+        detail.appendChild(extra);
+
+        detail.appendChild(Dom.el('div', 'cm-section', 'Command'));
         const preview = document.createElement('textarea');
         preview.className = 'cm-preview';
         preview.spellcheck = false;
-        preview.rows = 4;
-        const codeTheme = codeBlockTheme();
+        preview.rows = 3;
+        preview.setAttribute('aria-label', 'Command preview');
+        const codeTheme = Dom.codeBlockTheme();
         if (codeTheme) {
             preview.style.background = codeTheme.background;
             if (codeTheme.color) {
@@ -1423,49 +4475,123 @@ function openPalette(controller) {
         }
         preview.addEventListener('input', function () {
             state.edited = true;
+            state.exampleLoaded = false;
         });
         state.previewEl = preview;
         detail.appendChild(preview);
 
-        state.warningsEl = el('div', 'cm-warnings');
+        state.warningsEl = Dom.el('div', 'cm-warnings');
         detail.appendChild(state.warningsEl);
 
-        const actions = el('div', 'cm-actions');
+        const actions = Dom.el('div', 'cm-actions');
         actions.appendChild(button('Copy', copy));
         actions.appendChild(button('Insert', insert));
         actions.appendChild(button('Regenerate', function () {
             state.edited = false;
+            state.exampleLoaded = false;
             updatePreview(true);
+        }));
+        actions.appendChild(button('Open note', function () {
+            return controller.openNote(definition.noteId);
         }));
         detail.appendChild(actions);
 
-        detail.appendChild(presetBlock());
+        const examples = examplesBlock();
+        if (examples) {
+            detail.appendChild(examples);
+        }
+
+        const help = foldBlock('Help output', state.loaded ? state.loaded.helpText : '');
+        if (help) {
+            detail.appendChild(help);
+        }
+        let install = null;
+        if (state.loaded && state.loaded.installHtml) {
+            install = state.loaded.installIsCode
+                ? foldHtmlBlock('Install', '<pre><code>' + Sections.escapeHtml(state.loaded.installHtml) + '</code></pre>')
+                : foldHtmlBlock('Install', state.loaded.installHtml);
+        } else if (state.loaded) {
+            install = foldBlock('Install', state.loaded.installText);
+        }
+        if (install) {
+            detail.appendChild(install);
+        }
+
         updatePreview(true);
     }
 
-    function toggleNewCommand() {
-        if (newCommandRow) {
-            newCommandRow.remove();
-            newCommandRow = null;
+    function clearFooterRow() {
+        if (state.footerRow) {
+            state.footerRow.remove();
+            state.footerRow = null;
+        }
+    }
+
+    function toggleNewTool() {
+        if (state.footerRow) {
+            clearFooterRow();
             return;
         }
-        const row = el('div', 'cm-inline');
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'cm-control';
-        input.placeholder = 'New command name (e.g. docker run)';
+        const row = Dom.el('div', 'cm-inline');
+        const titleInput = document.createElement('input');
+        titleInput.type = 'text';
+        titleInput.className = 'cm-control';
+        titleInput.placeholder = 'Tool name (e.g. docker)';
+        titleInput.setAttribute('aria-label', 'Tool name');
+
+        const categorySelect = document.createElement('select');
+        categorySelect.className = 'cm-control cm-select';
+        categorySelect.setAttribute('aria-label', 'Category');
+        const categories = controller.categories();
+        categories.forEach(function (name) {
+            const option = document.createElement('option');
+            option.value = name;
+            option.textContent = name;
+            categorySelect.appendChild(option);
+        });
+        const newCategoryOption = document.createElement('option');
+        newCategoryOption.value = NEW_CATEGORY;
+        newCategoryOption.textContent = 'New category…';
+        categorySelect.appendChild(newCategoryOption);
+        if (!categories.length) {
+            categorySelect.value = NEW_CATEGORY;
+        }
+
+        const newCategoryInput = document.createElement('input');
+        newCategoryInput.type = 'text';
+        newCategoryInput.className = 'cm-control';
+        newCategoryInput.placeholder = 'New category name';
+        newCategoryInput.setAttribute('aria-label', 'New category name');
+        newCategoryInput.style.display = categorySelect.value === NEW_CATEGORY ? '' : 'none';
+        categorySelect.addEventListener('change', function () {
+            newCategoryInput.style.display = categorySelect.value === NEW_CATEGORY ? '' : 'none';
+        });
+
+        const baseInput = document.createElement('input');
+        baseInput.type = 'text';
+        baseInput.className = 'cm-control';
+        baseInput.placeholder = 'Base command (optional, defaults to the name)';
+        baseInput.setAttribute('aria-label', 'Base command');
+
         const create = button('Create', async function () {
-            const title = input.value.trim();
+            const title = titleInput.value.trim();
             if (!title) {
-                notify(new Error('Command name is required.'));
+                notify(new Error('Tool name is required.'));
                 return;
             }
-            const created = await controller.createCommand(title);
-            if (newCommandRow) {
-                newCommandRow.remove();
-                newCommandRow = null;
+            const isNewCategory = categorySelect.value === NEW_CATEGORY;
+            const category = isNewCategory ? newCategoryInput.value.trim() : categorySelect.value;
+            if (isNewCategory && !category) {
+                notify(new Error('Category name is required.'));
+                return;
             }
-            await controller.refresh();
+            const created = await controller.createTool({
+                title: title,
+                category: category,
+                base: baseInput.value.trim(),
+                description: ''
+            });
+            clearFooterRow();
             await runSearch();
             const item = state.items.filter(function (entry) {
                 return entry.noteId === created.noteId;
@@ -1473,38 +4599,375 @@ function openPalette(controller) {
             if (item) {
                 await selectItem(item);
             }
-            setStatus('Command created.');
+            setStatus('Tool created.');
         });
-        row.appendChild(input);
+
+        row.appendChild(titleInput);
+        row.appendChild(categorySelect);
+        row.appendChild(newCategoryInput);
+        row.appendChild(baseInput);
         row.appendChild(create);
         footer.appendChild(row);
-        newCommandRow = row;
-        input.focus();
+        state.footerRow = row;
+        titleInput.focus();
     }
 
-    function toggleAddOption() {
-        if (!state.definition) {
-            notify(new Error('Select a command first.'));
+    function modalShell(title, bodyNode, actionsNode) {
+        closeModal();
+        const modal = Dom.el('div', 'cm-modal');
+        const modalPanel = Dom.el('div', 'cm-modal-panel');
+        modalPanel.setAttribute('role', 'dialog');
+        modalPanel.setAttribute('aria-modal', 'true');
+        modalPanel.setAttribute('aria-label', title);
+        const modalHead = Dom.el('div', 'cm-modal-head');
+        modalHead.appendChild(Dom.el('span', 'cm-modal-title', title));
+        const closeModalButton = Dom.el('button', 'cm-close', '✕');
+        closeModalButton.type = 'button';
+        closeModalButton.setAttribute('aria-label', 'Close dialog');
+        closeModalButton.addEventListener('click', closeModal);
+        modalHead.appendChild(closeModalButton);
+        const modalBody = Dom.el('div', 'cm-modal-body');
+        modalBody.appendChild(bodyNode);
+        const modalActions = Dom.el('div', 'cm-modal-actions');
+        modalActions.appendChild(actionsNode);
+        modalPanel.appendChild(modalHead);
+        modalPanel.appendChild(modalBody);
+        modalPanel.appendChild(modalActions);
+        modal.appendChild(modalPanel);
+        modal.addEventListener('click', function (event) {
+            if (event.target === modal) {
+                closeModal();
+            }
+        });
+        modalHost.appendChild(modal);
+        state.modal = modal;
+        return { modal: modal, body: modalBody, actions: modalActions };
+    }
+
+    function openImport() {
+        if (!state.current) {
+            notify(new Error('Select a tool first.'));
             return;
         }
-        if (addOptionRow) {
-            addOptionRow.remove();
-            addOptionRow = null;
+        const tool = state.current;
+        const picker = SourcePicker.createSourcePicker({
+            controller: controller,
+            hint: 'Paste "--help" output, a JSON options file, or a markdown table. Nothing is written until you import.',
+            placeholder: '--help output, JSON or a markdown table…',
+            accept: '.txt,.json,.md,.markdown,.log,.help,.text',
+            onStatus: setStatus,
+            onError: notify
+        });
+
+        const parseButton = Dom.el('button', 'cm-button', 'Parse');
+        parseButton.type = 'button';
+        const importSelected = Dom.el('button', 'cm-button', 'Import selected');
+        importSelected.type = 'button';
+        importSelected.disabled = true;
+        const closeButton2 = Dom.el('button', 'cm-button', 'Close');
+        closeButton2.type = 'button';
+        closeButton2.addEventListener('click', closeModal);
+
+        const warnings = Dom.el('div', 'cm-warnings', '');
+        const previewList = Dom.el('div', 'cm-import-list', '');
+        let statusMessage = '';
+
+        function renderImportPreview() {
+            warnings.textContent = '';
+            previewList.textContent = '';
+            state.importRows = [];
+            importSelected.disabled = true;
+            if (!state.importParsed) {
+                return;
+            }
+            (state.importParsed.warnings || []).forEach(function (warning) {
+                warnings.appendChild(Dom.el('div', 'cm-warning', warning.message || warning.code));
+            });
+            const options = state.importParsed.options || [];
+            if (!options.length) {
+                previewList.appendChild(Dom.el('div', 'cm-empty', 'No options found. Check the format and try again.'));
+                return;
+            }
+            options.forEach(function (option, index) {
+                const row = Dom.el('div', 'cm-import-row');
+                const selectLabel = Dom.el('label', 'cm-import-select');
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.checked = true;
+                checkbox.setAttribute('aria-label', 'Select ' + (option.flag || option.label));
+                checkbox.addEventListener('change', function () {
+                    state.importRows[index].checked = checkbox.checked;
+                    importSelected.disabled = !state.importRows.some(function (entry) {
+                        return entry.checked;
+                    });
+                });
+                selectLabel.appendChild(checkbox);
+                row.appendChild(selectLabel);
+                const main = Dom.el('div', 'cm-import-main');
+                main.appendChild(Dom.el('div', 'cm-import-flag', option.flag + (option.type ? '  (' + option.type + ')' : '')));
+                if (option.help) {
+                    main.appendChild(Dom.el('div', 'cm-import-help', option.help));
+                }
+                row.appendChild(main);
+                const requiredLabel = Dom.el('label', 'cm-import-required');
+                const requiredBox = document.createElement('input');
+                requiredBox.type = 'checkbox';
+                requiredBox.checked = Boolean(option.required);
+                requiredBox.setAttribute('aria-label', 'Required');
+                requiredBox.addEventListener('change', function () {
+                    state.importRows[index].required = requiredBox.checked;
+                });
+                requiredLabel.appendChild(requiredBox);
+                requiredLabel.appendChild(Dom.el('span', '', 'Required'));
+                row.appendChild(requiredLabel);
+                previewList.appendChild(row);
+                state.importRows.push({ option: option, checked: true, required: Boolean(option.required) });
+            });
+            importSelected.disabled = false;
+        }
+
+        parseButton.addEventListener('click', guarded(function () {
+            const text = picker.getText();
+            if (!String(text || '').trim()) {
+                notify(new Error('Nothing to parse. Paste help output, read the active note or choose a file.'));
+                return;
+            }
+            state.importParsed = Parse.parseImport(text);
+            renderImportPreview();
+            setStatus('Parsed ' + (state.importParsed.options || []).length + ' option(s).');
+        }, notify));
+
+        importSelected.addEventListener('click', guarded(async function () {
+            const selected = state.importRows
+                .filter(function (entry) {
+                    return entry.checked;
+                })
+                .map(function (entry) {
+                    return Object.assign({}, entry.option, { required: entry.required });
+                });
+            if (!selected.length) {
+                throw new Error('Select at least one option.');
+            }
+            const result = await controller.importOptions(tool.noteId, selected);
+            closeModal();
+            const created = result && typeof result.created === 'number' ? result.created : 'the selected';
+            const skipped = result && result.skipped ? ' Skipped ' + result.skipped + ' duplicate(s).' : '';
+            statusMessage = 'Imported ' + created + ' option(s).' + skipped;
+            await controller.refresh();
+            await runSearch();
+            await selectItem(tool, { preserveValues: true });
+            setStatus(statusMessage);
+        }, notify));
+
+        const bodyNode = Dom.el('div', '');
+        bodyNode.appendChild(picker.node);
+        bodyNode.appendChild(warnings);
+        bodyNode.appendChild(previewList);
+
+        const actionsNode = Dom.el('div', 'cm-inline');
+        actionsNode.appendChild(parseButton);
+        actionsNode.appendChild(importSelected);
+        actionsNode.appendChild(closeButton2);
+
+        modalShell('Import options into "' + tool.title + '"', bodyNode, actionsNode);
+    }
+
+    function openImportTool() {
+        const picker = SourcePicker.createSourcePicker({
+            controller: controller,
+            hint: 'Paste a tool file (JSON) exported from another tool, or one generated with "Copy AI prompt". Nothing is written until you import.',
+            placeholder: 'Tool file JSON, or the output of the tool\'s --help command…',
+            accept: '.json,.txt,.text',
+            onStatus: setStatus,
+            onError: notify
+        });
+
+        const promptButton = Dom.el('button', 'cm-button', 'Copy AI prompt');
+        promptButton.type = 'button';
+        promptButton.title = 'Copy a prompt for any AI model, including the pasted --help output';
+        const parseButton = Dom.el('button', 'cm-button', 'Parse');
+        parseButton.type = 'button';
+        const importSelected = Dom.el('button', 'cm-button', 'Import tool');
+        importSelected.type = 'button';
+        importSelected.disabled = true;
+        const closeButton2 = Dom.el('button', 'cm-button', 'Close');
+        closeButton2.type = 'button';
+        closeButton2.addEventListener('click', closeModal);
+
+        const warnings = Dom.el('div', 'cm-warnings', '');
+        const previewList = Dom.el('div', 'cm-import-list', '');
+        let statusMessage = '';
+
+        function renderToolPreview() {
+            warnings.textContent = '';
+            previewList.textContent = '';
+            importSelected.disabled = true;
+            const parsed = state.importToolParsed;
+            if (!parsed) {
+                return;
+            }
+            (parsed.warnings || []).forEach(function (warning) {
+                warnings.appendChild(Dom.el('div', 'cm-warning', warning.message || warning.code));
+            });
+            const tool = parsed.tool;
+            if (!tool) {
+                return;
+            }
+            [
+                ['Title', tool.title],
+                ['Category', tool.category || 'Uncategorized'],
+                ['Base command', tool.base || Model.deriveBase(tool.title)]
+            ].forEach(function (line) {
+                previewList.appendChild(Dom.el('div', 'cm-import-flag', line[0] + ': ' + line[1]));
+            });
+            if (tool.description) {
+                previewList.appendChild(Dom.el('div', 'cm-note', tool.description));
+            }
+            if (!tool.options.length) {
+                previewList.appendChild(Dom.el('div', 'cm-empty', 'This tool file has no options.'));
+            }
+            tool.options.forEach(function (option) {
+                const row = Dom.el('div', 'cm-import-row');
+                const main = Dom.el('div', 'cm-import-main');
+                const flag = option.flag || '(positional)';
+                main.appendChild(Dom.el('div', 'cm-import-flag', flag + '  (' + option.type + ')  ' + option.label));
+                if (option.help) {
+                    main.appendChild(Dom.el('div', 'cm-import-help', option.help));
+                }
+                row.appendChild(main);
+                previewList.appendChild(row);
+            });
+            importSelected.disabled = false;
+        }
+
+        promptButton.addEventListener('click', function () {
+            const pasted = picker.getText();
+            const looksJson = /^\s*[{[]/.test(String(pasted || ''));
+            copyTextToClipboard(Prompt.buildToolPrompt({
+                helpText: looksJson ? '' : pasted
+            }), 'AI prompt copied to the clipboard.').catch(notify);
+        });
+
+        parseButton.addEventListener('click', guarded(function () {
+            const text = picker.getText();
+            if (!String(text || '').trim()) {
+                notify(new Error('Nothing to parse. Paste a tool file, read the active note or choose a file.'));
+                return;
+            }
+            state.importToolParsed = ToolFile.parseToolFile(text);
+            renderToolPreview();
+            const tool = state.importToolParsed.tool;
+            setStatus(tool ? 'Parsed tool "' + tool.title + '".' : 'The tool file could not be parsed.');
+        }, notify));
+
+        importSelected.addEventListener('click', guarded(async function () {
+            const parsed = state.importToolParsed;
+            if (!parsed || !parsed.tool) {
+                notify(new Error('Parse a tool file first.'));
+                return;
+            }
+            const created = await controller.importTool(parsed.tool);
+            closeModal();
+            statusMessage = 'Imported tool "' + parsed.tool.title + '".';
+            await controller.refresh();
+            await runSearch();
+            const item = created
+                ? state.items.filter(function (entry) {
+                    return entry.noteId === created.noteId;
+                })[0]
+                : null;
+            if (item) {
+                await selectItem(item);
+            }
+            setStatus(statusMessage);
+        }, notify));
+
+        const bodyNode = Dom.el('div', '');
+        bodyNode.appendChild(picker.node);
+        bodyNode.appendChild(warnings);
+        bodyNode.appendChild(previewList);
+
+        const actionsNode = Dom.el('div', 'cm-inline');
+        actionsNode.appendChild(promptButton);
+        actionsNode.appendChild(parseButton);
+        actionsNode.appendChild(importSelected);
+        actionsNode.appendChild(closeButton2);
+
+        modalShell('Import a tool', bodyNode, actionsNode);
+    }
+
+    async function openExportTool() {
+        if (!state.current) {
+            notify(new Error('Select a tool first.'));
             return;
         }
-        const row = el('div', 'cm-inline');
+        const file = await controller.exportTool(state.current.noteId);
+        const json = JSON.stringify(file, null, 2);
+        const filename = (Render.slugify(file.tool.title) || 'tool') + '.tool.json';
+
+        const bodyNode = Dom.el('div', '');
+        bodyNode.appendChild(Dom.el('div', 'cm-note', 'This plain-JSON file can be imported here, kept as a backup, or shared.'));
+        const area = document.createElement('textarea');
+        area.className = 'cm-control cm-preview';
+        area.rows = 18;
+        area.readOnly = true;
+        area.value = json;
+        bodyNode.appendChild(area);
+        bodyNode.appendChild(Dom.el('div', 'cm-note', 'Suggested file name: ' + filename));
+
+        const copyButton = Dom.el('button', 'cm-button', 'Copy JSON');
+        copyButton.type = 'button';
+        copyButton.addEventListener('click', function () {
+            copyTextToClipboard(json, 'Tool file copied to the clipboard.').catch(notify);
+        });
+
+        const downloadButton = Dom.el('button', 'cm-button', 'Download .json');
+        downloadButton.type = 'button';
+        downloadButton.addEventListener('click', guarded(function () {
+            Dom.downloadText(filename, json);
+            setStatus('Downloaded ' + filename + '.');
+        }, notify));
+
+        const closeButton2 = Dom.el('button', 'cm-button', 'Close');
+        closeButton2.type = 'button';
+        closeButton2.addEventListener('click', closeModal);
+
+        const actionsNode = Dom.el('div', 'cm-inline');
+        actionsNode.appendChild(copyButton);
+        actionsNode.appendChild(downloadButton);
+        actionsNode.appendChild(closeButton2);
+
+        modalShell('Export "' + file.tool.title + '"', bodyNode, actionsNode);
+    }
+
+    function openAddOption() {
+        if (!state.current) {
+            notify(new Error('Select a tool first.'));
+            return;
+        }
+        const tool = state.current;
+
+        function field(labelText, control) {
+            const wrapper = Dom.el('label', 'cm-field');
+            wrapper.appendChild(Dom.el('span', 'cm-field-label', labelText));
+            control.className = 'cm-control' + (control.tagName === 'SELECT' ? ' cm-select' : '');
+            wrapper.appendChild(control);
+            return wrapper;
+        }
+
         const labelInput = document.createElement('input');
         labelInput.type = 'text';
-        labelInput.className = 'cm-control';
-        labelInput.placeholder = 'Option label';
+        labelInput.placeholder = 'Option label, e.g. Output file';
 
         const flagInput = document.createElement('input');
         flagInput.type = 'text';
-        flagInput.className = 'cm-control';
-        flagInput.placeholder = '--flag (empty = positional)';
+        flagInput.placeholder = 'Flag, e.g. --output (empty = positional)';
+
+        const helpInput = document.createElement('input');
+        helpInput.type = 'text';
+        helpInput.placeholder = 'What is this option for?';
 
         const typeSelect = document.createElement('select');
-        typeSelect.className = 'cm-control cm-select';
         Model.TYPES.forEach(function (type) {
             const entry = document.createElement('option');
             entry.value = type;
@@ -1512,48 +4975,187 @@ function openPalette(controller) {
             typeSelect.appendChild(entry);
         });
 
-        const add = button('Add', async function () {
+        const defaultInput = document.createElement('input');
+        defaultInput.type = 'text';
+        defaultInput.placeholder = 'Default value (optional)';
+
+        const valuesInput = document.createElement('input');
+        valuesInput.type = 'text';
+        valuesInput.placeholder = 'Enum values, comma separated (optional)';
+
+        const orderInput = document.createElement('input');
+        orderInput.type = 'number';
+        orderInput.placeholder = '100';
+        orderInput.value = '100';
+
+        const requiredInput = document.createElement('input');
+        requiredInput.type = 'checkbox';
+        const requiredRow = Dom.el('label', 'cm-row');
+        requiredRow.appendChild(Dom.el('span', 'cm-base-label', 'Required'));
+        requiredRow.appendChild(requiredInput);
+
+        const add = Dom.el('button', 'cm-button', 'Add');
+        add.type = 'button';
+        add.addEventListener('click', guarded(async function () {
             const label = labelInput.value.trim();
             if (!label) {
-                notify(new Error('Option label is required.'));
-                return;
+                throw new Error('Option label is required.');
             }
-            await controller.addOption(state.definition.noteId, {
+            const values = valuesInput.value.split(',')
+                .map(function (entry) {
+                    return entry.trim();
+                })
+                .filter(function (entry) {
+                    return entry !== '';
+                });
+            const order = Number(orderInput.value);
+            await controller.addOption(tool.noteId, {
                 label: label,
                 flag: flagInput.value.trim(),
-                type: typeSelect.value
+                help: helpInput.value.trim(),
+                type: typeSelect.value,
+                values: values,
+                defaultValue: defaultInput.value,
+                required: Boolean(requiredInput.checked),
+                order: isFinite(order) ? order : 100
             });
-            if (addOptionRow) {
-                addOptionRow.remove();
-                addOptionRow = null;
-            }
-            if (state.current) {
-                await selectItem(state.current);
-            }
-            setStatus('Option added. Edit its attributes to set enum values, defaults and order.');
-        });
+            closeModal();
+            await controller.refresh();
+            await runSearch();
+            await selectItem(tool, { preserveValues: true });
+            setStatus('Option added.');
+        }, notify));
 
-        row.appendChild(labelInput);
-        row.appendChild(flagInput);
-        row.appendChild(typeSelect);
-        row.appendChild(add);
-        footer.appendChild(row);
-        addOptionRow = row;
+        const closeButton2 = Dom.el('button', 'cm-button', 'Close');
+        closeButton2.type = 'button';
+        closeButton2.addEventListener('click', closeModal);
+
+        const bodyNode = Dom.el('div', '');
+        bodyNode.appendChild(Dom.el('div', 'cm-note', 'The option is stored as a note under the tool\'s Options folder.'));
+        bodyNode.appendChild(field('Label', labelInput));
+        bodyNode.appendChild(field('Flag', flagInput));
+        bodyNode.appendChild(field('Help', helpInput));
+        bodyNode.appendChild(field('Type', typeSelect));
+        bodyNode.appendChild(field('Default', defaultInput));
+        bodyNode.appendChild(field('Values', valuesInput));
+        bodyNode.appendChild(field('Order', orderInput));
+        bodyNode.appendChild(requiredRow);
+        bodyNode.appendChild(Dom.el('div', 'cm-note', 'Required options are grouped first under Required in the palette.'));
+
+        const actionsNode = Dom.el('div', 'cm-inline');
+        actionsNode.appendChild(add);
+        actionsNode.appendChild(closeButton2);
+
+        modalShell('Add an option to "' + tool.title + '"', bodyNode, actionsNode);
         labelInput.focus();
     }
 
-    searchInput.addEventListener('input', onSearchInput);
-    closeButton.addEventListener('click', close);
-    newCommandButton.addEventListener('click', toggleNewCommand);
-    addOptionButton.addEventListener('click', toggleAddOption);
-    overlay.addEventListener('click', function (event) {
-        if (event.target === overlay) {
-            close();
-        }
-    });
-    overlay.addEventListener('keydown', onKeyDown);
+    function openToolsFolder() {
+        const bodyNode = Dom.el('div', '');
+        const info = Dom.el('div', 'cm-note', 'Loading…');
+        bodyNode.appendChild(info);
 
-    instance = {
+        const active = Dom.el('button', 'cm-button', 'Use the active note');
+        active.type = 'button';
+        const openFolder = Dom.el('button', 'cm-button', 'Open Tools folder');
+        openFolder.type = 'button';
+        openFolder.disabled = true;
+
+        const idRow = Dom.el('div', 'cm-row');
+        const idInput = document.createElement('input');
+        idInput.type = 'text';
+        idInput.className = 'cm-control';
+        idInput.placeholder = 'Note ID of an existing folder';
+        idInput.setAttribute('aria-label', 'Note ID of an existing folder');
+        const useId = Dom.el('button', 'cm-button', 'Use this note ID');
+        useId.type = 'button';
+        idRow.appendChild(idInput);
+        idRow.appendChild(useId);
+        bodyNode.appendChild(idRow);
+
+        let root = null;
+        guarded(async function () {
+            root = await controller.currentToolsRoot();
+            info.textContent = root
+                ? 'Current Tools folder: "' + root.title + '" (' + root.noteId + ').'
+                : 'No Tools folder yet.';
+            openFolder.disabled = !root;
+        }, notify)();
+
+        active.addEventListener('click', guarded(async function () {
+            await controller.useActiveNoteAsToolsRoot();
+            closeModal();
+            setStatus('Tools folder updated to the active note.');
+            await runSearch();
+        }, notify));
+
+        openFolder.addEventListener('click', function () {
+            if (!root) {
+                return;
+            }
+            controller.openNote(root.noteId).catch(notify);
+        });
+
+        useId.addEventListener('click', guarded(async function () {
+            const noteId = idInput.value.trim();
+            if (!noteId) {
+                throw new Error('Enter a note ID.');
+            }
+            await controller.setToolsRoot(noteId);
+            closeModal();
+            setStatus('Tools folder updated.');
+            await runSearch();
+        }, notify));
+
+        const actionsNode = Dom.el('div', 'cm-inline');
+        actionsNode.appendChild(active);
+        actionsNode.appendChild(openFolder);
+        const closeButton2 = Dom.el('button', 'cm-button', 'Close');
+        closeButton2.type = 'button';
+        closeButton2.addEventListener('click', closeModal);
+        actionsNode.appendChild(closeButton2);
+
+        modalShell('Tools folder', bodyNode, actionsNode);
+    }
+
+    searchInput.addEventListener('input', onSearchInput);
+    if (!embedded) {
+        closeButton.addEventListener('click', close);
+    }
+    if (openTabButton) {
+        openTabButton.addEventListener('click', guarded(async function () {
+            openTabButton.disabled = true;
+            try {
+                await controller.openInTab();
+                close();
+            } catch (error) {
+                openTabButton.disabled = false;
+                throw error;
+            }
+        }, notify));
+    }
+    versionButton.addEventListener('click', function (event) {
+        event.preventDefault();
+        checkForUpdates().catch(notify);
+    });
+    newToolButton.addEventListener('click', toggleNewTool);
+    importToolButton.addEventListener('click', openImportTool);
+    exportToolButton.addEventListener('click', guarded(openExportTool, notify));
+    importButton.addEventListener('click', openImport);
+    addOptionButton.addEventListener('click', openAddOption);
+    toolsButton.addEventListener('click', openToolsFolder);
+    if (embedded) {
+        shell.addEventListener('keydown', onKeyDown);
+    } else {
+        overlay.addEventListener('click', function (event) {
+            if (event.target === overlay) {
+                close();
+            }
+        });
+        overlay.addEventListener('keydown', onKeyDown);
+    }
+
+    const handle = {
         focus() {
             searchInput.focus();
             searchInput.select();
@@ -1561,20 +5163,21 @@ function openPalette(controller) {
         close,
         element: panel
     };
-    if (typeof window !== 'undefined') {
-        window.__cmPaletteInstance = instance;
+    if (!embedded) {
+        instance = handle;
+        if (typeof window !== 'undefined') {
+            window.__cmPaletteInstance = handle;
+        }
     }
 
     searchInput.focus();
 
-    Promise.resolve()
-        .then(function () {
-            return controller.refresh();
-        })
-        .then(runSearch)
-        .catch(notify);
+    guarded(async function () {
+        await controller.refresh();
+        await runSearch();
+    }, notify)();
 
-    return instance;
+    return handle;
 }
 
 module.exports = { openPalette };
@@ -1584,16 +5187,34 @@ __def("runtime", function (module, exports, __require) {
 
 /**
  * Trilium runtime glue: reads FNote objects into plain snapshots, keeps a
- * command index for fast fuzzy search, and exposes actions to the palette.
+ * tool index for fast search, and exposes actions to the palette.
+ *
+ * Structure the runtime expects:
+ *   Tools/                 #cmTools (any path)
+ *     Category/            #cmCategory
+ *       Tool/              #cmTool  (three H2 sections in its content)
+ *         Install          #cmInstall
+ *         Usage            #cmUsage
+ *         Help             #cmHelpNote
+ *         Options/         #cmOptions
+ *           Option         #cmOption
+ *           Presets        #cmPresets (JSON)
  */
 
 const Model = __require("model");
 const Backend = __require("backend");
+const Sections = __require("sections");
+const Parse = __require("parse");
+const ToolFile = __require("toolfile");
+const Version = __require("version");
+const Dom = __require("dom");
 const UI = __require("ui");
 
 let index = [];
-let notesById = new Map();
+let entriesById = new Map();
 let bootstrapPromise = null;
+let bootstrapApi = null;
+let bootstrapInfo = null;
 
 function getApi() {
     return typeof api !== 'undefined' ? api : null;
@@ -1618,207 +5239,387 @@ function readLabels(note) {
     return labels;
 }
 
+function hasLabel(note, name) {
+    if (!note) {
+        return false;
+    }
+    try {
+        if (typeof note.hasLabel === 'function') {
+            return note.hasLabel(name);
+        }
+        const value = note.getLabelValue(name);
+        return value !== null && value !== undefined;
+    } catch (error) {
+        return false;
+    }
+}
+
 async function childWithLabel(note, label) {
+    if (!note) {
+        return null;
+    }
     const children = await note.getChildNotes();
     for (const child of children) {
-        let value = null;
-        try {
-            value = child.getLabelValue(label);
-        } catch (error) {
-            value = null;
-        }
-        if (value !== null && value !== undefined) {
+        if (hasLabel(child, label)) {
             return child;
         }
     }
     return null;
 }
 
+async function childByTitle(note, title) {
+    const children = await note.getChildNotes();
+    for (const child of children) {
+        if (child.title === title) {
+            return child;
+        }
+    }
+    return null;
+}
+
+/**
+ * The standard child of a tool note: found by label first (survives a rename)
+ * and by its default title second (survives a missing label).
+ */
+function standardChild(note, label, title) {
+    if (!note) {
+        return Promise.resolve(null);
+    }
+    return childWithLabel(note, label).then(function (found) {
+        return found || childByTitle(note, title);
+    });
+}
+
 function ensureBootstrap() {
-    if (bootstrapPromise) {
+    const apiRef = getApi();
+    if (bootstrapPromise && bootstrapApi === apiRef) {
         return bootstrapPromise;
     }
-    const apiRef = getApi();
     if (!apiRef) {
         return Promise.reject(new Error('Trilium api is not available.'));
     }
+    bootstrapApi = apiRef;
     bootstrapPromise = Promise.resolve(
         apiRef.runOnBackend(Backend.beRun, [{
-            action: Backend.ACTIONS.bootstrap,
-            labels: Model.LABELS
+            action: 'bootstrap',
+            labels: Model.LABELS,
+            icons: Model.ICONS,
+            version: Version.VERSION,
+            seed: true,
+            seedTools: Model.seedTools(),
+            newToolNotes: Model.newToolNotes()
         }])
-    ).catch(function (error) {
+    ).then(function (result) {
+        bootstrapInfo = result || null;
+        return result;
+    }).catch(function (error) {
         bootstrapPromise = null;
+        bootstrapApi = null;
         throw error;
     });
     return bootstrapPromise;
 }
 
-async function readOptionTitles(note) {
-    const optionsNote = await childWithLabel(note, Model.LABELS.options);
-    if (!optionsNote) {
-        return [];
+async function resolveToolsRoot() {
+    const apiRef = getApi();
+    try {
+        const found = await apiRef.searchForNote('#' + Model.LABELS.tools);
+        if (found) {
+            return found;
+        }
+    } catch (error) {
+        // fall through to the bootstrap result
     }
-    const children = await optionsNote.getChildNotes();
-    return children.map(function (child) {
-        return child.title;
-    });
+    if (bootstrapInfo && bootstrapInfo.toolsRootId) {
+        try {
+            return await apiRef.getNote(bootstrapInfo.toolsRootId);
+        } catch (error) {
+            return null;
+        }
+    }
+    return null;
 }
 
-/**
- * The base string lives in the note content (code note, raw text) unless
- * #cmBase overrides it. It must be indexed here: search has to match the
- * command text, not just the title.
- */
-async function readBase(note, labels) {
-    if (labels && labels[Model.LABELS.base] !== undefined) {
-        return String(labels[Model.LABELS.base]);
+async function readOptionSnapshots(toolNote) {
+    const folder = await childWithLabel(toolNote, Model.LABELS.options);
+    if (!folder) {
+        return [];
     }
-    try {
-        return String(await note.getContent());
-    } catch (error) {
-        return '';
+    const children = await folder.getChildNotes();
+    const snapshots = [];
+    for (const child of children) {
+        if (hasLabel(child, Model.LABELS.option)) {
+            snapshots.push({
+                noteId: child.noteId,
+                title: child.title,
+                labels: readLabels(child)
+            });
+        }
     }
+    return snapshots;
 }
 
 async function refresh() {
     await ensureBootstrap();
     const apiRef = getApi();
-    const notes = await apiRef.searchForNotes('#' + Model.LABELS.command);
-
-    let templateId = null;
-    try {
-        const template = await apiRef.searchForNote('#' + Model.LABELS.template);
-        templateId = template ? template.noteId : null;
-    } catch (error) {
-        templateId = null;
-    }
+    const notes = await apiRef.searchForNotes('#' + Model.LABELS.tool);
 
     const nextIndex = [];
     const nextById = new Map();
+
     for (const note of notes) {
-        if (templateId && note.noteId === templateId) {
-            continue;
-        }
         const labels = readLabels(note);
-        let optionTitles = [];
+        let category = '';
         try {
-            optionTitles = await readOptionTitles(note);
+            const parents = note.getParentNotes();
+            if (parents && parents.length) {
+                category = parents[0].title;
+            }
         } catch (error) {
-            optionTitles = [];
+            category = '';
         }
-        nextById.set(note.noteId, note);
+
+        let optionSnapshots = [];
+        try {
+            optionSnapshots = await readOptionSnapshots(note);
+        } catch (error) {
+            optionSnapshots = [];
+        }
+
+        let whatIs = '';
+        try {
+            const parsed = Sections.parseToolNote(await note.getContent());
+            whatIs = parsed.whatIs;
+        } catch (error) {
+            whatIs = '';
+        }
+
+        const description = labels[Model.LABELS.description] || '';
+        const base = labels[Model.LABELS.base] || Model.deriveBase(note.title);
+        const entry = {
+            noteId: note.noteId,
+            title: note.title,
+            category: category,
+            labels: labels,
+            note: note,
+            optionSnapshots: optionSnapshots
+        };
+
+        nextById.set(note.noteId, entry);
         nextIndex.push({
             noteId: note.noteId,
             title: note.title,
-            labels: labels,
-            base: await readBase(note, labels),
-            optionTitles: optionTitles
+            category: category,
+            description: description,
+            base: base,
+            // Built once per refresh: search runs on every keystroke, and the
+            // haystack comes from the same definition `Model.matches` uses.
+            searchable: Model.searchableText({
+                title: note.title,
+                category: category,
+                description: description,
+                tags: labels[Model.LABELS.tags],
+                base: base,
+                whatIs: whatIs,
+                optionText: Model.optionNotesText(optionSnapshots)
+            })
         });
     }
 
     index = nextIndex;
-    notesById = nextById;
+    entriesById = nextById;
     return index;
 }
 
 function search(query) {
     return index.filter(function (item) {
-        return Model.matches({
-            title: item.title,
-            description: item.labels[Model.LABELS.description] || '',
-            tags: item.labels[Model.LABELS.tags] || '',
-            base: item.base || item.labels[Model.LABELS.base] || '',
-            options: [],
-            optionTitles: item.optionTitles || []
-        }, query);
+        return Model.matchesText(item.searchable, query);
     });
 }
 
-async function readPresets(presetsNote) {
-    const children = await presetsNote.getChildNotes();
+function readPresetsContent(content) {
+    let data = null;
+    try {
+        data = JSON.parse(String(content || ''));
+    } catch (error) {
+        return { presets: [], invalid: true };
+    }
+    if (!data || typeof data !== 'object' || !Array.isArray(data.presets)) {
+        return { presets: [], invalid: true };
+    }
     const presets = [];
-    for (const child of children) {
-        let marker = null;
-        try {
-            marker = child.getLabelValue(Model.LABELS.preset);
-        } catch (error) {
-            marker = null;
-        }
-        if (marker === null || marker === undefined) {
+    for (const entry of data.presets) {
+        if (!entry || typeof entry.name !== 'string') {
             continue;
         }
-        let values = {};
-        try {
-            const parsed = JSON.parse(await child.getContent());
-            values = parsed && parsed.values ? parsed.values : {};
-        } catch (error) {
-            values = {};
+        // Values are JSON, so copy only own primitive string keys: a hand-edited
+        // or generated preset must never add an own `__proto__` to the map that
+        // the palette later passes to Object.assign.
+        const values = {};
+        if (entry.values && typeof entry.values === 'object' && !Array.isArray(entry.values)) {
+            for (const key of Object.keys(entry.values)) {
+                if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+                    continue;
+                }
+                const value = entry.values[key];
+                if (value === null || typeof value === 'object' || typeof value === 'function') {
+                    continue;
+                }
+                values[key] = value;
+            }
         }
-        presets.push({ noteId: child.noteId, title: child.title, values: values });
+        presets.push({ name: entry.name, values: values });
     }
-    return presets;
+    return { presets: presets, invalid: false };
 }
 
-async function load(noteId) {
-    const note = notesById.get(noteId);
+async function readNoteText(note) {
     if (!note) {
-        throw new Error('Command not found. Reopen the palette.');
+        return '';
     }
-    const labels = readLabels(note);
-
     let content = '';
     try {
         content = await note.getContent();
     } catch (error) {
-        content = '';
+        return '';
     }
+    if (note.type === 'code') {
+        return String(content || '');
+    }
+    return Parse.stripHtml(content);
+}
 
+async function load(noteId) {
+    const entry = entriesById.get(noteId);
+    if (!entry) {
+        throw new Error('Tool not found. Reopen the palette.');
+    }
+    const note = entry.note;
+    const labels = entry.labels;
+
+    let toolContent = '';
+    try {
+        toolContent = await note.getContent();
+    } catch (error) {
+        toolContent = '';
+    }
+    const parsed = Sections.parseToolNote(toolContent);
+
+    const installNote = await standardChild(note, Model.LABELS.install, 'Install');
+    const usageNote = await standardChild(note, Model.LABELS.usage, 'Usage');
+    const helpNote = await standardChild(note, Model.LABELS.helpNote, 'Help');
     const optionsNote = await childWithLabel(note, Model.LABELS.options);
-    const presetsNote = await childWithLabel(note, Model.LABELS.presets);
-    const optionNotes = optionsNote ? await optionsNote.getChildNotes() : [];
+    const presetsNote = optionsNote ? await childWithLabel(optionsNote, Model.LABELS.presets) : null;
 
-    const definition = Model.buildCommand({
+    const installHtml = await readRawContent(installNote);
+    const installIsCode = Boolean(installNote && installNote.type === 'code');
+    const installText = installIsCode ? installHtml : Parse.stripHtml(installHtml);
+    const usageHtml = await readRawContent(usageNote);
+    const helpText = await readNoteText(helpNote);
+    const usageExamples = usageNote && usageNote.type === 'code'
+        ? Sections.parseExampleLines(usageHtml)
+        : Sections.parseExamples(usageHtml, labels[Model.LABELS.base] || Model.deriveBase(note.title));
+
+    const definition = Model.buildTool({
         noteId: note.noteId,
         title: note.title,
-        content: content,
+        category: entry.category,
+        content: toolContent,
         labels: labels,
-        optionNotes: optionNotes.map(function (optionNote) {
-            return {
-                noteId: optionNote.noteId,
-                title: optionNote.title,
-                labels: readLabels(optionNote)
-            };
-        })
+        optionNotes: entry.optionSnapshots,
+        examples: usageExamples,
+        searchText: entry.searchText
     });
 
-    const presets = presetsNote ? await readPresets(presetsNote) : [];
-    return { definition: definition, presets: presets };
+    let presets = [];
+    let presetsInvalid = false;
+    if (presetsNote) {
+        try {
+            const read = readPresetsContent(await presetsNote.getContent());
+            presets = read.presets;
+            presetsInvalid = read.invalid;
+        } catch (error) {
+            presets = [];
+            presetsInvalid = true;
+        }
+    }
+
+    let toolNotePath = '';
+    try {
+        toolNotePath = note.getBestNotePathString();
+    } catch (error) {
+        toolNotePath = '';
+    }
+
+    return {
+        definition: definition,
+        presets: presets,
+        presetsInvalid: presetsInvalid,
+        whatIs: parsed.whatIs,
+        links: parsed.links,
+        officialLinks: parsed.officialLinks,
+        usefulLinks: parsed.usefulLinks,
+        usageExamples: usageExamples,
+        helpText: helpText,
+        installText: installText,
+        installHtml: installHtml,
+        installIsCode: installIsCode,
+        optionsFolderId: optionsNote ? optionsNote.noteId : null,
+        presetsNoteId: presetsNote ? presetsNote.noteId : null,
+        toolNotePath: toolNotePath
+    };
+}
+
+async function readRawContent(note) {
+    if (!note) {
+        return '';
+    }
+    try {
+        return String(await note.getContent() || '');
+    } catch (error) {
+        return '';
+    }
+}
+
+/**
+ * Read one tool into the portable file the palette writes to disk.
+ * Raw note contents are kept so an export/import round trip loses nothing.
+ */
+async function exportTool(noteId) {
+    const entry = entriesById.get(noteId);
+    if (!entry) {
+        throw new Error('Tool not found. Reopen the palette.');
+    }
+    const note = entry.note;
+    const labels = entry.labels;
+
+    const installNote = await standardChild(note, Model.LABELS.install, 'Install');
+    const usageNote = await standardChild(note, Model.LABELS.usage, 'Usage');
+    const helpNote = await standardChild(note, Model.LABELS.helpNote, 'Help');
+
+    const definition = Model.buildTool({
+        noteId: note.noteId,
+        title: note.title,
+        category: entry.category,
+        labels: labels,
+        optionNotes: entry.optionSnapshots
+    });
+
+    return ToolFile.buildToolFile({
+        title: note.title,
+        category: entry.category,
+        base: definition.base,
+        description: definition.description,
+        content: await readRawContent(note),
+        install: await readRawContent(installNote),
+        usage: await readRawContent(usageNote),
+        help: await readRawContent(helpNote),
+        options: definition.options
+    });
 }
 
 async function copyText(text) {
-    try {
-        if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
-            await navigator.clipboard.writeText(text);
-            return true;
-        }
-    } catch (error) {
-        // fall through to the legacy path
-    }
-    try {
-        const area = document.createElement('textarea');
-        area.value = text;
-        area.setAttribute('readonly', '');
-        area.style.position = 'fixed';
-        area.style.opacity = '0';
-        document.body.appendChild(area);
-        area.select();
-        const ok = document.execCommand('copy');
-        document.body.removeChild(area);
-        return Boolean(ok);
-    } catch (error) {
-        return false;
-    }
+    return Dom.copyText(text);
 }
 
 function insertText(text) {
@@ -1831,8 +5632,183 @@ function insertText(text) {
 
 function backendAction(action, extra) {
     const apiRef = getApi();
-    const params = Object.assign({ action: action, labels: Model.LABELS }, extra || {});
+    const params = Object.assign({ action: action, labels: Model.LABELS, icons: Model.ICONS }, extra || {});
     return apiRef.runOnBackend(Backend.beRun, [params]);
+}
+
+function toolsRootId() {
+    if (!bootstrapInfo || !bootstrapInfo.toolsRootId) {
+        throw new Error('Tools folder is not available yet. Reopen the palette.');
+    }
+    return bootstrapInfo.toolsRootId;
+}
+
+async function setToolsRootAction(noteId) {
+    const current = await resolveToolsRoot();
+    await backendAction('setToolsRoot', {
+        noteId: noteId,
+        oldToolsRootId: current ? current.noteId : null
+    });
+    bootstrapPromise = null;
+    bootstrapInfo = null;
+    index = [];
+    entriesById = new Map();
+    await refresh();
+    return { noteId: noteId };
+}
+
+function versionParts(value) {
+    return String(value == null ? '' : value)
+        .replace(/^v/i, '')
+        .split('.')
+        .map(function (part) {
+            return parseInt(part, 10) || 0;
+        });
+}
+
+function compareVersions(left, right) {
+    const a = versionParts(left);
+    const b = versionParts(right);
+    for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+        const delta = (a[index] || 0) - (b[index] || 0);
+        if (delta !== 0) {
+            return delta;
+        }
+    }
+    return 0;
+}
+
+/**
+ * Best-effort update check: the latest GitHub release, else the highest tag,
+ * else the package.json version on the default branch. A private or unreachable
+ * repository becomes a readable error.
+ */
+async function checkLatestVersion() {
+    const result = { current: Version.VERSION, latest: '', outdated: false, error: '' };
+    if (typeof fetch !== 'function') {
+        result.error = 'This environment cannot check for updates.';
+        return result;
+    }
+
+    async function read(url, kind) {
+        const options = { headers: { Accept: kind === 'json' ? 'application/json' : 'text/plain' } };
+        let timer = null;
+        if (typeof AbortController === 'function') {
+            const controller = new AbortController();
+            options.signal = controller.signal;
+            timer = setTimeout(function () {
+                controller.abort();
+            }, 10000);
+        }
+        try {
+            const response = await fetch(url, options);
+            if (!response || !response.ok) {
+                throw new Error('HTTP ' + (response ? response.status : 'unknown'));
+            }
+            return kind === 'json' ? response.json() : response.text();
+        } finally {
+            if (timer) {
+                clearTimeout(timer);
+            }
+        }
+    }
+
+    try {
+        const release = await read(Version.LATEST_RELEASE_API, 'json');
+        const tag = release && (release.tag_name || release.name);
+        if (tag) {
+            result.latest = String(tag).replace(/^v/i, '');
+            result.outdated = compareVersions(result.latest, result.current) > 0;
+            return result;
+        }
+    } catch (error) {
+        // no release yet; try tags
+    }
+
+    try {
+        const tags = await read(Version.LATEST_TAGS_API, 'json');
+        if (Array.isArray(tags) && tags.length) {
+            const names = tags
+                .map(function (tag) {
+                    return tag && tag.name ? String(tag.name).replace(/^v/i, '') : '';
+                })
+                .filter(function (name) {
+                    return name !== '';
+                });
+            if (names.length) {
+                names.sort(compareVersions);
+                result.latest = names[names.length - 1];
+                result.outdated = compareVersions(result.latest, result.current) > 0;
+                return result;
+            }
+        }
+    } catch (error) {
+        // fall through to the default branch package.json
+    }
+
+    try {
+        const text = String(await read(Version.LATEST_RAW, 'text') || '');
+        const match = /"version"\s*:\s*"([^"]+)"/.exec(text);
+        if (match) {
+            result.latest = match[1];
+            result.outdated = compareVersions(result.latest, result.current) > 0;
+            return result;
+        }
+        result.error = 'No published version found.';
+    } catch (error) {
+        result.error = 'Could not check for updates: ' + (error && error.message ? error.message : error);
+    }
+    return result;
+}
+
+/**
+ * In a Render Note, Trilium executes the JS child with `api.$container` set to
+ * the rendered note content. The HTML wrapper carries `.cm-tab-root`, so the
+ * palette mounts inside the tab instead of as an overlay. A launcher script has
+ * no rendered container and falls through to the normal overlay.
+ */
+function embeddedHost(apiRef) {
+    if (!apiRef || !apiRef.$container) {
+        return null;
+    }
+    try {
+        const container = apiRef.$container;
+        if (typeof container.find !== 'function') {
+            return null;
+        }
+        const marked = container.find('.cm-tab-root');
+        const node = marked && marked.length ? marked[0] : null;
+        return node && typeof node.appendChild === 'function' ? node : null;
+    } catch (error) {
+        return null;
+    }
+}
+
+async function openInTab() {
+    const apiRef = getApi();
+    if (!apiRef) {
+        throw new Error('Trilium api is not available.');
+    }
+    const info = await ensureBootstrap();
+    if (!info || !info.rootId) {
+        throw new Error('Command Maker is not ready yet. Reopen the palette.');
+    }
+    const scriptNote = apiRef.startNote;
+    if (!scriptNote || !scriptNote.noteId) {
+        throw new Error('Cannot locate the Command Maker plugin note.');
+    }
+    const result = await backendAction('ensureTab', {
+        rootId: info.rootId,
+        scriptNoteId: scriptNote.noteId
+    });
+    if (typeof apiRef.openTabWithNote !== 'function') {
+        throw new Error('This Trilium version cannot open notes in a new tab.');
+    }
+    if (typeof apiRef.waitUntilSynced === 'function') {
+        await apiRef.waitUntilSynced();
+    }
+    await apiRef.openTabWithNote(result.tabNoteId, true);
+    return result.tabNoteId;
 }
 
 function controller() {
@@ -1842,22 +5818,140 @@ function controller() {
         load: load,
         copy: copyText,
         insert: insertText,
-        createCommand(title) {
-            return backendAction(Backend.ACTIONS.createCommand, { title: title });
+        version() {
+            return Version.VERSION;
         },
-        addOption(commandId, option) {
-            return backendAction(Backend.ACTIONS.addOption, { commandId: commandId, option: option });
+        repository() {
+            return Version.REPOSITORY;
         },
-        savePreset(commandId, name, values) {
-            return backendAction(Backend.ACTIONS.savePreset, {
-                commandId: commandId,
-                name: name,
-                values: values
+        checkLatestVersion: checkLatestVersion,
+
+        /** Surface a message in the Trilium UI; the footer keeps its own copy. */
+        message(text) {
+            try {
+                const apiRef = getApi();
+                if (apiRef && typeof apiRef.showMessage === 'function') {
+                    apiRef.showMessage(String(text));
+                }
+            } catch (error) {
+                // the footer status is the fallback
+            }
+        },
+
+        error(text) {
+            try {
+                const apiRef = getApi();
+                if (apiRef && typeof apiRef.showError === 'function') {
+                    apiRef.showError('Command Maker: ' + String(text));
+                }
+            } catch (error) {
+                // the footer status is the fallback
+            }
+        },
+
+        categories() {
+            const seen = new Set();
+            for (const item of index) {
+                if (item.category) {
+                    seen.add(item.category);
+                }
+            }
+            return Array.from(seen).sort();
+        },
+
+        async createTool(spec) {
+            const notes = Model.newToolNotes();
+            const created = await backendAction('createTool', {
+                toolsRootId: toolsRootId(),
+                category: spec.category,
+                title: spec.title,
+                base: spec.base,
+                description: spec.description,
+                content: notes.content,
+                install: notes.install,
+                usage: notes.usage,
+                help: notes.help
             });
+            await refresh();
+            return created;
         },
-        deletePreset(noteId) {
-            return backendAction(Backend.ACTIONS.deletePreset, { noteId: noteId });
-        }
+
+        addOption(toolId, option) {
+            return backendAction('addOption', { toolId: toolId, option: option });
+        },
+
+        exportTool(noteId) {
+            return exportTool(noteId);
+        },
+
+        async importTool(tool) {
+            const created = await backendAction('importTool', {
+                toolsRootId: toolsRootId(),
+                tool: tool,
+                newToolNotes: Model.newToolNotes()
+            });
+            await refresh();
+            return created;
+        },
+
+        importOptions(toolId, options) {
+            return backendAction('importOptions', { toolId: toolId, options: options || [] });
+        },
+
+        deleteOption(noteId) {
+            return backendAction('deleteOption', { noteId: noteId });
+        },
+
+        setToolBase(toolId, base) {
+            return backendAction('setToolBase', { toolId: toolId, base: base });
+        },
+
+        savePreset(toolId, name, values) {
+            return backendAction('savePreset', { toolId: toolId, name: name, values: values });
+        },
+
+        deletePreset(toolId, name) {
+            return backendAction('deletePreset', { toolId: toolId, name: name });
+        },
+
+        async currentToolsRoot() {
+            const root = await resolveToolsRoot();
+            return root ? { noteId: root.noteId, title: root.title } : null;
+        },
+
+        setToolsRoot(noteId) {
+            return setToolsRootAction(noteId);
+        },
+
+        async useActiveNoteAsToolsRoot() {
+            const apiRef = getApi();
+            const active = apiRef.getActiveContextNote();
+            if (!active) {
+                throw new Error('No active note to use as the Tools folder.');
+            }
+            return setToolsRootAction(active.noteId);
+        },
+
+        async activeNoteText() {
+            const apiRef = getApi();
+            const active = apiRef.getActiveContextNote();
+            if (!active) {
+                throw new Error('No active note.');
+            }
+            const text = await readNoteText(active);
+            return { noteId: active.noteId, title: active.title, text: text };
+        },
+
+        async openNote(noteId) {
+            const apiRef = getApi();
+            const note = await apiRef.getNote(noteId);
+            if (!note) {
+                throw new Error('Note not found: ' + noteId);
+            }
+            return apiRef.activateNote(note.getBestNotePathString());
+        },
+
+        openInTab: openInTab
     };
 }
 
@@ -1868,7 +5962,12 @@ function start() {
         return;
     }
     try {
-        UI.openPalette(controller());
+        const host = embeddedHost(apiRef);
+        if (host) {
+            UI.openPalette(controller(), { container: host });
+        } else {
+            UI.openPalette(controller());
+        }
     } catch (error) {
         console.error('[command-maker]', error);
         try {

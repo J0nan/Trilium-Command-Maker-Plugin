@@ -1,34 +1,53 @@
 # Command Maker for Trilium
 
-A TriliumNext plugin that turns notes into a command palette: search a command, fill in its options, get a runnable string you can edit, copy, insert, or save as a preset.
+A TriliumNext plugin that turns your CLI tool notes into a command palette: search a tool,
+read what it does, fill in its documented options, and get a runnable command you can edit,
+copy, insert, or save as a preset.
 
-Built for TriliumNext ≥ 0.101 (templates, launcher API, frontend scripts).
+Built for TriliumNext ≥ 0.101 (launcher API, frontend scripts).
 
 ```
-Ctrl+Shift+Space  →  search  →  fill options  →  command  →  copy / insert / preset
+Ctrl+Shift+Space  →  search a tool  →  read help  →  fill options  →  command  →  copy / insert
 ```
+
+Current version: **0.1**. The palette footer shows `v0.1`; click it to check
+GitHub's latest release (falling back to the highest tag, then `package.json` on
+`main`). The settings note stores `#cmVersion`, and the installer log prints the
+version. A network/CORS failure is reported in the status and the **Repository**
+link opens the source.
 
 ## Install
 
-1. Create a note in Trilium. Set its type to **Code** and its language to
+Get the two files from the **Releases** page — do not copy them out of the
+repository, they are build artifacts:
+
+- [`install.js`](https://github.com/J0nan/Trilium-Command-Maker-Plugin/releases/latest/download/install.js) —
+  the installer (recommended).
+- [`command-maker.js`](https://github.com/J0nan/Trilium-Command-Maker-Plugin/releases/latest/download/command-maker.js) —
+  the plugin runtime, only needed for the manual install.
+
+Browse all versions on the
+[Releases page](https://github.com/J0nan/Trilium-Command-Maker-Plugin/releases).
+
+1. Download `install.js` from the latest release.
+2. Create a note in Trilium. Set its type to **Code** and its language to
    **JavaScript (Trilium backend)**.
-2. Paste the whole content of [`dist/install.js`](dist/install.js) into it.
-3. Press the **Execute** button on the note (or right-click → Execute script).
-4. Press `Ctrl+Shift+Space`.
+3. Paste the whole content of `install.js` into it.
+4. Press the **Execute** button on the note (or right-click → Execute script).
+5. Press `Ctrl+Shift+Space`.
 
 The installer is idempotent. It creates:
 
 | Note | Purpose |
 | --- | --- |
-| `Command Maker` (`#cmRoot`) | holds the templates and your commands |
-| `Command Template` (`#template`, `#cmTemplate`, `#cmCommand`) | the template new commands come from |
-| `Option Template` (`#template`, `#cmOptionTemplate`) | defaults for new option notes |
+| `Command Maker` (`#cmRoot`) | settings note: holds the plugin and the shortcut override |
+| `Tools` (`#cmTools`) | data root: categories and tool notes live here |
 | `Command Maker.js` (`#cmPlugin`) | the plugin runtime |
-| two example commands | `ffmpeg compress`, `git commit` |
 
 It also registers a launcher (`Command Maker`, `Ctrl+Shift+Space`) through
 `api.createOrUpdateLauncher`, so no attribute editing and no `#widget` label are
-required. The shortcut can be changed afterwards — see below.
+required. The first time the palette opens it seeds two documented examples:
+`git commit` (Version control) and `curl` (Network).
 
 ### Changing the keyboard shortcut
 
@@ -47,7 +66,7 @@ Re-running the installer **preserves** the shortcut you set. Resolution order:
 
 | Priority | Source |
 | --- | --- |
-| 1 | `#cmShortcut` on the `Command Maker` root note (empty value = no shortcut) |
+| 1 | `#cmShortcut` on the `Command Maker` settings note (empty value = no shortcut) |
 | 2 | `#keyboardShortcut` already present on the launcher |
 | 3 | `ctrl+shift+space` (default for a fresh install) |
 
@@ -55,123 +74,286 @@ So to pin a shortcut that survives reinstalls, add `#cmShortcut=ctrl+alt+k` to t
 `Command Maker` note. Useful alternatives that rarely collide: `ctrl+alt+k`,
 `alt+shift+k`, `ctrl+shift+space`.
 
+### Opening the palette in a tab
+
+The palette opens as an overlay. The **Open in tab** button in its header moves
+the same interface into a normal Trilium tab, so you can keep it next to your
+notes instead of covering them.
+
+The first click creates three notes under the `Command Maker` settings note:
+
+| Note | Purpose |
+| --- | --- |
+| `Command Maker` (`#cmTab`) | Render Note that displays the palette |
+| `Command Maker tab` (`#cmTabHtml`) | HTML wrapper rendered by the note |
+| `Command Maker.js` clone | The plugin script, cloned under the wrapper so it runs when the tab renders |
+
+The plugin script is **cloned**, not copied, so updating the plugin also updates
+the tab. Clicking the button again reuses the same notes and opens one more tab.
+
 ### Manual install (no installer script)
 
-Create a **JS frontend** code note and paste [`dist/command-maker.js`](dist/command-maker.js).
+Download `command-maker.js` from the
+[latest release](https://github.com/J0nan/Trilium-Command-Maker-Plugin/releases/latest/download/command-maker.js),
+create a **JS frontend** code note, and paste its whole content.
 Add the label `#cmPlugin`, then either create a launcher pointing at it
 (Global menu → Configure launchbar → script launcher) or give it an
-`#executeButton`. On first open the plugin bootstraps its own note tree.
+`#executeButton`. On first open the plugin creates the settings note and the
+`Tools` folder if they do not exist.
 
-## Using it
-
-- **Search** filters command notes by title, description, tags, base command
-  (note content or `#cmBase`) and option names. `ArrowUp` / `ArrowDown` / `Enter`.
-- **Options** render as checkboxes (boolean), selects (enum), number inputs and
-  text inputs. Required options are marked `*`.
-- **Command** is an editable code box. Editing it stops the generator from
-  overwriting your changes; `Regenerate` restores the generated text.
-- **Copy** uses the clipboard API with a legacy fallback. `Ctrl+Enter` copies.
-  **Insert** appends the command to the active note's editor.
-- **Presets** save the current value map under the command. Loading a preset
-  restores every value.
-
-## Command notes
-
-A command is a note that inherits `#cmCommand`. It is a **code note** (`text/x-sh`)
-so its content is the raw base string; options are child notes under an `Options`
-folder.
+## Structure
 
 ```
-Command Maker/
-├── Command Template/          #template #cmTemplate #cmCommand
-│   ├── Options/               #cmOptions  (~child:template → Option Template)
-│   └── Presets/               #cmPresets
-├── Option Template/           #template #cmOptionTemplate
-└── ffmpeg compress/           #cmCommand
-    ├── Options/
-    │   ├── Input file         #cmFlag=-i   #cmPlaceholder=input #cmType=path
-    │   ├── Video codec        #cmFlag=-c:v #cmType=enum #cmValues=libx264,libx265 #cmDefault=libx264
-    │   ├── CRF quality        #cmFlag=-crf #cmType=number #cmDefault=23
-    │   └── Overwrite output   #cmFlag=-y   #cmType=boolean
-    └── Presets/
+Tools/                              #cmTools  (move it anywhere, the label follows)
+├── Network/                        #cmCategory
+│   └── curl/                       #cmTool
+│       ├── Install                 #cmInstall   text
+│       ├── Usage                   #cmUsage     text (examples in code blocks)
+│       ├── Help                    #cmHelpNote  code (text/x-sh)
+│       └── Options/                #cmOptions
+│           ├── URL                 #cmOption #cmPlaceholder=url #cmRequired=true
+│           └── Presets             #cmPresets  JSON
+└── Version control/
+    └── git commit/                 #cmTool
+        └── ...
 ```
 
-Base string of that command: `ffmpeg -i "{{input}}"`.
+The `Tools` folder is found by its `#cmTools` label, so you can drag it to another
+path and the plugin keeps working. Use **Tools folder → Use the active note** in
+the palette (or add `#cmTools` to any folder manually) to pick a different root.
 
-### Attribute reference
+### Tool notes
 
-Command notes:
+A tool note is a normal **text** note. Its content is meant to be read and edited
+by you, with exactly three H2 sections:
 
-| Attribute | Meaning |
-| --- | --- |
-| `#cmDesc` | subtitle shown in search results |
-| `#cmTags` | extra search terms |
-| `#cmBase` | base string; overrides the note content |
-| `#cmCommand` | marks the note as a command (inherited from the template) |
+```markdown
+## What is?
+Describe what the tool does and when to use it.
 
-Option notes:
+## Official links
+Add the official documentation, repository or website links here.
+
+## Useful links
+Add useful guides, cheat sheets or articles here.
+```
+
+The palette renders the "What is?" text and makes the links from the other two
+sections clickable. Everything you add above the `Options` folder is yours to
+organize; the technical notes are confined to that one folder so they do not
+get in the way when you read the tool manually.
+
+### The three standard children
+
+| Note | Type | Use |
+| --- | --- | --- |
+| `Install` | text | installation steps/commands |
+| `Usage` | text | examples; every code block becomes a one-click example in the palette |
+| `Help` | code (`text/x-sh`) | paste the output of `tool --help` here |
+
+> A `Usage` note stored as a **code** note also works: every non-empty line is
+> treated as one example.
+
+The standard children get their own icons (`#iconClass`): download for `Install`,
+terminal for `Usage`, help for `Help`, and a cog for `Options`. You can change any
+icon; the plugin only fills in one that is missing.
+
+The palette reads all three: examples can be used or copied, the help output and
+install steps are shown in collapsible sections, and loading an example fills the
+option controls from its flags while the preview initially shows the example
+verbatim; changing any option then regenerates the command from the form.
+
+`Install` keeps the note's formatting in the palette: paragraphs, lists,
+headings, bold/italic text, code blocks, tables and http(s)/mailto links are
+rendered as written. Scripts, styles, event handlers, classes and inline styles
+are removed before rendering. Inline code keeps the monospace/inline-code style,
+and every code block gets the same copy button Trilium shows on hover (always
+visible on touch devices). An `Install` note stored as a **code** note is shown
+as one copyable code block too.
+
+### Option notes
+
+Options live under the tool's `Options` folder. Each option is a note whose title
+is the readable label and whose attributes describe the flag:
 
 | Attribute | Meaning | Default |
 | --- | --- | --- |
 | `#cmFlag` | flag text, e.g. `--input`; empty means positional | empty |
+| `#cmDoc` | help string shown next to the flag | empty |
 | `#cmMode` | `flag` or `inline` | `flag` |
-| `#cmPlaceholder` | token name | slug of the title |
+| `#cmPlaceholder` | token name | slug of the flag/title |
 | `#cmType` | `string`, `path`, `number`, `boolean`, `enum` | `string` |
 | `#cmValues` | enum values, comma separated | — |
 | `#cmDefault` | initial value | empty / `false` |
 | `#cmRequired` | `true` marks the option required | `false` |
 | `#cmOrder` | numeric ordering of emitted segments | `100` |
-| `#cmQuote` | `none`, `single`, `double` (flag segments only) | `none` |
+| `#cmQuote` | `none`, `single`, `double` (emitted segments) | `none` |
 | `#cmSep` | `space` or `=` (`--flag=value`) | `space` |
 
-### Flags and placeholders together
+Required options are grouped under a **Required** heading before the
+**Optional** ones, and produce a warning until they have a value. Set one with
+`#cmRequired=true`; the **Add option** modal and the import preview can set it
+for you.
 
-Both mechanisms coexist:
+Clicking anywhere on a boolean option row toggles its checkbox.
 
-1. One value, one channel — an option is either appended as a flag or
-   substituted into a placeholder, never both.
-2. If the base string contains `{{name}}` for an option, that option is
-   substituted inline even if its mode is `flag`. This prevents the same value
-   from being emitted twice.
-3. A placeholder with no backing option becomes an **inferred** text field in
-   the palette.
-4. `\{{name}}` emits a literal `{{name}}`.
-5. Inline substitution is verbatim: quoting inside the base string is yours.
-   `#cmQuote` only applies to emitted flag segments.
+The option note's content is a good place for a longer explanation; the palette
+shows `#cmDoc` inline and keeps the full note one click away.
 
-Values are rendered left to right: the substituted base first, then flag
-segments ordered by `#cmOrder` (ties broken by title).
+### Command assembly
+
+The command is:
+
+```
+<base> <extra arguments> <selected option flags, ordered by #cmOrder>
+```
+
+- The base comes from `#cmBase` on the tool note. If it is empty, the tool title is
+  lowercased (`Git commit` → `git commit`). You can edit it from the palette and it
+  is saved back to the tool note.
+- "Extra arguments" is a free-text field for positional arguments or subcommands,
+  inserted right after the base.
+- Placeholders still work in the base: `{{name}}` is substituted from the option
+  with that placeholder, or becomes an inferred text field when no option exists.
+  `\{{name}}` emits a literal `{{name}}`.
+
+### Presets
+
+A preset saves the current value map. Presets are stored in one JSON note inside
+the tool's `Options` folder, so they never clutter the tool note. Loading a preset
+fills every option control and regenerates the command.
+
+## Importing options
+
+**Import options** accepts three sources: pasted text, the currently open note, or
+a local file. It understands:
+
+1. **`--help` output** — GNU/POSIX style, including `-m, --message <message>`,
+   `--output=FILE`, `--[no-]color`, ffmpeg-style single-dash flags, continuation
+   lines, `(default: …)`, `{a,b,c}` / `one of: a, b` enums.
+2. **JSON** — an array, `{ "options": [...] }` or `{ "tool": { "options": [...] } }`
+   with `flag`, `help`, `label`, `type`, `values`, `default`, `required`, `mode`,
+   `placeholder`, `order`.
+3. **Markdown table** — `| Flag | Help | Type |` rows.
+
+Nothing is written until you parse and confirm: a preview lists every detected
+option with a checkbox. For a single option, use **Add option** in the palette
+footer; it writes the same option note with the label, flag and help string you
+type.
+
+## Importing and exporting whole tools
+
+The footer has **Import tool** and **Export tool** next to the option actions.
+Both work on one portable JSON file per tool:
+
+```json
+{
+  "kind": "command-maker-tool",
+  "version": 1,
+  "tool": {
+    "title": "ripgrep",
+    "category": "Search",
+    "base": "rg",
+    "description": "Search text recursively.",
+    "content": "<h2>What is?</h2>…<h2>Official links</h2>…<h2>Useful links</h2>…",
+    "install": "<p>cargo install ripgrep</p>",
+    "usage": "<pre><code>rg pattern</code></pre>",
+    "help": "Usage: rg [OPTIONS] PATTERN",
+    "options": [
+      {
+        "label": "Ignore case",
+        "flag": "-i",
+        "help": "Case insensitive.",
+        "type": "boolean",
+        "values": [],
+        "default": "",
+        "required": false,
+        "mode": "flag",
+        "placeholder": "ignore_case",
+        "order": 10,
+        "quote": "none",
+        "sep": " "
+      }
+    ]
+  }
+}
+```
+
+- **Export tool** reads the selected tool, its three standard children and every
+  option, and shows the JSON. **Copy JSON** copies it; **Download .json** saves it
+  as `<tool>.tool.json`.
+- **Import tool** accepts the same JSON from a paste, the active note or a file.
+  It previews the title, category, base and options, then creates a new tool note
+  under that category. Existing tools are never modified or overwritten.
+
+### Generating the file with an AI model
+
+**Import tool → Copy AI prompt** copies a self-contained prompt. It explains the
+file shape, the option types and the HTML sections the tool note expects, and
+requires install commands to be `<pre><code>` blocks (never inline code). If the
+paste box already contains `--help` output, the prompt includes it too.
+
+1. Run `<tool> --help` and copy the output.
+2. Open **Import tool**, paste the help output and press **Copy AI prompt**.
+3. Give the prompt to any AI model and paste its JSON answer back into the
+   import box.
+4. Press **Parse**, review the preview, then **Import tool**.
+
+The model is told to return only the JSON object, so markdown fences can simply
+be removed if one slips through.
 
 ## Design notes
 
-- `src/render.js` and `src/model.js` are pure and unit tested. `src/ui.js` is
-  plain DOM — no JSX compile step, no Preact coupling.
-- `src/backend.js` exposes a single serialisable backend entry point
-  (`beRun(params)`) because `api.runOnBackend` sends the function source, and
-  inner helpers travel with it while outer helpers would not.
+- `src/model.js`, `src/render.js`, `src/parse.js`, `src/sections.js`,
+  `src/toolfile.js`, `src/prompt.js`, `src/styles.js` and `src/dom.js` are pure
+  and unit tested. `src/ui.js` is plain DOM — no JSX compile step, no Preact
+  coupling — and reads everything it needs from the runtime controller, so it
+  never touches the Trilium `api` global itself.
+- `src/sourcePicker.js` is the paste / active note / file panel shared by both
+  import dialogs, so the two of them cannot drift apart.
+- `src/backend.js` exposes a single serialisable entry point (`beRun(params)`)
+  because `api.runOnBackend` sends the function source, and inner helpers travel
+  with it while outer helpers would not. Destructive actions validate their
+  target (an option note is only deleted when it carries `#cmOption`).
 - The frontend note MIME is `application/javascript;env=frontend`.
-- `dist/` is committed because it is the artifact users import.
+- `dist/` is committed so release builds are reproducible; users should download
+  the assets from the Releases page instead of copying files from the repository.
+
+## Releasing
+
+Releases are created manually from GitHub Actions: **Actions → Release → Run
+workflow**, enter the new version (major.minor, for example `0.2`), and choose
+whether it is a prerelease. The workflow:
+
+1. updates `package.json` and `src/version.js` (the build refuses to run if they disagree),
+2. runs `npm run check` and rebuilds `dist/`,
+3. commits `chore(release): vX.Y`, tags `vX.Y`, and pushes,
+4. creates the GitHub release with `dist/command-maker.js` and `dist/install.js`.
+
+The workflow only runs from `main`. If `main` is protected, allow GitHub Actions
+to bypass the protection; otherwise the tag push is rejected. Locally, the same
+bump is `node tools/bump-version.mjs 0.2` followed by `npm run check`.
 
 ## Development
 
 ```bash
 npm run build     # src/ → dist/command-maker.js + dist/install.js
-npm test          # unit tests for model, renderer and build
+npm test          # unit tests for model, parser, sections, renderer, backend, UI
 npm run check     # both
 ```
 
-No dependencies, no network access, Node 20+.
+No dependencies, Node 20+. Network access is only used when you click the version
+in the palette to check for updates.
 
 ## Limitations
 
-- A command note must be a code note (`text/x-sh`) for its content to be used as
-  the base string; text notes return HTML, so use `#cmBase` there.
+- The palette indexes tools on open. Large trees make the first open slower.
 - Shell quoting targets POSIX shells. For PowerShell, set `#cmQuote=none` and
   quote inside the base string.
 - Inserting into the editor relies on `api.addTextToActiveContextEditor`. If a
   Trilium build does not expose it, the action reports the problem instead of
   silently copying.
-- Enum values live in `#cmValues`; adding them from the palette is not
-  implemented — edit the option note.
-- The palette indexes commands on open; large subtrees make the first open
-  slower.
+- The `--help` parser is a heuristic. Always review the preview before importing;
+  JSON or a markdown table is the deterministic option.
+- Help output is stored as text. Very long outputs are kept in the note but only
+  the palette's collapsible section renders them.

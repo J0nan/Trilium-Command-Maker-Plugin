@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 
 import { buildBundle, buildInstaller } from '../tools/build.mjs';
+import Version from '../src/version.js';
 
 const INSTALLER = buildInstaller(buildBundle());
 const LAUNCHER_NOTE_ID = 'al_commandmaker';
@@ -140,6 +141,19 @@ test('a fresh install registers the launcher with ctrl+shift+space', () => {
     assert.ok(plugin.content.length > 1000, 'plugin note contains the bundle');
 });
 
+test('a fresh install creates the settings note and the Tools folder', () => {
+    const api = createApi();
+    run(api);
+
+    const roots = Array.from(api.notes.values()).filter((note) => note.hasLabel('cmRoot'));
+    assert.equal(roots.length, 1, 'one settings note');
+    assert.equal(roots[0].getLabelValue('cmVersion'), Version.VERSION, 'the settings note records the version');
+    const tools = Array.from(api.notes.values()).filter((note) => note.hasLabel('cmTools'));
+    assert.equal(tools.length, 1, 'one Tools folder');
+    assert.equal(tools[0].title, 'Tools');
+    assert.ok(tools[0].hasLabel('cmManaged'), 'the plugin marks its own Tools folder');
+});
+
 test('re-running the installer preserves a shortcut changed on the launcher', () => {
     const api = createApi();
     api.seedLauncher('ctrl+alt+k');
@@ -177,6 +191,9 @@ test('running twice creates a single root and updates the plugin note', () => {
 
     const roots = Array.from(api.notes.values()).filter((note) => note.hasLabel('cmRoot'));
     assert.equal(roots.length, 1);
+
+    const toolRoots = Array.from(api.notes.values()).filter((note) => note.hasLabel('cmTools'));
+    assert.equal(toolRoots.length, 1, 'one Tools folder after two runs');
 
     const pluginNotes = Array.from(api.notes.values()).filter((note) => note.hasLabel('cmPlugin'));
     assert.equal(pluginNotes.length, 1);
