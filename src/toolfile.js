@@ -9,7 +9,7 @@
  * parseToolFile(). Both are pure: no Trilium API, no DOM, no file system.
  *
  * Shape (version 2 only: a file declaring any other version is rejected at
- * import — this plugin reads nothing else. A bare or hand-written object
+ * import; this plugin reads nothing else. A bare or hand-written object
  * without kind/version is read as the current shape):
  * {
  *   kind: 'command-maker-tool',

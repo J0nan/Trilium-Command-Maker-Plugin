@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Pure command assembly. No Trilium API, no DOM — safe to unit test in Node.
+ * Pure command assembly. No Trilium API, no DOM; safe to unit test in Node.
  *
  * A command definition looks like:
  * {

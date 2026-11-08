@@ -1,4 +1,4 @@
-# Command Maker for Trilium — full documentation
+# Command Maker for Trilium: full documentation
 
 Everything the plugin does, in detail. Start with the [short README](../README.md) if you only want to install it and press `Ctrl+Shift+Space`.
 
@@ -33,10 +33,10 @@ Ctrl+Shift+Space  →  search a tool  →  read help  →  fill options  →  co
 
 ## Install
 
-Get the two files from the **Releases** page — do not copy them out of the repository, they are build artifacts:
+Get the two files from the **Releases** page; do not copy them out of the repository, they are build artifacts:
 
-- [`install.js`](https://github.com/J0nan/Trilium-Command-Maker-Plugin/releases/latest/download/install.js) — the installer (recommended).
-- [`command-maker.js`](https://github.com/J0nan/Trilium-Command-Maker-Plugin/releases/latest/download/command-maker.js) — the plugin runtime, only needed for the manual install.
+- [`install.js`](https://github.com/J0nan/Trilium-Command-Maker-Plugin/releases/latest/download/install.js): the installer (recommended).
+- [`command-maker.js`](https://github.com/J0nan/Trilium-Command-Maker-Plugin/releases/latest/download/command-maker.js): the plugin runtime, only needed for the manual install.
 
 Browse all versions on the [Releases page](https://github.com/J0nan/Trilium-Command-Maker-Plugin/releases).
 
@@ -60,9 +60,9 @@ It also registers a launcher (`Command Maker`, `Ctrl+Shift+Space`) through `api.
 
 Nothing in Command Maker rewrites your own notes, so uninstalling is removing the notes the plugin created:
 
-1. Delete the launcher note `al_commandmaker` (action launchers live as `al_` prefixed notes, out of the regular tree) — this removes the `Ctrl+Shift+Space` entry from the global menu.
+1. Delete the launcher note `al_commandmaker` (action launchers live as `al_` prefixed notes, out of the regular tree); this removes the `Ctrl+Shift+Space` entry from the global menu.
 2. Delete the `Command Maker` settings note (`#cmRoot`). Its children include the plugin runtime note `Command Maker.js` (`#cmPlugin`) and the palette tab notes, so they go with it.
-3. Optionally delete the `Tools` folder (`#cmTools`) together with every tool note under it. Your tool notes are normal notes: if you want to keep the documentation but drop the plugin, **Export tool** each one first, or simply leave the folder in place — without the plugin it is just a folder of notes.
+3. Optionally delete the `Tools` folder (`#cmTools`) together with every tool note under it. Your tool notes are normal notes: if you want to keep the documentation but drop the plugin, **Export tool** each one first, or simply leave the folder in place; without the plugin it is just a folder of notes.
 
 Reload Trilium afterwards. Re-running the installer later recreates everything it is missing.
 
@@ -73,7 +73,7 @@ The default is `Ctrl+Shift+Space`. The shortcut belongs to the **launcher note**
 1. **Global menu → Configure launchbar → Command Maker**, and set the shortcut field. The launcher must be in **Visible launchers**, otherwise the shortcut never fires.
 2. Or edit the launcher note `al_commandmaker` (hidden subtree) and change its `#keyboardShortcut` label. Removing the label keeps the launcher button and disables the hotkey.
 
-Re-running the installer keeps a shortcut you set on the launcher (priority 2), but removing `#keyboardShortcut` only disables the hotkey until the next install falls back to the default. To disable it **persistently**, add an empty `#cmShortcut=` to the `Command Maker` settings note — an empty value means "no shortcut" and wins over every other source. Resolution order:
+Re-running the installer keeps a shortcut you set on the launcher (priority 2), but removing `#keyboardShortcut` only disables the hotkey until the next install falls back to the default. To disable it **persistently**, add an empty `#cmShortcut=` to the `Command Maker` settings note: an empty value means "no shortcut" and wins over every other source. Resolution order:
 
 | Priority | Source |
 | --- | --- |
@@ -118,7 +118,7 @@ Tools/                              #cmTools  (move it anywhere, the label follo
         └── ...
 ```
 
-The `Tools` folder is found by its `#cmTools` label, so you can drag it to another path and the plugin keeps working. Use **Tools folder → Use the active note** in the palette (or the note-ID field there) to pick a different root: moving the root **moves the `#cmTools` label** from the old folder to the new one, and only one folder should carry the label — if you label a second folder by hand while another still holds it, the palette picks one of them unpredictably, so use the palette action instead of manual labelling.
+The `Tools` folder is found by its `#cmTools` label, so you can drag it to another path and the plugin keeps working. Use **Tools folder → Use the active note** in the palette (or the note-ID field there) to pick a different root: moving the root **moves the `#cmTools` label** from the old folder to the new one, and only one folder should carry the label; if you label a second folder by hand while another still holds it, the palette picks one of them unpredictably, so use the palette action instead of manual labelling.
 
 If you installed the plugin runtime manually *before* ever running the installer, put the `Command Maker.js` note as a direct child of the `Command Maker` settings note first: the installer only recognises an existing `#cmPlugin` note there, and otherwise it creates a second plugin note.
 
@@ -173,7 +173,7 @@ Options live under the tool's `Options` folder. Each option is a note whose titl
 | `#cmMode` | `flag` or `inline` | `flag` |
 | `#cmPlaceholder` | token name | slug of the flag/title |
 | `#cmType` | `string`, `path`, `number`, `boolean`, `enum` | `string` |
-| `#cmValues` | enum values, comma separated | — |
+| `#cmValues` | enum values, comma separated | none |
 | `#cmDefault` | initial value | empty / `false` |
 | `#cmRequired` | `true` marks the option required | `false` |
 | `#cmOrder` | numeric ordering of emitted segments | `100` |
@@ -206,9 +206,9 @@ A preset saves the current value map. Presets are stored in one JSON note inside
 
 **Import options** accepts three sources: pasted text, the currently open note, or a local file. It understands:
 
-1. **`--help` output** — GNU/POSIX style, including `-m, --message <message>`, `--output=FILE`, `--[no-]color`, ffmpeg-style single-dash flags, continuation lines, `(default: …)`, `{a,b,c}` / `one of: a, b` enums.
-2. **JSON** — an array, `{ "options": [...] }` or `{ "tool": { "options": [...] } }` with `flag`, `help`, `label`, `type`, `values`, `default`, `required`, `mode`, `placeholder`, `order`.
-3. **Markdown table** — `| Flag | Help | Type |` rows.
+1. **`--help` output**: GNU/POSIX style, including `-m, --message <message>`, `--output=FILE`, `--[no-]color`, ffmpeg-style single-dash flags, continuation lines, `(default: …)`, `{a,b,c}` / `one of: a, b` enums.
+2. **JSON**: an array, `{ "options": [...] }` or `{ "tool": { "options": [...] } }` with `flag`, `help`, `label`, `type`, `values`, `default`, `required`, `mode`, `placeholder`, `order`.
+3. **Markdown table**: `| Flag | Help | Type |` rows.
 
 Nothing is written until you parse and confirm: a preview lists every detected option with a checkbox. One import creates at most 200 option notes; when the source contains more, the status names how many were ignored (the same bound tool-file imports enforce). For a single option, use **Add option** in the palette footer; it writes the same option note with the label, flag and help string you type.
 
@@ -254,7 +254,7 @@ The footer has **Import tool** and **Export tool** next to the option actions. B
 }
 ```
 
-- **Export tool** reads the selected tool, its three standard children, every option with its note body, the `#cmTags` value and the presets, and shows the JSON. **Copy JSON** copies it; **Download .json** saves it as `<tool>.tool.json`. A version-2 file is therefore a real backup: importing it recreates the tool with nothing the file holds dropped. (Preset values are keyed by option note IDs, so after importing into a *different* instance the stored preset values may not line up with the recreated option notes.) The file must carry `"version": 2` — or no version at all, for hand-written objects, which are read in the current shape; a file declaring any other version is rejected by **Parse** and nothing is written.
+- **Export tool** reads the selected tool, its three standard children, every option with its note body, the `#cmTags` value and the presets, and shows the JSON. **Copy JSON** copies it; **Download .json** saves it as `<tool>.tool.json`. A version-2 file is therefore a real backup: importing it recreates the tool with nothing the file holds dropped. (Preset values are keyed by option note IDs, so after importing into a *different* instance the stored preset values may not line up with the recreated option notes.) The file must carry `"version": 2` (or no version at all, for hand-written objects, which are read in the current shape); a file declaring any other version is rejected by **Parse** and nothing is written.
 - **Import tool** accepts the same JSON from a paste, the active note or a file. It previews the title, category, base and options, then creates a new tool note under that category. A file listing more than 200 options imports only the first 200, with a warning in the preview. Existing tools are never modified or overwritten.
 
 ### Generating the file with an AI model
@@ -266,7 +266,7 @@ The footer has **Import tool** and **Export tool** next to the option actions. B
 3. Give the prompt to any AI model and paste its JSON answer back into the import box.
 4. Press **Parse**, review the preview, then **Import tool**.
 
-The model is told to return only the JSON object. If a markdown fence still slips into its answer, strip the ` ``` ` lines before pasting: a fenced file is not parsed as JSON and **Parse** reports `Not valid JSON: …` — nothing is written in either case.
+The model is told to return only the JSON object. If a markdown fence still slips into its answer, strip the ` ``` ` lines before pasting: a fenced file is not parsed as JSON and **Parse** reports `Not valid JSON: …`; nothing is written in either case.
 
 ## Version check
 

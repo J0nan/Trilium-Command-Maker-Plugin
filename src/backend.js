@@ -50,7 +50,7 @@ function beRun(params) {
 
     /**
      * When set, every note created by the action below is recorded here, so a
-     * failed multi-step create can delete exactly the notes it made — never an
+     * failed multi-step create can delete exactly the notes it made, never an
      * existing category, folder or unrelated note.
      */
     let rollbackBatch = null;
@@ -373,7 +373,7 @@ function beRun(params) {
                 return parents[0].noteId;
             }
         } catch (error) {
-            // currentNote has no parents (root) — fall through
+            // currentNote has no parents (root); fall through
         }
         return api.getTodayNote().noteId;
     }
@@ -551,8 +551,8 @@ function beRun(params) {
         target.setLabel(labels.tools, '');
         // A folder the user picks is theirs: never seed examples into it.
         target.setLabel(labels.seeded, '');
-        // Exactly one root may hold #cmTools: a second one — left by a
-        // half-finished move or labelled by hand — would be picked
+        // Exactly one root may hold #cmTools: a second one (left by a
+        // half-finished move, or labelled by hand) would be picked
         // arbitrarily by the loader. Sweep the pointer off every other note,
         // reporting failures only after the sweep so the new pointer stands.
         let removalFailure = null;

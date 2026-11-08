@@ -10,7 +10,7 @@ Ctrl+Shift+Space  →  search a tool  →  read help  →  fill options  →  co
 
 ## Install
 
-Get `install.js` from the [latest release](https://github.com/J0nan/Trilium-Command-Maker-Plugin/releases/latest/download/install.js) — do not copy it out of the repository, it is a build artifact.
+Get `install.js` from the [latest release](https://github.com/J0nan/Trilium-Command-Maker-Plugin/releases/latest/download/install.js): do not copy it out of the repository, it is a build artifact.
 
 1. In Trilium, create a note with type **Code** and language **JavaScript (Trilium backend)**.
 2. Paste the whole content of `install.js` into it.
@@ -38,7 +38,7 @@ The installer is idempotent. It creates the `Command Maker` settings note, the `
 
 ![The Message option filled in and the generated command](docs/images/04-options-command.png)
 
-*Filling an option regenerates the command — here `-m` and the message are quoted for the shell. **Copy**, **Insert** and **Open note** act on the result.*
+*Filling an option regenerates the command: here `-m` and the message are quoted for the shell. **Copy**, **Insert** and **Open note** act on the result.*
 
 ![Import options dialog with a parsed curl --help output](docs/images/05-import-options.png)
 
@@ -48,11 +48,11 @@ The installer is idempotent. It creates the `Command Maker` settings note, the `
 
 [`docs/guide.md`](docs/guide.md) covers everything else:
 
-- [Install](docs/guide.md#install) — uninstall, shortcut overrides, tab mode, manual install.
-- [Structure](docs/guide.md#structure) — the `Tools` tree, tool notes, the three standard children, every option attribute, command assembly and presets.
-- [Importing options](docs/guide.md#importing-options) — `--help`, JSON and markdown tables, with the 200-option bound.
-- [Importing and exporting whole tools](docs/guide.md#importing-and-exporting-whole-tools) — the `version: 2` file format and the AI prompt that generates it.
-- [Limitations](docs/guide.md#limitations) — shell quoting, `--help` parsing heuristics and large trees.
+- [Install](docs/guide.md#install): uninstall, shortcut overrides, tab mode, manual install.
+- [Structure](docs/guide.md#structure): the `Tools` tree, tool notes, the three standard children, every option attribute, command assembly and presets.
+- [Importing options](docs/guide.md#importing-options): `--help`, JSON and markdown tables, with the 200-option bound.
+- [Importing and exporting whole tools](docs/guide.md#importing-and-exporting-whole-tools): the `version: 2` file format and the AI prompt that generates it.
+- [Limitations](docs/guide.md#limitations): shell quoting, `--help` parsing heuristics and large trees.
 
 ## Development
 

@@ -18,7 +18,7 @@ __def("render", function (module, exports, __require) {
 'use strict';
 
 /**
- * Pure command assembly. No Trilium API, no DOM — safe to unit test in Node.
+ * Pure command assembly. No Trilium API, no DOM; safe to unit test in Node.
  *
  * A command definition looks like:
  * {
@@ -1497,7 +1497,7 @@ __def("toolfile", function (module, exports, __require) {
  * parseToolFile(). Both are pure: no Trilium API, no DOM, no file system.
  *
  * Shape (version 2 only: a file declaring any other version is rejected at
- * import — this plugin reads nothing else. A bare or hand-written object
+ * import; this plugin reads nothing else. A bare or hand-written object
  * without kind/version is read as the current shape):
  * {
  *   kind: 'command-maker-tool',
@@ -3015,7 +3015,7 @@ function beRun(params) {
 
     /**
      * When set, every note created by the action below is recorded here, so a
-     * failed multi-step create can delete exactly the notes it made — never an
+     * failed multi-step create can delete exactly the notes it made, never an
      * existing category, folder or unrelated note.
      */
     let rollbackBatch = null;
@@ -3338,7 +3338,7 @@ function beRun(params) {
                 return parents[0].noteId;
             }
         } catch (error) {
-            // currentNote has no parents (root) — fall through
+            // currentNote has no parents (root); fall through
         }
         return api.getTodayNote().noteId;
     }
@@ -3516,8 +3516,8 @@ function beRun(params) {
         target.setLabel(labels.tools, '');
         // A folder the user picks is theirs: never seed examples into it.
         target.setLabel(labels.seeded, '');
-        // Exactly one root may hold #cmTools: a second one — left by a
-        // half-finished move or labelled by hand — would be picked
+        // Exactly one root may hold #cmTools: a second one (left by a
+        // half-finished move, or labelled by hand) would be picked
         // arbitrarily by the loader. Sweep the pointer off every other note,
         // reporting failures only after the sweep so the new pointer stands.
         let removalFailure = null;
@@ -3920,7 +3920,7 @@ function openPalette(controller, options) {
         setStatus('Checking for updates…');
         const info = await controller.checkLatestVersion();
         if (info.error) {
-            setStatus('v' + info.current + ' — ' + info.error + ' See the Repository link.', true);
+            setStatus('v' + info.current + ': ' + info.error + ' See the Repository link.', true);
             return;
         }
         if (info.latest && info.latest !== info.current) {
@@ -3935,7 +3935,7 @@ function openPalette(controller, options) {
         } else if (info.latest) {
             setStatus('v' + info.current + ' is newer than the latest published tag (v' + info.latest + ').');
         } else {
-            setStatus('v' + info.current + ' — no published version found.');
+            setStatus('v' + info.current + ': no published version found.');
         }
     }
 
@@ -4167,7 +4167,7 @@ function openPalette(controller, options) {
             control = document.createElement('select');
             const empty = document.createElement('option');
             empty.value = '';
-            empty.textContent = '—';
+            empty.textContent = '-';
             control.appendChild(empty);
             (option.enumValues || []).forEach(function (value) {
                 const entry = document.createElement('option');

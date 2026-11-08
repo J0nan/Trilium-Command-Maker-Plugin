@@ -257,7 +257,7 @@ function openPalette(controller, options) {
         setStatus('Checking for updates…');
         const info = await controller.checkLatestVersion();
         if (info.error) {
-            setStatus('v' + info.current + ' — ' + info.error + ' See the Repository link.', true);
+            setStatus('v' + info.current + ': ' + info.error + ' See the Repository link.', true);
             return;
         }
         if (info.latest && info.latest !== info.current) {
@@ -272,7 +272,7 @@ function openPalette(controller, options) {
         } else if (info.latest) {
             setStatus('v' + info.current + ' is newer than the latest published tag (v' + info.latest + ').');
         } else {
-            setStatus('v' + info.current + ' — no published version found.');
+            setStatus('v' + info.current + ': no published version found.');
         }
     }
 
@@ -504,7 +504,7 @@ function openPalette(controller, options) {
             control = document.createElement('select');
             const empty = document.createElement('option');
             empty.value = '';
-            empty.textContent = '—';
+            empty.textContent = '-';
             control.appendChild(empty);
             (option.enumValues || []).forEach(function (value) {
                 const entry = document.createElement('option');
