@@ -194,9 +194,19 @@ function openPalette(controller, options) {
     toolsButton.type = 'button';
     const statusEl = Dom.el('span', 'cm-status', '');
     statusEl.setAttribute('role', 'status');
-    const versionButton = Dom.el('button', 'cm-version', 'v' + controller.version());
+    const menuHost = Dom.el('span', 'cm-menu-host');
+    const versionButton = Dom.el('button', 'cm-version');
     versionButton.type = 'button';
-    versionButton.title = I18n.t('ui.checkUpdates');
+    versionButton.title = I18n.t('ui.versionMenu');
+    versionButton.setAttribute('aria-label', I18n.t('ui.versionMenu'));
+    versionButton.setAttribute('aria-haspopup', 'menu');
+    versionButton.setAttribute('aria-expanded', 'false');
+    const versionLabel = Dom.el('span', 'cm-version-text', 'v' + controller.version());
+    const versionChevron = Dom.el('span', 'cm-version-chevron', '▾');
+    versionChevron.setAttribute('aria-hidden', 'true');
+    versionButton.appendChild(versionLabel);
+    versionButton.appendChild(versionChevron);
+    menuHost.appendChild(versionButton);
     const repoLink = document.createElement('a');
     repoLink.className = 'cm-version-link';
     repoLink.textContent = I18n.t('ui.repository');
@@ -209,20 +219,8 @@ function openPalette(controller, options) {
     footer.appendChild(addOptionButton);
     footer.appendChild(exportToolButton);
     footer.appendChild(toolsButton);
-    const languageSelect = document.createElement('select');
-    languageSelect.className = 'cm-control cm-select cm-lang';
-    languageSelect.setAttribute('aria-label', I18n.t('ui.language'));
-    languageSelect.title = I18n.t('ui.language');
-    [['en', 'English'], ['es', 'Español']].forEach(function (pair) {
-        const entry = document.createElement('option');
-        entry.value = pair[0];
-        entry.textContent = pair[1];
-        languageSelect.appendChild(entry);
-    });
-    languageSelect.value = typeof controller.language === 'function' ? controller.language() : I18n.getLocale();
-    footer.appendChild(languageSelect);
     footer.appendChild(statusEl);
-    footer.appendChild(versionButton);
+    footer.appendChild(menuHost);
     footer.appendChild(repoLink);
 
     const modalHost = Dom.el('div', 'cm-modal-host');
@@ -246,6 +244,97 @@ function openPalette(controller, options) {
     }
 
     let searchTimer = null;
+    let menuEl = null;
+
+    /** Closes the version menu if it is open; safe to call at any time. */
+    function closeMenu() {
+        if (!menuEl) {
+            return;
+        }
+        if (typeof document.removeEventListener === 'function') {
+            document.removeEventListener('click', onDocumentClick, true);
+        }
+        menuEl.remove();
+        menuEl = null;
+        versionButton.setAttribute('aria-expanded', 'false');
+    }
+
+    function onDocumentClick(event) {
+        const target = event && event.target;
+        if (target && typeof menuHost.contains === 'function' && menuHost.contains(target)) {
+            return;
+        }
+        closeMenu();
+    }
+
+    /**
+     * The footer's version pill opens this menu: the update check and the
+     * language live here, so neither takes permanent footer space. Built on
+     * every open, so the check mark and the labels follow the active locale.
+     */
+    function openMenu() {
+        if (menuEl) {
+            return;
+        }
+        const menu = Dom.el('div', 'cm-menu');
+        menu.setAttribute('role', 'menu');
+        menu.setAttribute('aria-label', I18n.t('ui.versionMenu'));
+
+        const updates = Dom.el('button', 'cm-menu-item', I18n.t('ui.checkUpdates'));
+        updates.type = 'button';
+        updates.setAttribute('role', 'menuitem');
+        updates.addEventListener('click', function (event) {
+            event.preventDefault();
+            closeMenu();
+            checkForUpdates().catch(notify);
+        });
+        menu.appendChild(updates);
+
+        menu.appendChild(Dom.el('div', 'cm-menu-sep'));
+        menu.appendChild(Dom.el('div', 'cm-menu-title', I18n.t('ui.language')));
+
+        [['en', 'English'], ['es', 'Español']].forEach(function (pair) {
+            const active = I18n.getLocale() === pair[0];
+            const item = Dom.el('button', 'cm-menu-item cm-menu-radio' + (active ? ' is-checked' : ''), pair[1]);
+            item.type = 'button';
+            item.setAttribute('role', 'menuitemradio');
+            item.setAttribute('aria-checked', active ? 'true' : 'false');
+            const check = Dom.el('span', 'cm-menu-check', active ? '✓' : '');
+            check.setAttribute('aria-hidden', 'true');
+            // CSS `order` puts the check first; the label stays the button text.
+            item.appendChild(check);
+            item.addEventListener('click', guarded(async function () {
+                if (typeof controller.setLanguage !== 'function') {
+                    closeMenu();
+                    return;
+                }
+                await controller.setLanguage(pair[0]);
+                remount();
+            }, notify));
+            menu.appendChild(item);
+        });
+
+        menuHost.appendChild(menu);
+        menuEl = menu;
+        versionButton.setAttribute('aria-expanded', 'true');
+        // A click on the trigger is already past the capture phase, so this
+        // listener cannot swallow the click that opened the menu.
+        if (typeof document.addEventListener === 'function') {
+            document.addEventListener('click', onDocumentClick, true);
+        }
+        const first = menu.children[0];
+        if (first && typeof first.focus === 'function') {
+            first.focus();
+        }
+    }
+
+    function toggleMenu() {
+        if (menuEl) {
+            closeMenu();
+            return;
+        }
+        openMenu();
+    }
 
     /** Update the footer and surface the same text as a Trilium message. */
     function setStatus(message, isError) {
@@ -278,7 +367,7 @@ function openPalette(controller, options) {
             return;
         }
         if (info.latest && info.latest !== info.current) {
-            versionButton.textContent = 'v' + info.current + ' → v' + info.latest;
+            versionLabel.textContent = 'v' + info.current + ' → v' + info.latest;
             versionButton.title = I18n.t('status.installedLatest', { current: info.current, latest: info.latest });
         }
 
@@ -315,6 +404,7 @@ function openPalette(controller, options) {
     }
 
     function close() {
+        closeMenu();
         closeModal();
         if (searchTimer) {
             clearTimeout(searchTimer);
@@ -352,7 +442,10 @@ function openPalette(controller, options) {
     function onKeyDown(event) {
         if (event.key === 'Escape') {
             event.preventDefault();
-            if (state.modal) {
+            if (menuEl) {
+                closeMenu();
+                versionButton.focus();
+            } else if (state.modal) {
                 closeModal();
             } else if (!embedded) {
                 close();
@@ -1746,7 +1839,7 @@ function openPalette(controller, options) {
     }
     versionButton.addEventListener('click', function (event) {
         event.preventDefault();
-        checkForUpdates().catch(notify);
+        toggleMenu();
     });
     newToolButton.addEventListener('click', toggleNewTool);
     importToolButton.addEventListener('click', openImportTool);
@@ -1754,20 +1847,6 @@ function openPalette(controller, options) {
     importButton.addEventListener('click', openImport);
     addOptionButton.addEventListener('click', openAddOption);
     toolsButton.addEventListener('click', openToolsFolder);
-    languageSelect.addEventListener('change', guarded(async function () {
-        if (typeof controller.setLanguage !== 'function') {
-            languageSelect.value = I18n.getLocale();
-            return;
-        }
-        try {
-            await controller.setLanguage(languageSelect.value);
-        } catch (error) {
-            // The write failed: show the language that is actually active.
-            languageSelect.value = I18n.getLocale();
-            throw error;
-        }
-        remount();
-    }, notify));
     if (embedded) {
         shell.addEventListener('keydown', onKeyDown);
     } else {

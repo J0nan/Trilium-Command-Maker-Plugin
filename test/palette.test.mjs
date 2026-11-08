@@ -401,7 +401,8 @@ test('palette lists tools, shows option help, examples, help, copy/insert and pr
 
     const versionButton = find(dom.body, (node) => classed(node, 'cm-version'));
     assert.ok(versionButton, 'the palette footer shows the version');
-    assert.equal(versionButton.textContent, 'v' + Version.VERSION);
+    assert.equal(find(versionButton, (node) => classed(node, 'cm-version-text')).textContent, 'v' + Version.VERSION);
+    assert.equal(versionButton.getAttribute('aria-expanded'), 'false');
 
     const overlay = find(dom.body, (node) => classed(node, 'cm-overlay'));
     overlay.dispatch('keydown', { key: 'ArrowDown' });
@@ -793,6 +794,8 @@ test('the version button checks the latest GitHub release', async () => {
 
     await waitFor(() => find(dom.body, (node) => classed(node, 'cm-version')), 'version button');
     find(dom.body, (node) => classed(node, 'cm-version')).click();
+    const updateItem = await waitFor(() => buttonWithText(dom.body, 'Check for updates'), 'version menu');
+    updateItem.click();
     await waitFor(() => {
         const status = find(dom.body, (node) => classed(node, 'cm-status'));
         return status && /latest is v9\.9\.9/.test(status.textContent);
@@ -804,7 +807,7 @@ test('the version button checks the latest GitHub release', async () => {
         'the update status is also shown as a Trilium message'
     );
     assert.equal(
-        find(dom.body, (node) => classed(node, 'cm-version')).textContent,
+        find(dom.body, (node) => classed(node, 'cm-version-text')).textContent,
         'v' + Version.VERSION + ' → v9.9.9',
         'the footer shows the installed and latest versions'
     );
@@ -1578,22 +1581,36 @@ test('the import status line names the capped options', async () => {
     }, 'capped import status');
 });
 
-test('the footer language selector persists the setting and remounts in Spanish', async () => {
+test('the version menu switches the language and persists it', async () => {
     const dom = createDom();
     const fixture = buildFixture();
     const env = makeApi(fixture);
     run(dom, env.api, env.navigator);
 
     await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
-    const selector = await waitFor(
-        () => find(dom.body, (node) => node.tagName === 'SELECT' && classed(node, 'cm-lang')),
-        'language selector'
-    );
-    assert.equal(selector.value, 'en');
+    const trigger = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-version')), 'version menu trigger');
     assert.ok(buttonWithText(dom.body, 'New tool'), 'English palette');
+    assert.equal(trigger.getAttribute('aria-expanded'), 'false', 'the menu starts closed');
 
-    selector.value = 'es';
-    selector.dispatch('change');
+    trigger.click();
+    assert.equal(trigger.getAttribute('aria-expanded'), 'true');
+    const firstMenu = await waitFor(
+        () => findAll(dom.body, (node) => classed(node, 'cm-menu')).pop(),
+        'version menu'
+    );
+    assert.ok(buttonWithText(firstMenu, 'Check for updates'), 'the menu holds the update check');
+    assert.ok(buttonWithText(firstMenu, 'English'), 'the menu lists English');
+    assert.ok(buttonWithText(firstMenu, 'Español'), 'the menu lists Spanish');
+    const checked = find(firstMenu, (node) => classed(node, 'cm-menu-radio'));
+    assert.equal(checked.getAttribute('aria-checked'), 'true', 'the active language is marked');
+
+    const overlay = find(dom.body, (node) => classed(node, 'cm-overlay'));
+    overlay.dispatch('keydown', { key: 'Escape' });
+    assert.equal(trigger.getAttribute('aria-expanded'), 'false', 'Escape closes the menu only');
+
+    trigger.click();
+    const menu = findAll(dom.body, (node) => classed(node, 'cm-menu')).pop();
+    buttonWithText(menu, 'Español').click();
 
     const spanish = await waitFor(() => buttonWithText(dom.body, 'Nueva herramienta'), 'Spanish palette');
     assert.ok(spanish, 'the palette remounts in Spanish');
