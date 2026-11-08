@@ -16,6 +16,7 @@
  */
 
 const Render = require('./render');
+const I18n = require('./i18n');
 
 const LABELS = {
     // structure
@@ -53,6 +54,8 @@ const LABELS = {
     version: 'cmVersion',
     // note presentation
     icon: 'iconClass',
+    // settings
+    lang: 'cmLang',
 };
 
 const LABEL_NAMES = Object.keys(LABELS).map(function (key) {
@@ -187,14 +190,14 @@ function buildTool(note) {
         if (!option.placeholder) {
             warnings.push({
                 code: 'missing-placeholder-name',
-                message: 'Option "' + option.title + '" has an empty placeholder name.'
+                message: I18n.t('warn.missingPlaceholderName', { title: option.title })
             });
             continue;
         }
         if (byPlaceholder.has(option.placeholder)) {
             warnings.push({
                 code: 'duplicate-placeholder',
-                message: 'Two options share the placeholder "' + option.placeholder + '"; the first one wins.'
+                message: I18n.t('warn.duplicatePlaceholder', { name: option.placeholder })
             });
             continue;
         }
@@ -209,7 +212,7 @@ function buildTool(note) {
         if (byFlag.has(option.flag)) {
             warnings.push({
                 code: 'duplicate-flag',
-                message: 'Two options use the flag "' + option.flag + '"; the command will repeat it.'
+                message: I18n.t('warn.duplicateFlag', { flag: option.flag })
             });
             continue;
         }
@@ -461,48 +464,46 @@ function matchesText(haystack, query) {
 
 /** Content template for a new tool note: exactly the three H2 sections. */
 function toolTemplate() {
-    return [
-        '<h2>What is?</h2>',
-        '<p>Describe what this tool does and when to use it.</p>',
-        '<h2>Official links</h2>',
-        '<p>Add the official documentation, repository or website links here.</p>',
-        '<h2>Useful links</h2>',
-        '<p>Add useful guides, cheat sheets or articles here.</p>'
-    ].join('\n');
+    return I18n.t('model.toolTemplate');
 }
 
 /** Starting content for the three standard child notes plus the tool body. */
 function newToolNotes() {
     return {
         content: toolTemplate(),
-        install: '<p>Add the installation steps or commands for this tool.</p>',
-        usage: '<p>Add examples of commands with this tool. Put each example in a code block.</p>',
+        install: I18n.t('model.installTemplate'),
+        usage: I18n.t('model.usageTemplate'),
         help: ''
     };
 }
 
 function seedTools() {
+    const heading = {
+        whatIs: I18n.t('model.headingWhatIs'),
+        official: I18n.t('model.headingOfficial'),
+        useful: I18n.t('model.headingUseful')
+    };
     return [
         {
-            category: 'Version control',
+            category: I18n.t('model.categoryVersionControl'),
             title: 'git commit',
             base: 'git commit',
-            description: 'Record staged changes in the current Git repository.',
+            description: I18n.t('model.gitDescription'),
             content: [
-                '<h2>What is?</h2>',
-                '<p><code>git commit</code> records the staged changes of the repository as a new commit.</p>',
-                '<h2>Official links</h2>',
-                '<ul><li><a href="https://git-scm.com/docs/git-commit">Official git-commit documentation</a></li></ul>',
-                '<h2>Useful links</h2>',
-                '<ul><li><a href="https://www.conventionalcommits.org/">Conventional Commits</a></li></ul>'
+                '<h2>' + heading.whatIs + '</h2>',
+                '<p>' + I18n.t('model.gitWhatIs') + '</p>',
+                '<h2>' + heading.official + '</h2>',
+                '<ul><li><a href="https://git-scm.com/docs/git-commit">' + I18n.t('model.gitOfficial') + '</a></li></ul>',
+                '<h2>' + heading.useful + '</h2>',
+                '<ul><li><a href="https://www.conventionalcommits.org/">' + I18n.t('model.gitUseful') + '</a></li></ul>'
             ].join('\n'),
             install: '<p><strong>Windows:</strong> <code>winget install Git.Git</code></p><p><strong>macOS:</strong> <code>brew install git</code></p><p><strong>Debian/Ubuntu:</strong> <code>sudo apt install git</code></p>',
             usage: [
-                '<p>Commit with a message:</p>',
+                '<p>' + I18n.t('model.gitCommitExample') + '</p>',
                 '<pre><code>git commit -m "fix: handle empty input"</code></pre>',
-                '<p>Add all tracked changes and commit:</p>',
+                '<p>' + I18n.t('model.gitAddAllExample') + '</p>',
                 '<pre><code>git commit -am "chore: update dependencies"</code></pre>',
-                '<p>Amend the last commit without changing its message:</p>',
+                '<p>' + I18n.t('model.gitAmendExample') + '</p>',
                 '<pre><code>git commit --amend --no-edit</code></pre>'
             ].join('\n'),
             help: [
@@ -518,35 +519,35 @@ function seedTools() {
                 '    --author <author>        override the author'
             ].join('\n'),
             options: [
-                { label: 'Message', flag: '-m', type: 'string', doc: 'Commit message. Repeat the flag to add paragraphs.', order: 10, required: true },
-                { label: 'All changes', flag: '-a', type: 'boolean', doc: 'Stage all tracked changes before committing.', order: 20 },
-                { label: 'Amend last commit', flag: '--amend', type: 'boolean', doc: 'Replace the previous commit instead of creating a new one.', order: 30 },
-                { label: 'Allow empty', flag: '--allow-empty', type: 'boolean', doc: 'Record a commit with no changes.', order: 40 },
-                { label: 'Skip hooks', flag: '--no-verify', type: 'boolean', doc: 'Bypass pre-commit and commit-msg hooks.', order: 50 },
-                { label: 'Author', flag: '--author', type: 'string', doc: 'Override the commit author, for example "Name <mail@example.com>".', order: 60 },
-                { label: 'Date', flag: '--date', type: 'string', doc: 'Override the author date.', order: 70 }
+                { label: I18n.t('model.gitOptionMessageLabel'), flag: '-m', type: 'string', doc: I18n.t('model.gitOptionMessage'), order: 10, required: true },
+                { label: I18n.t('model.gitOptionAllLabel'), flag: '-a', type: 'boolean', doc: I18n.t('model.gitOptionAll'), order: 20 },
+                { label: I18n.t('model.gitOptionAmendLabel'), flag: '--amend', type: 'boolean', doc: I18n.t('model.gitOptionAmend'), order: 30 },
+                { label: I18n.t('model.gitOptionEmptyLabel'), flag: '--allow-empty', type: 'boolean', doc: I18n.t('model.gitOptionEmpty'), order: 40 },
+                { label: I18n.t('model.gitOptionHooksLabel'), flag: '--no-verify', type: 'boolean', doc: I18n.t('model.gitOptionHooks'), order: 50 },
+                { label: I18n.t('model.gitOptionAuthorLabel'), flag: '--author', type: 'string', doc: I18n.t('model.gitOptionAuthor'), order: 60 },
+                { label: I18n.t('model.gitOptionDateLabel'), flag: '--date', type: 'string', doc: I18n.t('model.gitOptionDate'), order: 70 }
             ]
         },
         {
-            category: 'Network',
+            category: I18n.t('model.categoryNetwork'),
             title: 'curl',
             base: 'curl',
-            description: 'Transfer data from or to a server with the curl command-line client.',
+            description: I18n.t('model.curlDescription'),
             content: [
-                '<h2>What is?</h2>',
-                '<p>curl is a command-line tool for transferring data with URLs. It supports HTTP, HTTPS, FTP and many other protocols.</p>',
-                '<h2>Official links</h2>',
-                '<ul><li><a href="https://curl.se/docs/">Official curl documentation</a></li></ul>',
-                '<h2>Useful links</h2>',
-                '<ul><li><a href="https://curl.se/docs/manpage.html">curl man page</a></li></ul>'
+                '<h2>' + heading.whatIs + '</h2>',
+                '<p>' + I18n.t('model.curlWhatIs') + '</p>',
+                '<h2>' + heading.official + '</h2>',
+                '<ul><li><a href="https://curl.se/docs/">' + I18n.t('model.curlOfficial') + '</a></li></ul>',
+                '<h2>' + heading.useful + '</h2>',
+                '<ul><li><a href="https://curl.se/docs/manpage.html">' + I18n.t('model.curlUseful') + '</a></li></ul>'
             ].join('\n'),
             install: '<p><strong>Windows:</strong> <code>winget install curl.curl</code></p><p><strong>macOS:</strong> <code>brew install curl</code></p><p><strong>Debian/Ubuntu:</strong> <code>sudo apt install curl</code></p>',
             usage: [
-                '<p>POST JSON:</p>',
+                '<p>' + I18n.t('model.curlPostExample') + '</p>',
                 '<pre><code>curl -X POST -H "Content-Type: application/json" -d "{\\"name\\":\\"value\\"}" https://api.example.com/items</code></pre>',
-                '<p>Download a file, following redirects:</p>',
+                '<p>' + I18n.t('model.curlDownloadExample') + '</p>',
                 '<pre><code>curl -L -o file.zip https://example.com/file.zip</code></pre>',
-                '<p>Show only the response headers:</p>',
+                '<p>' + I18n.t('model.curlHeadersExample') + '</p>',
                 '<pre><code>curl -sSI https://example.com</code></pre>'
             ].join('\n'),
             help: [
@@ -563,16 +564,16 @@ function seedTools() {
                 ' -k, --insecure              allow insecure server connections'
             ].join('\n'),
             options: [
-                { label: 'Request method', flag: '-X', type: 'enum', values: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'], doc: 'HTTP request method.', order: 10 },
-                { label: 'Header', flag: '-H', type: 'string', doc: 'Add a request header, for example "Content-Type: application/json".', order: 20 },
-                { label: 'Data', flag: '-d', type: 'string', doc: 'Request body sent to the server.', order: 30 },
-                { label: 'Output file', flag: '-o', type: 'path', doc: 'Write the response body to this file instead of stdout.', order: 40 },
-                { label: 'Follow redirects', flag: '-L', type: 'boolean', doc: 'Follow HTTP redirects.', order: 50 },
-                { label: 'Silent', flag: '-s', type: 'boolean', doc: 'Do not show progress or error messages.', order: 60 },
-                { label: 'Compressed', flag: '--compressed', type: 'boolean', doc: 'Ask the server for a compressed response and decompress it.', order: 70 },
-                { label: 'User', flag: '-u', type: 'string', doc: 'Server credentials as user:password.', order: 80 },
-                { label: 'Insecure', flag: '-k', type: 'boolean', doc: 'Allow insecure TLS connections (skip certificate checks).', order: 90 },
-                { label: 'URL', flag: '', type: 'string', placeholder: 'url', quote: 'double', doc: 'URL to request. Positional; appended last.', order: 100, required: true }
+                { label: I18n.t('model.curlOptionRequestLabel'), flag: '-X', type: 'enum', values: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'], doc: I18n.t('model.curlOptionRequest'), order: 10 },
+                { label: I18n.t('model.curlOptionHeaderLabel'), flag: '-H', type: 'string', doc: I18n.t('model.curlOptionHeader'), order: 20 },
+                { label: I18n.t('model.curlOptionDataLabel'), flag: '-d', type: 'string', doc: I18n.t('model.curlOptionData'), order: 30 },
+                { label: I18n.t('model.curlOptionOutputLabel'), flag: '-o', type: 'path', doc: I18n.t('model.curlOptionOutput'), order: 40 },
+                { label: I18n.t('model.curlOptionFollowLabel'), flag: '-L', type: 'boolean', doc: I18n.t('model.curlOptionFollow'), order: 50 },
+                { label: I18n.t('model.curlOptionSilentLabel'), flag: '-s', type: 'boolean', doc: I18n.t('model.curlOptionSilent'), order: 60 },
+                { label: I18n.t('model.curlOptionCompressedLabel'), flag: '--compressed', type: 'boolean', doc: I18n.t('model.curlOptionCompressed'), order: 70 },
+                { label: I18n.t('model.curlOptionUserLabel'), flag: '-u', type: 'string', doc: I18n.t('model.curlOptionUser'), order: 80 },
+                { label: I18n.t('model.curlOptionInsecureLabel'), flag: '-k', type: 'boolean', doc: I18n.t('model.curlOptionInsecure'), order: 90 },
+                { label: I18n.t('model.curlOptionUrlLabel'), flag: '', type: 'string', placeholder: 'url', quote: 'double', doc: I18n.t('model.curlOptionUrl'), order: 100, required: true }
             ]
         }
     ];

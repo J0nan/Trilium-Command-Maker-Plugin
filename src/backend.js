@@ -10,7 +10,7 @@
  * being duplicated here. Consequently `beRun` must never reference a
  * module-scope binding and dispatches on literal action strings only.
  *
- * Actions: bootstrap | createTool | importTool | addOption |
+ * Actions: bootstrap | setLanguage | createTool | importTool | addOption |
  * importOptions | deleteOption | setToolBase | setToolsRoot | savePreset |
  * deletePreset | ensureTab
  */
@@ -24,6 +24,14 @@ function beRun(params) {
         help: 'bx bx-help-circle',
         options: 'bx bx-cog'
     };
+    // Localized titles and messages travel in the action options: this
+    // function is serialized to the backend and cannot require src/i18n.js.
+    const strings = options.strings || {};
+
+    function text(key, fallback) {
+        const value = strings[key];
+        return value === undefined || value === null ? fallback : String(value);
+    }
 
     function nonEmpty(value) {
         return value !== undefined && value !== null && String(value).trim() !== '';
@@ -115,7 +123,7 @@ function beRun(params) {
         }
         const note = track(api.createNewNote({
             parentNoteId: toolNote.noteId,
-            title: 'Options',
+            title: text('back.noteOptions', 'Options'),
             type: 'text',
             content: ''
         }).note);
@@ -131,7 +139,7 @@ function beRun(params) {
         }
         const note = track(api.createNewNote({
             parentNoteId: optionsFolder.noteId,
-            title: 'Presets',
+            title: text('back.notePresets', 'Presets'),
             type: 'code',
             mime: 'application/json',
             content: '{"v":1,"presets":[]}'
@@ -174,7 +182,7 @@ function beRun(params) {
 
     /** Validate the tool and make sure its Options folder and Presets note exist. */
     function presetsLocation(toolId) {
-        const tool = requireNote(toolId, 'Tool note not found');
+        const tool = requireNote(toolId, text('back.errorToolNote', 'Tool note not found'));
         const folder = ensureOptionsFolder(tool);
         return { tool: tool, folder: folder, presets: ensurePresetsNote(folder) };
     }
@@ -200,6 +208,10 @@ function beRun(params) {
     function defaultToolContent(fallbacks) {
         if (fallbacks && nonEmpty(fallbacks.content)) {
             return String(fallbacks.content);
+        }
+        const localized = text('back.toolContent', '');
+        if (nonEmpty(localized)) {
+            return localized;
         }
         return [
             '<h2>What is?</h2>',
@@ -242,8 +254,8 @@ function beRun(params) {
     function createToolNoteNotes(toolsRoot, spec, fallbacks) {
         const safeSpec = spec || {};
         const safeFallbacks = fallbacks || {};
-        const categoryName = nonEmpty(safeSpec.category) ? String(safeSpec.category) : 'Uncategorized';
-        const title = nonEmpty(safeSpec.title) ? String(safeSpec.title) : 'New tool';
+        const categoryName = nonEmpty(safeSpec.category) ? String(safeSpec.category) : text('back.noteUncategorized', 'Uncategorized');
+        const title = nonEmpty(safeSpec.title) ? String(safeSpec.title) : text('back.noteNewTool', 'New tool');
         const category = ensureCategory(toolsRoot, categoryName);
         const note = track(api.createNewNote({
             parentNoteId: category.noteId,
@@ -264,7 +276,7 @@ function beRun(params) {
 
         const install = track(api.createNewNote({
             parentNoteId: note.noteId,
-            title: 'Install',
+            title: text('back.noteInstall', 'Install'),
             type: 'text',
             content: childContent(safeSpec.install, safeFallbacks.install)
         }).note);
@@ -272,7 +284,7 @@ function beRun(params) {
 
         const usage = track(api.createNewNote({
             parentNoteId: note.noteId,
-            title: 'Usage',
+            title: text('back.noteUsage', 'Usage'),
             type: 'text',
             content: childContent(safeSpec.usage, safeFallbacks.usage)
         }).note);
@@ -280,7 +292,7 @@ function beRun(params) {
 
         const help = track(api.createNewNote({
             parentNoteId: note.noteId,
-            title: 'Help',
+            title: text('back.noteHelp', 'Help'),
             type: 'code',
             mime: 'text/x-sh',
             content: childContent(safeSpec.help, safeFallbacks.help)
@@ -307,7 +319,7 @@ function beRun(params) {
     /** Create one option note under a tool's Options folder. */
     function createOptionNote(folder, spec) {
         const safe = spec || {};
-        const title = nonEmpty(safe.label) ? String(safe.label) : 'Option';
+        const title = nonEmpty(safe.label) ? String(safe.label) : text('back.noteOption', 'Option');
         const note = track(api.createNewNote({
             parentNoteId: folder.noteId,
             title: title,
@@ -398,11 +410,20 @@ function beRun(params) {
         if (!root) {
             root = api.createNewNote({
                 parentNoteId: parentForRoot(),
-                title: 'Command Maker',
+                title: text('back.noteSettings', 'Command Maker'),
                 type: 'text',
-                content: 'Command Maker settings. The plugin finds this note through its label.'
+                content: text('back.noteSettingsContent', 'Command Maker settings. The plugin finds this note through its label.')
             }).note;
             root.setLabel(labels.root, '');
+        }
+
+        // Record the active language once, so the setting is discoverable and
+        // later switches have a label to update.
+        if (nonEmpty(options.lang) && labels.lang) {
+            const configured = root.getLabelValue(labels.lang);
+            if (configured === null || configured === undefined || String(configured).trim() === '') {
+                root.setLabel(labels.lang, String(options.lang));
+            }
         }
 
         if (nonEmpty(options.version) && root.getLabelValue(labels.version) !== String(options.version)) {
@@ -413,9 +434,9 @@ function beRun(params) {
         if (!toolsRoot) {
             toolsRoot = api.createNewNote({
                 parentNoteId: root.noteId,
-                title: 'Tools',
+                title: text('back.noteTools', 'Tools'),
                 type: 'text',
-                content: 'Tool notes live in this folder, grouped by category. Move it anywhere; the label is what matters.'
+                content: text('back.noteToolsContent', 'Tool notes live in this folder, grouped by category. Move it anywhere; the label is what matters.')
             }).note;
             toolsRoot.setLabel(labels.tools, '');
             toolsRoot.setLabel(labels.managed, '');
@@ -439,7 +460,7 @@ function beRun(params) {
     }
 
     function createTool() {
-        const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
+        const toolsRoot = requireNote(options.toolsRootId, text('back.errorToolsRoot', 'Tools root not found'));
         const note = createToolNote(
             toolsRoot,
             {
@@ -466,7 +487,7 @@ function beRun(params) {
 
     /** Recreate a tool from a portable tool file (see src/toolfile.js). */
     function importTool() {
-        const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
+        const toolsRoot = requireNote(options.toolsRootId, text('back.errorToolsRoot', 'Tools root not found'));
         const note = createToolNote(toolsRoot, options.tool || {}, options.newToolNotes || {});
         const folder = findChildWithLabel(note, labels.options);
         const presets = folder ? findChildWithLabel(folder, labels.presets) : null;
@@ -523,9 +544,9 @@ function beRun(params) {
      * or hostile note id can never remove an unrelated note.
      */
     function deleteOption() {
-        const note = requireNote(options.noteId, 'Option note not found');
+        const note = requireNote(options.noteId, text('back.errorOptionNote', 'Option note not found'));
         if (!hasLabel(note, labels.option)) {
-            throw new Error('Note is not an option of a tool: ' + note.noteId);
+            throw new Error(text('back.errorNotAnOptionPrefix', 'Note is not an option of a tool: ') + note.noteId);
         }
         note.deleteNote();
         return { ok: true };
@@ -544,7 +565,7 @@ function beRun(params) {
     }
 
     function setToolsRoot() {
-        const target = requireNote(options.noteId, 'Note not found');
+        const target = requireNote(options.noteId, text('back.errorNoteNotFound', 'Note not found'));
         // Set the new pointer first: if removing the label from a previous root
         // fails afterwards, the tools stay visible instead of losing the
         // pointer and making the next bootstrap seed an empty folder.
@@ -580,7 +601,7 @@ function beRun(params) {
         const location = presetsLocation(options.toolId);
         const read = readPresets(location.presets);
         if (!read.valid) {
-            throw new Error('The Presets note is not valid JSON. Fix or delete it before saving a preset.');
+            throw new Error(text('back.errorPresetsSave', 'The Presets note is not valid JSON. Fix or delete it before saving a preset.'));
         }
         const data = read.data;
         const name = nonEmpty(options.name) ? String(options.name) : 'Preset';
@@ -608,7 +629,7 @@ function beRun(params) {
         const location = presetsLocation(options.toolId);
         const read = readPresets(location.presets);
         if (!read.valid) {
-            throw new Error('The Presets note is not valid JSON. Fix or delete it before deleting a preset.');
+            throw new Error(text('back.errorPresetsDelete', 'The Presets note is not valid JSON. Fix or delete it before deleting a preset.'));
         }
         const data = read.data;
         const name = String(options.name == null ? '' : options.name);
@@ -631,12 +652,12 @@ function beRun(params) {
      * user can move them freely and re-clicking never duplicates anything.
      */
     function ensureTab() {
-        const root = requireNote(options.rootId, 'Command Maker settings note not found');
+        const root = requireNote(options.rootId, text('back.errorSettingsNote', 'Command Maker settings note not found'));
         let html = api.getNoteWithLabel(labels.tabHtml);
         if (!html) {
             html = api.createNewNote({
                 parentNoteId: root.noteId,
-                title: 'Command Maker tab',
+                title: text('back.noteTabTitle', 'Command Maker tab'),
                 type: 'code',
                 mime: 'text/html',
                 content: '<div class="cm-tab-root"></div>'
@@ -647,7 +668,7 @@ function beRun(params) {
         if (!tab) {
             tab = api.createNewNote({
                 parentNoteId: root.noteId,
-                title: 'Command Maker',
+                title: text('back.noteTabRenderTitle', 'Command Maker'),
                 type: 'render',
                 content: ''
             }).note;
@@ -664,9 +685,20 @@ function beRun(params) {
         return { tabNoteId: tab.noteId, htmlNoteId: html.noteId };
     }
 
+    function setLanguage() {
+        const root = requireNote(options.rootId, text('back.errorSettingsNote', 'Command Maker settings note not found'));
+        if (!labels.lang) {
+            throw new Error(text('back.errorUnknownActionPrefix', 'Unknown action: ') + 'setLanguage');
+        }
+        root.setLabel(labels.lang, String(options.lang == null ? '' : options.lang));
+        return { ok: true, lang: String(options.lang == null ? '' : options.lang) };
+    }
+
     switch (options.action) {
         case 'bootstrap':
             return bootstrap();
+        case 'setLanguage':
+            return setLanguage();
         case 'createTool':
             return createTool();
         case 'importTool':
@@ -688,7 +720,7 @@ function beRun(params) {
         case 'ensureTab':
             return ensureTab();
         default:
-            throw new Error('Unknown action: ' + options.action);
+            throw new Error(text('back.errorUnknownActionPrefix', 'Unknown action: ') + options.action);
     }
 }
 

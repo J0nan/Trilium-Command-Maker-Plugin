@@ -1,5 +1,7 @@
 'use strict';
 
+const I18n = require('./i18n');
+
 /**
  * Pure command assembly. No Trilium API, no DOM; safe to unit test in Node.
  *
@@ -157,14 +159,14 @@ function renderCommand(definition, values) {
         if (isEmpty(value)) {
             warnings.push({
                 code: 'missing-placeholder',
-                message: 'Placeholder {{' + name + '}} has no value.'
+                message: I18n.t('warn.placeholderNoValue', { name: name })
             });
             return '';
         }
         if (option && option.type === 'number' && !isFinite(Number(value))) {
             warnings.push({
                 code: 'invalid-number',
-                message: 'Placeholder {{' + name + '}} expects a number.'
+                message: I18n.t('warn.placeholderNotNumber', { name: name })
             });
         }
         return String(value);
@@ -183,7 +185,7 @@ function renderCommand(definition, values) {
             if (option.placeholder) {
                 warnings.push({
                     code: 'unused-inline',
-                    message: 'Option "' + option.title + '" is inline but {{' + option.placeholder + '}} is not in the command.'
+                    message: I18n.t('warn.inlineMissing', { title: option.title, placeholder: option.placeholder })
                 });
             }
             continue;
@@ -194,7 +196,7 @@ function renderCommand(definition, values) {
             if (option.required) {
                 warnings.push({
                     code: 'missing-required',
-                    message: 'Option "' + option.title + '" is required.'
+                    message: I18n.t('warn.optionRequired', { title: option.title })
                 });
             }
             continue;
@@ -203,7 +205,7 @@ function renderCommand(definition, values) {
         if (option.type === 'number' && !isFinite(Number(value))) {
             warnings.push({
                 code: 'invalid-number',
-                message: 'Option "' + option.title + '" expects a number.'
+                message: I18n.t('warn.optionNotNumber', { title: option.title })
             });
             continue;
         }

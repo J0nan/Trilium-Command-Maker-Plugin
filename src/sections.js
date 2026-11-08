@@ -19,9 +19,9 @@ const SAFE_URL_RE = /^(?:https?|mailto):/i;
 /** `<pre>`, `<p>` and `<li>` blocks, in source order. */
 const BLOCK_RE = /<(pre|p|li)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi;
 
-const WHAT_IS = 'what is';
-const OFFICIAL = 'official links';
-const USEFUL = 'useful links';
+const WHAT_IS = ['what is', 'qué es', 'que es'];
+const OFFICIAL = ['official links', 'enlaces oficiales'];
+const USEFUL = ['useful links', 'enlaces útiles', 'enlaces utiles'];
 
 const MAX_EXAMPLES = 50;
 
@@ -50,7 +50,7 @@ function normalizeHeading(value) {
     return trim(value)
         .toLowerCase()
         .replace(/\s+/g, ' ')
-        .replace(/[?？:;.,!\u2026]+/g, '')
+        .replace(/[?？:;.,!\u2026\u00bf\u00a1]+/g, '')
         .trim();
 }
 
@@ -92,9 +92,9 @@ function linksInSection(html, section) {
 }
 
 function findSectionKey(sections, wanted) {
-    const needle = normalizeHeading(wanted);
+    const needles = (Array.isArray(wanted) ? wanted : [wanted]).map(normalizeHeading);
     for (const heading of Object.keys(sections)) {
-        if (normalizeHeading(heading) === needle) {
+        if (needles.indexOf(normalizeHeading(heading)) !== -1) {
             return heading;
         }
     }

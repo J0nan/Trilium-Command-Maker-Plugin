@@ -1,5 +1,7 @@
 'use strict';
 
+const I18n = require('./i18n');
+
 /**
  * Small DOM helpers shared by the palette. Nothing here knows about Trilium:
  * the palette receives its data through the controller (see runtime.js), which
@@ -129,7 +131,7 @@ async function copyText(text) {
 /** Save text as a local file. Throws when the runtime has no Blob/URL support. */
 function downloadText(filename, value, mime) {
     if (typeof Blob === 'undefined' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
-        throw new Error('This environment cannot download files. Copy the text instead.');
+        throw new Error(I18n.t('error.downloadUnsupported'));
     }
     const blob = new Blob([value], { type: mime || 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -152,7 +154,7 @@ function readFileText(file) {
     }
     return new Promise(function (resolve, reject) {
         if (typeof FileReader === 'undefined') {
-            reject(new Error('This browser cannot read local files.'));
+            reject(new Error(I18n.t('error.filesUnsupported')));
             return;
         }
         const reader = new FileReader();
@@ -160,7 +162,7 @@ function readFileText(file) {
             resolve(String(reader.result || ''));
         };
         reader.onerror = function () {
-            reject(new Error('Could not read the selected file.'));
+            reject(new Error(I18n.t('error.fileRead')));
         };
         reader.readAsText(file);
     });

@@ -22,6 +22,7 @@
 
 const Model = require('./model');
 const Render = require('./render');
+const I18n = require('./i18n');
 
 const TYPES = Model.TYPES;
 const PATH_TOKENS = ['PATH', 'FILE', 'DIR', 'FOLDER'];
@@ -626,8 +627,11 @@ function pushOption(options, warnings, seen, option, origin) {
         return;
     }
     if (seen.has(option.flag)) {
-        warnings.push(warning('duplicate-flag', 'Option "' + option.flag + '" from ' + origin
-            + ' duplicates the earlier one on ' + seen.get(option.flag) + '; the first one wins.'));
+        warnings.push(warning('duplicate-flag', I18n.t('warn.duplicateFlagOption', {
+            flag: option.flag,
+            origin: origin,
+            first: seen.get(option.flag)
+        })));
         return;
     }
     seen.set(option.flag, origin);
@@ -676,7 +680,7 @@ function parseHelpText(text) {
         const read = readHelpLine(trimmed);
         if (!read || read.loose) {
             warnings.push(warning('unparsed-option-line',
-                'Could not parse the option line "' + trimmed + '".', { line: index + 1, text: trimmed }));
+                I18n.t('warn.unparsedOptionLine', { text: trimmed }), { line: index + 1, text: trimmed }));
             current = null;
             continue;
         }
@@ -690,7 +694,7 @@ function parseHelpText(text) {
         });
         if (!option) {
             warnings.push(warning('unparsed-option-line',
-                'Could not parse the option line "' + trimmed + '".', { line: index + 1, text: trimmed }));
+                I18n.t('warn.unparsedOptionLine', { text: trimmed }), { line: index + 1, text: trimmed }));
             current = null;
             continue;
         }
@@ -711,13 +715,13 @@ function parseJsonOptions(text) {
     const warnings = [];
     const source = String(text == null ? '' : text);
     if (source.trim() === '') {
-        return { options: [], warnings: [warning('invalid-json', 'The JSON import is empty.')] };
+        return { options: [], warnings: [warning('invalid-json', I18n.t('warn.jsonEmpty'))] };
     }
     let data;
     try {
         data = JSON.parse(source);
     } catch (err) {
-        return { options: [], warnings: [warning('invalid-json', 'Not valid JSON: ' + String(err && err.message || err))] };
+        return { options: [], warnings: [warning('invalid-json', I18n.t('warn.notValidJson', { error: String(err && err.message || err) }))] };
     }
 
     let list = null;
@@ -731,7 +735,7 @@ function parseJsonOptions(text) {
         }
     }
     if (list === null) {
-        return { options: [], warnings: [warning('invalid-json', 'No options array found in the JSON.')] };
+        return { options: [], warnings: [warning('invalid-json', I18n.t('warn.noOptionsArray'))] };
     }
 
     const options = [];
@@ -740,11 +744,11 @@ function parseJsonOptions(text) {
         const entry = list[index];
         const origin = 'entry ' + (index + 1);
         if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-            warnings.push(warning('invalid-entry', origin + ' is not an object.', { line: index + 1 }));
+            warnings.push(warning('invalid-entry', I18n.t('warn.entryNotObject', { origin: origin }), { line: index + 1 }));
             continue;
         }
         if (entry.flag === undefined || entry.flag === null || String(entry.flag).trim() === '') {
-            warnings.push(warning('invalid-entry', origin + ' has no flag.', { line: index + 1 }));
+            warnings.push(warning('invalid-entry', I18n.t('warn.entryNoFlag', { origin: origin }), { line: index + 1 }));
             continue;
         }
         const aliases = Array.isArray(entry.aliases)
@@ -768,7 +772,7 @@ function parseJsonOptions(text) {
             index: options.length
         });
         if (!option) {
-            warnings.push(warning('invalid-entry', origin + ' has an unusable flag.', { line: index + 1 }));
+            warnings.push(warning('invalid-entry', I18n.t('warn.entryUnusableFlag', { origin: origin }), { line: index + 1 }));
             continue;
         }
         pushOption(options, warnings, seen, option, origin);
@@ -813,7 +817,7 @@ function parseMarkdownTable(text) {
     const warnings = [];
     const source = String(text == null ? '' : text);
     if (/^\s*<(?:table|tr|thead|tbody)\b/i.test(source)) {
-        warnings.push(warning('no-table', 'HTML tables are not supported; use a markdown table.'));
+        warnings.push(warning('no-table', I18n.t('warn.htmlTable')));
         return { options: [], warnings: warnings };
     }
     const rows = [];
@@ -830,7 +834,7 @@ function parseMarkdownTable(text) {
         }
     }
     if (rows.length === 0) {
-        warnings.push(warning('no-table', 'No markdown table rows were found.'));
+        warnings.push(warning('no-table', I18n.t('warn.noTableRows')));
         return { options: [], warnings: warnings };
     }
 
@@ -848,7 +852,7 @@ function parseMarkdownTable(text) {
         }
     }
     if (flagColumn === -1) {
-        warnings.push(warning('no-flag-column', 'The table header has no flag column.'));
+        warnings.push(warning('no-flag-column', I18n.t('warn.noFlagColumn')));
         return { options: [], warnings: warnings };
     }
     const named = function (pattern) {
@@ -872,7 +876,7 @@ function parseMarkdownTable(text) {
         const rawFlag = cell(columns, flagColumn);
         const origin = 'table row ' + (index + 1);
         if (rawFlag === '') {
-            warnings.push(warning('invalid-entry', origin + ' has no flag.', { line: index + 1 }));
+            warnings.push(warning('invalid-entry', I18n.t('warn.entryNoFlag', { origin: origin }), { line: index + 1 }));
             continue;
         }
         const help = helpColumn === -1 ? cell(columns, flagColumn + 1) : cell(columns, helpColumn);
@@ -889,7 +893,7 @@ function parseMarkdownTable(text) {
             index: options.length
         });
         if (!option) {
-            warnings.push(warning('invalid-entry', origin + ' has an unusable flag "' + rawFlag + '".', { line: index + 1 }));
+            warnings.push(warning('invalid-entry', I18n.t('warn.entryUnusableFlagValue', { origin: origin, flag: rawFlag }), { line: index + 1 }));
             continue;
         }
         if (typeColumn === -1 && type === '') {

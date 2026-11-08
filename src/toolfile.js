@@ -28,6 +28,7 @@
  */
 
 const Model = require('./model');
+const I18n = require('./i18n');
 
 const TOOL_KIND = 'command-maker-tool';
 const FILE_VERSION = 2;
@@ -107,7 +108,7 @@ function normaliseType(raw, warnings) {
     }
     warnings.push({
         code: 'invalid-type',
-        message: 'Unknown option type "' + value + '"; using string.'
+        message: I18n.t('warn.unknownType', { value: value })
     });
     return 'string';
 }
@@ -127,7 +128,7 @@ function normaliseOption(entry, index, warnings) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
         warnings.push({
             code: 'invalid-option',
-            message: 'Option entry ' + (index + 1) + ' is not an object.'
+            message: I18n.t('warn.optionEntryNotObject', { index: index + 1 })
         });
         return null;
     }
@@ -140,7 +141,7 @@ function normaliseOption(entry, index, warnings) {
     if (label === '' && flag === '') {
         warnings.push({
             code: 'invalid-option',
-            message: 'Option entry ' + (index + 1) + ' has no label and no flag.'
+            message: I18n.t('warn.optionEntryNoName', { index: index + 1 })
         });
         return null;
     }
@@ -190,7 +191,7 @@ function normaliseTool(spec, warnings) {
     } else if (source.options !== undefined && source.options !== null) {
         warnings.push({
             code: 'invalid-options',
-            message: 'The tool "options" field is not an array; no options were read.'
+            message: I18n.t('warn.optionsNotArray')
         });
     }
 
@@ -232,7 +233,7 @@ function parseToolFile(source) {
     const warnings = [];
     const raw = text(source).trim();
     if (raw === '') {
-        warnings.push({ code: 'invalid-json', message: 'The tool file is empty.' });
+        warnings.push({ code: 'invalid-json', message: I18n.t('warn.fileEmpty') });
         return { tool: null, warnings: warnings };
     }
 
@@ -242,13 +243,13 @@ function parseToolFile(source) {
     } catch (error) {
         warnings.push({
             code: 'invalid-json',
-            message: 'Not valid JSON: ' + (error && error.message ? error.message : error)
+            message: I18n.t('warn.notValidJson', { error: error && error.message ? error.message : error })
         });
         return { tool: null, warnings: warnings };
     }
 
     if (!data || typeof data !== 'object' || Array.isArray(data)) {
-        warnings.push({ code: 'invalid-json', message: 'The tool file must be a JSON object.' });
+        warnings.push({ code: 'invalid-json', message: I18n.t('warn.fileNotObject') });
         return { tool: null, warnings: warnings };
     }
 
@@ -257,15 +258,14 @@ function parseToolFile(source) {
     if (data.version !== undefined && trimmed(data.version) !== String(FILE_VERSION)) {
         warnings.push({
             code: 'unsupported-version',
-            message: 'This plugin reads tool files version ' + FILE_VERSION +
-                '; the file declares version "' + trimmed(data.version) + '".'
+            message: I18n.t('warn.unsupportedVersion', { supported: FILE_VERSION, version: trimmed(data.version) })
         });
         return { tool: null, warnings: warnings };
     }
     if (data.kind !== undefined && trimmed(data.kind) !== '' && trimmed(data.kind) !== TOOL_KIND) {
         warnings.push({
             code: 'unexpected-kind',
-            message: 'Unexpected file kind "' + trimmed(data.kind) + '"; expected "' + TOOL_KIND + '".'
+            message: I18n.t('warn.unexpectedKind', { kind: trimmed(data.kind), expected: TOOL_KIND })
         });
     }
 
@@ -274,14 +274,13 @@ function parseToolFile(source) {
         : data;
     const tool = normaliseTool(spec, warnings);
     if (!nonEmpty(tool.title)) {
-        warnings.push({ code: 'missing-title', message: 'The tool file has no "title".' });
+        warnings.push({ code: 'missing-title', message: I18n.t('warn.missingTitle') });
         return { tool: null, warnings: warnings };
     }
     if (tool.options.length > MAX_OPTIONS) {
         warnings.push({
             code: 'too-many-options',
-            message: 'The tool file lists ' + tool.options.length +
-                ' options; only the first ' + MAX_OPTIONS + ' are imported.'
+            message: I18n.t('warn.tooManyOptions', { count: tool.options.length, max: MAX_OPTIONS })
         });
         tool.options = tool.options.slice(0, MAX_OPTIONS);
     }
