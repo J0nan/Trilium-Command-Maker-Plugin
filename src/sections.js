@@ -250,7 +250,7 @@ function sanitizeNoteHtml(html) {
                 : '';
             return href === ''
                 ? '<a>'
-                : '<a href="' + escapeAttribute(href) + '" target="_blank" rel="noreferrer">';
+                : '<a href="' + escapeAttribute(href) + '" target="_blank" rel="noopener noreferrer">';
         }
         return '<' + tag + '>';
     }).replace(TRAILING_UNCLOSED_TAG_RE, '');

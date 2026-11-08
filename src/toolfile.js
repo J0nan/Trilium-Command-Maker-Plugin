@@ -87,7 +87,8 @@ function normalisePresets(raw) {
                     continue;
                 }
                 const value = entry.values[key];
-                if (value === null || typeof value === 'object' || typeof value === 'function') {
+                const type = typeof value;
+                if (type !== 'string' && type !== 'number' && type !== 'boolean') {
                     continue;
                 }
                 values[key] = value;

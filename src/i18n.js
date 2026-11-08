@@ -38,6 +38,8 @@ const EN = {
     'ui.toolsFolder': 'Tools folder',
     'ui.repository': 'Repository',
     'ui.language': 'Language',
+    'lang.en': 'English',
+    'lang.es': 'Español',
     'ui.checkUpdates': 'Check for updates',
     'ui.versionMenu': 'Version and settings',
     'ui.loading': 'Loading…',
@@ -446,6 +448,8 @@ const ES = {
     'ui.toolsFolder': 'Carpeta de herramientas',
     'ui.repository': 'Repositorio',
     'ui.language': 'Idioma',
+    'lang.en': 'English',
+    'lang.es': 'Español',
     'ui.checkUpdates': 'Buscar actualizaciones',
     'ui.versionMenu': 'Versión y ajustes',
     'ui.loading': 'Cargando…',
@@ -911,7 +915,7 @@ const BACKEND_KEYS = [
     'back.toolContent',
     'back.errorToolsRoot', 'back.errorToolNote', 'back.errorOptionNote',
     'back.errorSettingsNote', 'back.errorNotAnOptionPrefix',
-    'back.errorNoteNotFound', 'back.errorNoteNotFoundPrefix',
+    'back.errorNoteNotFound',
     'back.errorPresetsSave', 'back.errorPresetsDelete',
     'back.errorUnknownActionPrefix'
 ];

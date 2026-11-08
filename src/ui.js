@@ -51,7 +51,7 @@ const I18n = require('./i18n');
 const CODE_COPY_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 2H10c-1.103 0-2 .897-2 2v4H4c-1.103 0-2 .897-2 2v10c0 1.103.897 2 2 2h10c1.103 0 2-.897 2-2v-4h4c1.103 0 2-.897 2-2V4c0-1.103-.897-2-2-2zM4 20V10h10l.002 10H4zm16-6h-4v-4c0-1.103-.897-2-2-2h-4V4h10v10z"></path></svg>';
 
 function codeCopyButton() {
-    const label = I18n.t('ui.copy');
+    const label = Sections.escapeHtml(I18n.t('ui.copy'));
     return '<button type="button" class="cm-code-copy" title="' + label + '" aria-label="' + label + '">' + CODE_COPY_ICON + '</button>';
 }
 
@@ -212,7 +212,7 @@ function openPalette(controller, options) {
     repoLink.textContent = I18n.t('ui.repository');
     repoLink.href = controller.repository();
     repoLink.target = '_blank';
-    repoLink.rel = 'noreferrer';
+    repoLink.rel = 'noopener noreferrer';
     footer.appendChild(newToolButton);
     footer.appendChild(importToolButton);
     footer.appendChild(importButton);
@@ -293,9 +293,10 @@ function openPalette(controller, options) {
         menu.appendChild(Dom.el('div', 'cm-menu-sep'));
         menu.appendChild(Dom.el('div', 'cm-menu-title', I18n.t('ui.language')));
 
-        [['en', 'English'], ['es', 'Español']].forEach(function (pair) {
-            const active = I18n.getLocale() === pair[0];
-            const item = Dom.el('button', 'cm-menu-item cm-menu-radio' + (active ? ' is-checked' : ''), pair[1]);
+        // Driven by the active catalog: adding a language never needs a UI edit.
+        I18n.LOCALES.forEach(function (code) {
+            const active = I18n.getLocale() === code;
+            const item = Dom.el('button', 'cm-menu-item cm-menu-radio' + (active ? ' is-checked' : ''), I18n.t('lang.' + code));
             item.type = 'button';
             item.setAttribute('role', 'menuitemradio');
             item.setAttribute('aria-checked', active ? 'true' : 'false');
@@ -308,7 +309,7 @@ function openPalette(controller, options) {
                     closeMenu();
                     return;
                 }
-                await controller.setLanguage(pair[0]);
+                await controller.setLanguage(code);
                 remount();
             }, notify));
             menu.appendChild(item);
@@ -366,7 +367,7 @@ function openPalette(controller, options) {
             setStatus(I18n.t('status.updateError', { version: info.current, error: info.error }), true);
             return;
         }
-        if (info.latest && info.latest !== info.current) {
+        if (info.outdated && info.latest) {
             versionLabel.textContent = 'v' + info.current + ' → v' + info.latest;
             versionButton.title = I18n.t('status.installedLatest', { current: info.current, latest: info.latest });
         }
@@ -385,9 +386,10 @@ function openPalette(controller, options) {
     function button(label, handler, className) {
         const node = Dom.el('button', 'cm-button' + (className ? ' ' + className : ''), label);
         node.type = 'button';
+        const listener = guarded(handler, notify);
         node.addEventListener('click', function (event) {
             event.preventDefault();
-            guarded(handler, notify).call(node, event);
+            listener.call(node, event);
         });
         return node;
     }
@@ -955,7 +957,7 @@ function openPalette(controller, options) {
             anchor.textContent = link.text;
             anchor.href = link.href;
             anchor.target = '_blank';
-            anchor.rel = 'noreferrer';
+            anchor.rel = 'noopener noreferrer';
             block.appendChild(anchor);
         });
         return block;
@@ -1779,13 +1781,13 @@ function openPalette(controller, options) {
         bodyNode.appendChild(idRow);
 
         let root = null;
-        guarded(async function () {
-            root = await controller.currentToolsRoot();
+        controller.currentToolsRoot().then(function (value) {
+            root = value;
             info.textContent = root
                 ? I18n.t('toolsFolder.current', { title: root.title, id: root.noteId })
                 : I18n.t('toolsFolder.none');
             openFolder.disabled = !root;
-        }, notify)();
+        }, notify);
 
         active.addEventListener('click', guarded(async function () {
             await controller.useActiveNoteAsToolsRoot();

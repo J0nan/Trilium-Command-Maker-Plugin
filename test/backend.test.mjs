@@ -682,6 +682,63 @@ test('savePreset and deletePreset round-trip through the JSON note', () => {
     assert.equal(presets.getContent(), 'this is not json');
 });
 
+test('importOptions leaves nothing behind when a note creation fails midway', () => {
+    const api = createApi();
+    const beRun = serialise(Backend.beRun, api);
+    const { toolsRootId } = boot(api, beRun);
+    const created = beRun({ action: 'createTool', labels, toolsRootId, title: 'rg', base: 'rg' });
+    const folder = api.getNote(created.optionsFolderId);
+    const before = folder.getChildNotes().length;
+
+    const createNewNote = api.createNewNote;
+    let calls = 0;
+    api.createNewNote = function (params) {
+        calls += 1;
+        if (calls === 3) {
+            throw new Error('quota exceeded');
+        }
+        return createNewNote(params);
+    };
+
+    assert.throws(function () {
+        beRun({
+            action: 'importOptions',
+            labels,
+            toolId: created.noteId,
+            options: [
+                { label: 'One', flag: '--one', type: 'string' },
+                { label: 'Two', flag: '--two', type: 'string' },
+                { label: 'Three', flag: '--three', type: 'string' }
+            ]
+        });
+    }, /quota exceeded/);
+
+    const alive = folder.getChildNotes().filter(function (child) {
+        return !child.deleted;
+    });
+    assert.equal(alive.length, before, 'no half-imported option notes remain');
+    assert.equal(labelledChildren(folder, labels.option).filter(function (child) {
+        return !child.deleted;
+    }).length, 0);
+});
+
+test('savePreset stores own primitive values only', () => {
+    const api = createApi();
+    const beRun = serialise(Backend.beRun, api);
+    const { toolsRootId } = boot(api, beRun);
+    const created = beRun({ action: 'createTool', labels, toolsRootId, title: 'sed', base: 'sed' });
+    const presets = api.getNote(created.presetsId);
+
+    // A JSON object can carry a literal __proto__ key; a script call can carry
+    // a nested object. Neither may reach the stored note.
+    const values = JSON.parse('{"note:a":"1","n":2,"b":true,"deep":{"x":1},"list":[1],"__proto__":"nope"}');
+    beRun({ action: 'savePreset', labels, toolId: created.noteId, name: 'mix', values: values });
+
+    const saved = JSON.parse(presets.getContent()).presets[0];
+    assert.deepEqual(saved, { name: 'mix', values: { 'note:a': '1', n: 2, b: true } });
+    assert.equal(Object.prototype.hasOwnProperty.call(saved.values, '__proto__'), false);
+});
+
 test('setToolBase sets and clears the base label', () => {
     const api = createApi();
     const beRun = serialise(Backend.beRun, api);
