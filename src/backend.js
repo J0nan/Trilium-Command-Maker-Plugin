@@ -546,17 +546,33 @@ function beRun(params) {
 
     function setToolsRoot() {
         const target = requireNote(options.noteId, 'Note not found');
-        // Set the new pointer first: if removing the label from the old root
+        // Set the new pointer first: if removing the label from a previous root
         // fails afterwards, the tools stay visible instead of losing the
         // pointer and making the next bootstrap seed an empty folder.
         target.setLabel(labels.tools, '');
         // A folder the user picks is theirs: never seed examples into it.
         target.setLabel(labels.seeded, '');
-        if (options.oldToolsRootId && options.oldToolsRootId !== options.noteId) {
-            const old = api.getNote(options.oldToolsRootId);
-            if (old && typeof old.removeLabel === 'function') {
-                old.removeLabel(labels.tools);
+        // Exactly one root may hold #cmTools: a second one — left by a
+        // half-finished move or labelled by hand — would be picked
+        // arbitrarily by the loader. Sweep the pointer off every other note,
+        // reporting failures only after the sweep so the new pointer stands.
+        let removalFailure = null;
+        const roots = api.getNotesWithLabel(labels.tools);
+        for (let index = 0; index < roots.length; index += 1) {
+            const note = roots[index];
+            if (!note || note.noteId === target.noteId) {
+                continue;
             }
+            try {
+                note.removeLabel(labels.tools);
+            } catch (error) {
+                if (!removalFailure) {
+                    removalFailure = error;
+                }
+            }
+        }
+        if (removalFailure) {
+            throw removalFailure;
         }
         return { ok: true };
     }

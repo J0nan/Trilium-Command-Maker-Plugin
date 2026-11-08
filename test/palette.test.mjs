@@ -838,7 +838,7 @@ function buttonWithText(root, text) {
 
 const portableTool = {
     kind: 'command-maker-tool',
-    version: 1,
+    version: 2,
     tool: {
         title: 'ripgrep',
         category: 'Search',

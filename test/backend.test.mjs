@@ -278,7 +278,7 @@ test('relocating the Tools folder never seeds the chosen note', () => {
         type: 'text',
         content: 'user data'
     }).note;
-    beRun({ action: 'setToolsRoot', labels, noteId: userFolder.noteId, oldToolsRootId: result.toolsRootId });
+    beRun({ action: 'setToolsRoot', labels, noteId: userFolder.noteId });
     const before = api.getNotesWithLabel(labels.tool).length;
     const again = beRun({
         action: 'bootstrap',
@@ -310,8 +310,7 @@ test('setToolsRoot keeps the pointer when removing the old label fails', () => {
     assert.throws(() => beRun({
         action: 'setToolsRoot',
         labels,
-        noteId: userFolder.noteId,
-        oldToolsRootId: result.toolsRootId
+        noteId: userFolder.noteId
     }), 'the failure still surfaces to the caller');
 
     assert.ok(
@@ -723,8 +722,7 @@ test('setToolsRoot moves the Tools label and clears the old root', () => {
     const moved = beRun({
         action: 'setToolsRoot',
         labels,
-        noteId: elsewhere.noteId,
-        oldToolsRootId: toolsRootId
+        noteId: elsewhere.noteId
     });
     assert.equal(moved.ok, true);
     assert.equal(api.getNoteWithLabel(labels.tools).noteId, elsewhere.noteId);
@@ -732,6 +730,32 @@ test('setToolsRoot moves the Tools label and clears the old root', () => {
     assert.equal(api.getNote(toolsRootId).hasLabel(labels.tools), false, 'the old root is cleared');
 
     assert.throws(() => beRun({ action: 'setToolsRoot', labels, noteId: 'nope' }), /Note not found/);
+});
+
+test('setToolsRoot sweeps extra #cmTools labels, including hand-placed ones', () => {
+    const api = createApi();
+    const beRun = serialise(Backend.beRun, api);
+    const { toolsRootId } = boot(api, beRun);
+    const today = api.getTodayNote().noteId;
+    const handPlaced = api.createNewNote({
+        parentNoteId: today,
+        title: 'Hand-placed root',
+        type: 'text',
+        content: ''
+    }).note;
+    handPlaced.setLabel(labels.tools, '');
+    const target = api.createNewNote({
+        parentNoteId: today,
+        title: 'Target',
+        type: 'text',
+        content: ''
+    }).note;
+
+    beRun({ action: 'setToolsRoot', labels, noteId: target.noteId });
+
+    assert.equal(api.getNoteWithLabel(labels.tools).noteId, target.noteId, 'the target holds the pointer');
+    assert.equal(api.getNote(toolsRootId).hasLabel(labels.tools), false, 'the old root is cleared');
+    assert.equal(handPlaced.hasLabel(labels.tools), false, 'a hand-placed second root loses the pointer');
 });
 
 test('importTool creates a tool note with its category, children and options', () => {

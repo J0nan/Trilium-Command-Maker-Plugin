@@ -325,13 +325,17 @@ Both work on one portable JSON file per tool:
   option with its note body, the `#cmTags` value and the presets, and shows the
   JSON. **Copy JSON** copies it; **Download .json** saves it as `<tool>.tool.json`.
   A version-2 file is therefore a real backup: importing it recreates the tool
-  with nothing dropped. Version-1 files still import, but they never carried
-  tags, option bodies or presets. (Preset values are keyed by option note IDs,
-  so after importing into a *different* instance the stored preset values may
-  not line up with the recreated option notes.)
+  with nothing the file holds dropped. (Preset values are keyed by option note
+  IDs, so after importing into a *different* instance the stored preset values
+  may not line up with the recreated option notes.) The file must carry
+  `"version": 2` — or no version at all, for hand-written objects, which are
+  read in the current shape; a file declaring any other version is rejected by
+  **Parse** and nothing is written.
 - **Import tool** accepts the same JSON from a paste, the active note or a file.
   It previews the title, category, base and options, then creates a new tool note
-  under that category. Existing tools are never modified or overwritten.
+  under that category. A file listing more than 200 options imports only the
+  first 200, with a warning in the preview. Existing tools are never modified or
+  overwritten.
 
 ### Generating the file with an AI model
 

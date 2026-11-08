@@ -484,10 +484,10 @@ function toolsRootId() {
 }
 
 async function setToolsRootAction(noteId) {
-    const current = await resolveToolsRoot();
+    // The backend sweeps #cmTools off every other note, so the caller no
+    // longer needs to hand over the previous root.
     await backendAction('setToolsRoot', {
-        noteId: noteId,
-        oldToolsRootId: current ? current.noteId : null
+        noteId: noteId
     });
     bootstrapPromise = null;
     bootstrapInfo = null;

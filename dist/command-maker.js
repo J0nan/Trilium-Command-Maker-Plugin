@@ -1504,8 +1504,9 @@ __def("toolfile", function (module, exports, __require) {
  * The palette exports a tool with buildToolFile() and imports one with
  * parseToolFile(). Both are pure: no Trilium API, no DOM, no file system.
  *
- * Shape (version 2; version 1 files still import — the new fields are
- * simply absent there, so a v1 backup cannot restore tags, bodies or presets):
+ * Shape (version 2 only: a file declaring any other version is rejected at
+ * import — this plugin reads nothing else. A bare or hand-written object
+ * without kind/version is read as the current shape):
  * {
  *   kind: 'command-maker-tool',
  *   version: 2,
@@ -1526,6 +1527,9 @@ const Model = __require("model");
 
 const TOOL_KIND = 'command-maker-tool';
 const FILE_VERSION = 2;
+// One tool file must not be able to create thousands of notes in a single
+// import: the same bound the parser applies to examples (MAX_EXAMPLES).
+const MAX_OPTIONS = 200;
 
 function text(value) {
     return value === undefined || value === null ? '' : String(value);
@@ -1744,6 +1748,23 @@ function parseToolFile(source) {
         return { tool: null, warnings: warnings };
     }
 
+    // Only the current file shape is read: a file that declares a version the
+    // plugin cannot interpret is refused instead of being half-trusted.
+    if (data.version !== undefined && trimmed(data.version) !== String(FILE_VERSION)) {
+        warnings.push({
+            code: 'unsupported-version',
+            message: 'This plugin reads tool files version ' + FILE_VERSION +
+                '; the file declares version "' + trimmed(data.version) + '".'
+        });
+        return { tool: null, warnings: warnings };
+    }
+    if (data.kind !== undefined && trimmed(data.kind) !== '' && trimmed(data.kind) !== TOOL_KIND) {
+        warnings.push({
+            code: 'unexpected-kind',
+            message: 'Unexpected file kind "' + trimmed(data.kind) + '"; expected "' + TOOL_KIND + '".'
+        });
+    }
+
     const spec = data.tool && typeof data.tool === 'object' && !Array.isArray(data.tool)
         ? data.tool
         : data;
@@ -1752,6 +1773,14 @@ function parseToolFile(source) {
         warnings.push({ code: 'missing-title', message: 'The tool file has no "title".' });
         return { tool: null, warnings: warnings };
     }
+    if (tool.options.length > MAX_OPTIONS) {
+        warnings.push({
+            code: 'too-many-options',
+            message: 'The tool file lists ' + tool.options.length +
+                ' options; only the first ' + MAX_OPTIONS + ' are imported.'
+        });
+        tool.options = tool.options.slice(0, MAX_OPTIONS);
+    }
 
     return { tool: tool, warnings: warnings };
 }
@@ -1759,6 +1788,7 @@ function parseToolFile(source) {
 module.exports = {
     TOOL_KIND,
     FILE_VERSION,
+    MAX_OPTIONS,
     normaliseOption,
     normaliseTool,
     buildToolFile,
@@ -3495,17 +3525,33 @@ function beRun(params) {
 
     function setToolsRoot() {
         const target = requireNote(options.noteId, 'Note not found');
-        // Set the new pointer first: if removing the label from the old root
+        // Set the new pointer first: if removing the label from a previous root
         // fails afterwards, the tools stay visible instead of losing the
         // pointer and making the next bootstrap seed an empty folder.
         target.setLabel(labels.tools, '');
         // A folder the user picks is theirs: never seed examples into it.
         target.setLabel(labels.seeded, '');
-        if (options.oldToolsRootId && options.oldToolsRootId !== options.noteId) {
-            const old = api.getNote(options.oldToolsRootId);
-            if (old && typeof old.removeLabel === 'function') {
-                old.removeLabel(labels.tools);
+        // Exactly one root may hold #cmTools: a second one — left by a
+        // half-finished move or labelled by hand — would be picked
+        // arbitrarily by the loader. Sweep the pointer off every other note,
+        // reporting failures only after the sweep so the new pointer stands.
+        let removalFailure = null;
+        const roots = api.getNotesWithLabel(labels.tools);
+        for (let index = 0; index < roots.length; index += 1) {
+            const note = roots[index];
+            if (!note || note.noteId === target.noteId) {
+                continue;
             }
+            try {
+                note.removeLabel(labels.tools);
+            } catch (error) {
+                if (!removalFailure) {
+                    removalFailure = error;
+                }
+            }
+        }
+        if (removalFailure) {
+            throw removalFailure;
         }
         return { ok: true };
     }
@@ -5820,10 +5866,10 @@ function toolsRootId() {
 }
 
 async function setToolsRootAction(noteId) {
-    const current = await resolveToolsRoot();
+    // The backend sweeps #cmTools off every other note, so the caller no
+    // longer needs to hand over the previous root.
     await backendAction('setToolsRoot', {
-        noteId: noteId,
-        oldToolsRootId: current ? current.noteId : null
+        noteId: noteId
     });
     bootstrapPromise = null;
     bootstrapInfo = null;

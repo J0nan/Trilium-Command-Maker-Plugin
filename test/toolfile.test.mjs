@@ -20,17 +20,40 @@ test('a tool file round-trips tags, presets and option content', () => {
     assert.deepEqual(parsed.tool.presets, [{ name: 'web', values: { 'note:o1': 'web.mp4' } }]);
 });
 
-test('version 1 files without the new fields still parse', () => {
-    const legacy = {
-        kind: 'command-maker-tool',
-        version: 1,
-        tool: { title: 'old', options: [{ label: 'L', flag: '-l', type: 'boolean' }] }
-    };
-    const parsed = ToolFile.parseToolFile(JSON.stringify(legacy));
-    assert.equal(parsed.tool.tags, '', 'missing tags read as empty');
-    assert.deepEqual(parsed.tool.presets, []);
-    assert.equal(parsed.tool.options[0].content, '');
-    assert.equal(parsed.warnings.length, 0, 'a legacy file is valid, not warned');
+test('files declaring another tool-file version are rejected, not imported', () => {
+    for (const version of [1, 3, 'one']) {
+        const parsed = ToolFile.parseToolFile(JSON.stringify({
+            kind: 'command-maker-tool',
+            version: version,
+            tool: { title: 'x', options: [{ label: 'L', flag: '-l', type: 'boolean' }] }
+        }));
+        assert.equal(parsed.tool, null, 'version ' + JSON.stringify(version) + ' is refused');
+        assert.match(
+            parsed.warnings.map((warning) => warning.code).join(' '),
+            /unsupported-version/,
+            'the rejection names the version'
+        );
+    }
+});
+
+test('a mismatched kind warns but still imports', () => {
+    const parsed = ToolFile.parseToolFile(JSON.stringify({
+        kind: 'other-tool',
+        version: 2,
+        tool: { title: 'x' }
+    }));
+    assert.equal(parsed.tool.title, 'x');
+    assert.ok(parsed.warnings.some((warning) => warning.code === 'unexpected-kind'));
+});
+
+test('huge option lists are capped at MAX_OPTIONS with a warning', () => {
+    const options = [];
+    for (let index = 0; index < ToolFile.MAX_OPTIONS + 5; index += 1) {
+        options.push({ label: 'o' + index, flag: '--o' + index });
+    }
+    const parsed = ToolFile.parseToolFile(JSON.stringify({ title: 'x', options: options }));
+    assert.equal(parsed.tool.options.length, ToolFile.MAX_OPTIONS);
+    assert.ok(parsed.warnings.some((warning) => warning.code === 'too-many-options'));
 });
 
 test('tool file presets are filtered to safe entries', () => {

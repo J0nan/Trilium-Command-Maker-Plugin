@@ -8,8 +8,9 @@
  * The palette exports a tool with buildToolFile() and imports one with
  * parseToolFile(). Both are pure: no Trilium API, no DOM, no file system.
  *
- * Shape (version 2; version 1 files still import — the new fields are
- * simply absent there, so a v1 backup cannot restore tags, bodies or presets):
+ * Shape (version 2 only: a file declaring any other version is rejected at
+ * import — this plugin reads nothing else. A bare or hand-written object
+ * without kind/version is read as the current shape):
  * {
  *   kind: 'command-maker-tool',
  *   version: 2,
@@ -30,6 +31,9 @@ const Model = require('./model');
 
 const TOOL_KIND = 'command-maker-tool';
 const FILE_VERSION = 2;
+// One tool file must not be able to create thousands of notes in a single
+// import: the same bound the parser applies to examples (MAX_EXAMPLES).
+const MAX_OPTIONS = 200;
 
 function text(value) {
     return value === undefined || value === null ? '' : String(value);
@@ -248,6 +252,23 @@ function parseToolFile(source) {
         return { tool: null, warnings: warnings };
     }
 
+    // Only the current file shape is read: a file that declares a version the
+    // plugin cannot interpret is refused instead of being half-trusted.
+    if (data.version !== undefined && trimmed(data.version) !== String(FILE_VERSION)) {
+        warnings.push({
+            code: 'unsupported-version',
+            message: 'This plugin reads tool files version ' + FILE_VERSION +
+                '; the file declares version "' + trimmed(data.version) + '".'
+        });
+        return { tool: null, warnings: warnings };
+    }
+    if (data.kind !== undefined && trimmed(data.kind) !== '' && trimmed(data.kind) !== TOOL_KIND) {
+        warnings.push({
+            code: 'unexpected-kind',
+            message: 'Unexpected file kind "' + trimmed(data.kind) + '"; expected "' + TOOL_KIND + '".'
+        });
+    }
+
     const spec = data.tool && typeof data.tool === 'object' && !Array.isArray(data.tool)
         ? data.tool
         : data;
@@ -256,6 +277,14 @@ function parseToolFile(source) {
         warnings.push({ code: 'missing-title', message: 'The tool file has no "title".' });
         return { tool: null, warnings: warnings };
     }
+    if (tool.options.length > MAX_OPTIONS) {
+        warnings.push({
+            code: 'too-many-options',
+            message: 'The tool file lists ' + tool.options.length +
+                ' options; only the first ' + MAX_OPTIONS + ' are imported.'
+        });
+        tool.options = tool.options.slice(0, MAX_OPTIONS);
+    }
 
     return { tool: tool, warnings: warnings };
 }
@@ -263,6 +292,7 @@ function parseToolFile(source) {
 module.exports = {
     TOOL_KIND,
     FILE_VERSION,
+    MAX_OPTIONS,
     normaliseOption,
     normaliseTool,
     buildToolFile,
