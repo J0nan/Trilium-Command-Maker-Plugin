@@ -4830,6 +4830,14 @@ function openPalette(controller, options) {
         return { modal: modal, body: modalBody, actions: modalActions };
     }
 
+    /** The Close action shared by every palette modal. */
+    function modalCloseButton() {
+        const node = Dom.el('button', 'cm-button', 'Close');
+        node.type = 'button';
+        node.addEventListener('click', closeModal);
+        return node;
+    }
+
     function openImport() {
         if (!state.current) {
             notify(new Error('Select a tool first.'));
@@ -4850,9 +4858,7 @@ function openPalette(controller, options) {
         const importSelected = Dom.el('button', 'cm-button', 'Import selected');
         importSelected.type = 'button';
         importSelected.disabled = true;
-        const closeButton2 = Dom.el('button', 'cm-button', 'Close');
-        closeButton2.type = 'button';
-        closeButton2.addEventListener('click', closeModal);
+        const closeButton2 = modalCloseButton();
 
         const warnings = Dom.el('div', 'cm-warnings', '');
         const previewList = Dom.el('div', 'cm-import-list', '');
@@ -4976,9 +4982,7 @@ function openPalette(controller, options) {
         const importSelected = Dom.el('button', 'cm-button', 'Import tool');
         importSelected.type = 'button';
         importSelected.disabled = true;
-        const closeButton2 = Dom.el('button', 'cm-button', 'Close');
-        closeButton2.type = 'button';
-        closeButton2.addEventListener('click', closeModal);
+        const closeButton2 = modalCloseButton();
 
         const warnings = Dom.el('div', 'cm-warnings', '');
         const previewList = Dom.el('div', 'cm-import-list', '');
@@ -5114,9 +5118,7 @@ function openPalette(controller, options) {
             setStatus('Downloaded ' + filename + '.');
         }, notify));
 
-        const closeButton2 = Dom.el('button', 'cm-button', 'Close');
-        closeButton2.type = 'button';
-        closeButton2.addEventListener('click', closeModal);
+        const closeButton2 = modalCloseButton();
 
         const actionsNode = Dom.el('div', 'cm-inline');
         actionsNode.appendChild(copyButton);
@@ -5212,9 +5214,7 @@ function openPalette(controller, options) {
             setStatus('Option added.');
         }, notify));
 
-        const closeButton2 = Dom.el('button', 'cm-button', 'Close');
-        closeButton2.type = 'button';
-        closeButton2.addEventListener('click', closeModal);
+        const closeButton2 = modalCloseButton();
 
         const bodyNode = Dom.el('div', '');
         bodyNode.appendChild(Dom.el('div', 'cm-note', 'The option is stored as a note under the tool\'s Options folder.'));
@@ -5296,9 +5296,7 @@ function openPalette(controller, options) {
         const actionsNode = Dom.el('div', 'cm-inline');
         actionsNode.appendChild(active);
         actionsNode.appendChild(openFolder);
-        const closeButton2 = Dom.el('button', 'cm-button', 'Close');
-        closeButton2.type = 'button';
-        closeButton2.addEventListener('click', closeModal);
+        const closeButton2 = modalCloseButton();
         actionsNode.appendChild(closeButton2);
 
         modalShell('Tools folder', bodyNode, actionsNode);
