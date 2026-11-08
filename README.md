@@ -31,7 +31,15 @@ The installer is idempotent. It creates the `Command Maker` settings note, the `
 - **A command you can trust.** The preview assembles base, extra arguments and selected flags in order, quotes them for a POSIX shell, and lets you copy, insert into the editor or save as a preset.
 - **Import instead of retyping.** Paste `--help` output, JSON or a markdown table and preview every detected option before anything is written. Whole tools move in and out as one JSON file.
 - **Works as a tab.** **Open in tab** moves the same interface next to your notes instead of over them.
-- **English and Spanish.** The interface is translated into English and Spain Spanish. Pick the language in the footer selector; the choice is stored in the `cmLang` label of the settings note and applies immediately.
+- **English and Spanish.** The interface is translated into English and Spain Spanish. The version menu in the footer switches it (see [Change the language](#change-the-language)); the choice is stored in the `cmLang` label of the settings note and applies immediately.
+
+## Change the language
+
+1. Open the palette with `Ctrl+Shift+Space`.
+2. Click the version pill in the footer (`v0.1 ▾`).
+3. Pick **English** or **Español**. The same menu holds **Check for updates**.
+
+The choice applies right away and is saved in the `cmLang` label of the `Command Maker` settings note. Set that label by hand (`en` or `es`) to start in a language before the first open. Without the label the plugin follows the Trilium/browser language and falls back to English. Notes that already exist keep the language they were written in.
 
 ## Screenshots
 

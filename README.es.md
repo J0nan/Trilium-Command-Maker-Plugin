@@ -31,7 +31,15 @@ El instalador es idempotente. Crea la nota de ajustes `Command Maker`, la carpet
 - **Un comando en el que puedes confiar.** La vista previa ensambla el comando base, los argumentos extra y los flags seleccionados en orden, los entrecomilla para un shell POSIX y te deja copiarlos, insertarlos en el editor o guardarlos como preset.
 - **Importa en lugar de reescribir.** Pega la salida de `--help`, JSON o una tabla markdown y revisa cada opción detectada antes de que se escriba nada. Las herramientas completas entran y salen como un único archivo JSON.
 - **Funciona como pestaña.** **Abrir en pestaña** mueve la misma interfaz junto a tus notas en lugar de encima de ellas.
-- **Inglés y español.** La interfaz está traducida al inglés y al español de España. Cambia el idioma en el selector del pie de la paleta; la elección se guarda en la etiqueta `cmLang` de la nota de ajustes y se aplica al instante.
+- **Inglés y español.** La interfaz está traducida al inglés y al español de España. El menú de versión del pie permite cambiarla (ver [Cambiar el idioma](#cambiar-el-idioma)); la elección se guarda en la etiqueta `cmLang` de la nota de ajustes y se aplica al instante.
+
+## Cambiar el idioma
+
+1. Abre la paleta con `Ctrl+Shift+Space`.
+2. Pulsa la píldora de versión del pie (`v0.1 ▾`).
+3. Elige **English** o **Español**. Ese mismo menú incluye **Buscar actualizaciones**.
+
+La elección se aplica al momento y se guarda en la etiqueta `cmLang` de la nota de ajustes `Command Maker`. Puedes poner esa etiqueta a mano (`en` o `es`) para arrancar en un idioma antes de la primera apertura. Sin etiqueta, el plugin sigue el idioma de Trilium/navegador y recurre al inglés. Las notas que ya existen conservan el idioma con el que se escribieron.
 
 ## Capturas
 

@@ -125,7 +125,7 @@ If you installed the plugin runtime manually *before* ever running the installer
 
 ### Language
 
-The plugin ships English and Spain Spanish in one bundle. The palette footer has a language selector; changing it writes `#cmLang` (`en` or `es`) on the `Command Maker` settings note and rebuilds the palette in that language, including the titles of the notes the backend creates later (`Opciones`, `Instalación`, `Uso`, `Ayuda`).
+The plugin ships English and Spain Spanish in one bundle. The version pill in the footer (`v0.1 ▾`) opens a small menu with the update check and the language: picking **English** or **Español** writes `#cmLang` (`en` or `es`) on the `Command Maker` settings note and rebuilds the palette in that language, including the titles of the notes the backend creates later (`Opciones`, `Instalación`, `Uso`, `Ayuda`).
 
 Set `#cmLang=es` on the settings note by hand to start in Spanish. With no label, the plugin follows the browser/Trilium language and falls back to English; on the first bootstrap it records the language it picked, so the setting is always visible. The label is strictly a UI preference: tool files, labels, presets and rendered commands never change with it. Notes seeded before a language switch keep the language they were written in.
 
