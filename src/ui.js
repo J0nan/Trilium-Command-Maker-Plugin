@@ -45,10 +45,15 @@ const Prompt = require('./prompt');
 const Dom = require('./dom');
 const Styles = require('./styles');
 const SourcePicker = require('./sourcePicker');
+const I18n = require('./i18n');
 
 /** Copy icon and control injected into every code block of the Install note. */
 const CODE_COPY_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 2H10c-1.103 0-2 .897-2 2v4H4c-1.103 0-2 .897-2 2v10c0 1.103.897 2 2 2h10c1.103 0 2-.897 2-2v-4h4c1.103 0 2-.897 2-2V4c0-1.103-.897-2-2-2zM4 20V10h10l.002 10H4zm16-6h-4v-4c0-1.103-.897-2-2-2h-4V4h10v10z"></path></svg>';
-const CODE_COPY_BUTTON = '<button type="button" class="cm-code-copy" title="Copy to clipboard" aria-label="Copy to clipboard">' + CODE_COPY_ICON + '</button>';
+
+function codeCopyButton() {
+    const label = I18n.t('ui.copy');
+    return '<button type="button" class="cm-code-copy" title="' + label + '" aria-label="' + label + '">' + CODE_COPY_ICON + '</button>';
+}
 
 const NEW_CATEGORY = '__new__';
 
@@ -149,17 +154,17 @@ function openPalette(controller, options) {
     const searchInput = document.createElement('input');
     searchInput.type = 'search';
     searchInput.className = 'cm-search';
-    searchInput.placeholder = 'Search tools…';
-    searchInput.setAttribute('aria-label', 'Search tools');
-    const openTabButton = embedded ? null : Dom.el('button', 'cm-open-tab', 'Open in tab');
+    searchInput.placeholder = I18n.t('ui.searchPlaceholder');
+    searchInput.setAttribute('aria-label', I18n.t('ui.searchLabel'));
+    const openTabButton = embedded ? null : Dom.el('button', 'cm-open-tab', I18n.t('ui.openInTab'));
     if (openTabButton) {
         openTabButton.type = 'button';
-        openTabButton.title = 'Open Command Maker in a new Trilium tab';
+        openTabButton.title = I18n.t('ui.openInTabTitle');
     }
     const closeButton = Dom.el('button', 'cm-close', '✕');
     closeButton.type = 'button';
-    closeButton.title = 'Close (Esc)';
-    closeButton.setAttribute('aria-label', 'Close palette');
+    closeButton.title = I18n.t('ui.closeTitle');
+    closeButton.setAttribute('aria-label', I18n.t('ui.closeLabel'));
     head.appendChild(searchInput);
     if (openTabButton) {
         head.appendChild(openTabButton);
@@ -175,26 +180,26 @@ function openPalette(controller, options) {
     body.appendChild(detail);
 
     const footer = Dom.el('div', 'cm-foot');
-    const newToolButton = Dom.el('button', 'cm-button', 'New tool');
+    const newToolButton = Dom.el('button', 'cm-button', I18n.t('ui.newTool'));
     newToolButton.type = 'button';
-    const importToolButton = Dom.el('button', 'cm-button', 'Import tool');
+    const importToolButton = Dom.el('button', 'cm-button', I18n.t('ui.importTool'));
     importToolButton.type = 'button';
-    const exportToolButton = Dom.el('button', 'cm-button', 'Export tool');
+    const exportToolButton = Dom.el('button', 'cm-button', I18n.t('ui.exportTool'));
     exportToolButton.type = 'button';
-    const importButton = Dom.el('button', 'cm-button', 'Import options');
+    const importButton = Dom.el('button', 'cm-button', I18n.t('ui.importOptions'));
     importButton.type = 'button';
-    const addOptionButton = Dom.el('button', 'cm-button', 'Add option');
+    const addOptionButton = Dom.el('button', 'cm-button', I18n.t('ui.addOption'));
     addOptionButton.type = 'button';
-    const toolsButton = Dom.el('button', 'cm-button', 'Tools folder');
+    const toolsButton = Dom.el('button', 'cm-button', I18n.t('ui.toolsFolder'));
     toolsButton.type = 'button';
     const statusEl = Dom.el('span', 'cm-status', '');
     statusEl.setAttribute('role', 'status');
     const versionButton = Dom.el('button', 'cm-version', 'v' + controller.version());
     versionButton.type = 'button';
-    versionButton.title = 'Check for updates';
+    versionButton.title = I18n.t('ui.checkUpdates');
     const repoLink = document.createElement('a');
     repoLink.className = 'cm-version-link';
-    repoLink.textContent = 'Repository';
+    repoLink.textContent = I18n.t('ui.repository');
     repoLink.href = controller.repository();
     repoLink.target = '_blank';
     repoLink.rel = 'noreferrer';
@@ -204,6 +209,18 @@ function openPalette(controller, options) {
     footer.appendChild(addOptionButton);
     footer.appendChild(exportToolButton);
     footer.appendChild(toolsButton);
+    const languageSelect = document.createElement('select');
+    languageSelect.className = 'cm-control cm-select cm-lang';
+    languageSelect.setAttribute('aria-label', I18n.t('ui.language'));
+    languageSelect.title = I18n.t('ui.language');
+    [['en', 'English'], ['es', 'Español']].forEach(function (pair) {
+        const entry = document.createElement('option');
+        entry.value = pair[0];
+        entry.textContent = pair[1];
+        languageSelect.appendChild(entry);
+    });
+    languageSelect.value = typeof controller.language === 'function' ? controller.language() : I18n.getLocale();
+    footer.appendChild(languageSelect);
     footer.appendChild(statusEl);
     footer.appendChild(versionButton);
     footer.appendChild(repoLink);
@@ -251,28 +268,28 @@ function openPalette(controller, options) {
 
     async function checkForUpdates() {
         if (typeof controller.checkLatestVersion !== 'function') {
-            setStatus('Update check is unavailable.', true);
+            setStatus(I18n.t('status.updateUnavailable'), true);
             return;
         }
-        setStatus('Checking for updates…');
+        setStatus(I18n.t('status.checkingUpdates'));
         const info = await controller.checkLatestVersion();
         if (info.error) {
-            setStatus('v' + info.current + ': ' + info.error + ' See the Repository link.', true);
+            setStatus(I18n.t('status.updateError', { version: info.current, error: info.error }), true);
             return;
         }
         if (info.latest && info.latest !== info.current) {
             versionButton.textContent = 'v' + info.current + ' → v' + info.latest;
-            versionButton.title = 'Installed v' + info.current + '; latest v' + info.latest + '. Click to check again.';
+            versionButton.title = I18n.t('status.installedLatest', { current: info.current, latest: info.latest });
         }
 
         if (info.latest && info.latest === info.current) {
-            setStatus('v' + info.current + ' is the latest version.');
+            setStatus(I18n.t('status.latest', { version: info.current }));
         } else if (info.outdated) {
-            setStatus('v' + info.current + ' installed · latest is v' + info.latest + '.');
+            setStatus(I18n.t('status.outdated', { current: info.current, latest: info.latest }));
         } else if (info.latest) {
-            setStatus('v' + info.current + ' is newer than the latest published tag (v' + info.latest + ').');
+            setStatus(I18n.t('status.ahead', { current: info.current, latest: info.latest }));
         } else {
-            setStatus('v' + info.current + ': no published version found.');
+            setStatus(I18n.t('status.noPublished', { version: info.current }));
         }
     }
 
@@ -322,6 +339,16 @@ function openPalette(controller, options) {
         instance = null;
     }
 
+    /**
+     * Rebuild the palette in place after a language change. Closing first
+     * releases the overlay singleton; a tab view re-mounts into its container.
+     */
+    function remount() {
+        const container = options && options.container ? options.container : null;
+        close();
+        openPalette(controller, container ? { container: container } : undefined);
+    }
+
     function onKeyDown(event) {
         if (event.key === 'Escape') {
             event.preventDefault();
@@ -355,7 +382,7 @@ function openPalette(controller, options) {
     function renderList() {
         list.textContent = '';
         if (!state.items.length) {
-            list.appendChild(Dom.el('div', 'cm-empty', 'No tools match.'));
+            list.appendChild(Dom.el('div', 'cm-empty', I18n.t('ui.noToolsMatch')));
             return;
         }
         state.items.forEach(function (item, index) {
@@ -540,7 +567,7 @@ function openPalette(controller, options) {
             headRow.appendChild(Dom.el('code', 'cm-opt-flag', option.flag));
         }
         if (inferred) {
-            headRow.appendChild(Dom.el('span', 'cm-badge', 'inferred'));
+            headRow.appendChild(Dom.el('span', 'cm-badge', I18n.t('ui.inferred')));
         }
         main.appendChild(headRow);
         if (option.help) {
@@ -602,14 +629,14 @@ function openPalette(controller, options) {
         if (state.loaded && state.loaded.presetsInvalid) {
             const broken = document.createElement('option');
             broken.value = '';
-            broken.textContent = 'Presets note needs fixing';
+            broken.textContent = I18n.t('ui.presetsBroken');
             state.presetSelect.appendChild(broken);
             return;
         }
         if (!state.presets.length) {
             const empty = document.createElement('option');
             empty.value = '';
-            empty.textContent = 'No presets yet';
+            empty.textContent = I18n.t('ui.noPresets');
             state.presetSelect.appendChild(empty);
         }
         state.presets.forEach(function (preset) {
@@ -622,14 +649,14 @@ function openPalette(controller, options) {
 
     async function copyTextToClipboard(text, message) {
         if (!String(text || '').trim()) {
-            notify(new Error('Nothing to copy.'));
+            notify(new Error(I18n.t('status.nothingToCopy')));
             return;
         }
         const ok = await controller.copy(text);
         if (ok) {
-            setStatus(message || 'Copied to the clipboard.');
+            setStatus(message || I18n.t('status.copied'));
         } else {
-            notify(new Error('Could not write to the clipboard.'));
+            notify(new Error(I18n.t('status.clipboardFailed')));
         }
     }
 
@@ -646,7 +673,7 @@ function openPalette(controller, options) {
         }
         try {
             controller.insert(state.previewEl.value);
-            setStatus('Inserted into the active note.');
+            setStatus(I18n.t('status.inserted'));
         } catch (error) {
             notify(error);
         }
@@ -658,14 +685,14 @@ function openPalette(controller, options) {
             return entry.name === name;
         })[0];
         if (!preset) {
-            notify(new Error('Pick a preset first.'));
+            notify(new Error(I18n.t('status.pickPreset')));
             return;
         }
         state.values = Object.assign(Model.defaultValueMap(state.definition), preset.values || {});
         state.edited = false;
         state.exampleLoaded = false;
         renderDetail();
-        setStatus('Preset loaded.');
+        setStatus(I18n.t('status.presetLoaded'));
     }
 
     async function savePreset() {
@@ -675,7 +702,7 @@ function openPalette(controller, options) {
         }
         const name = (state.presetName ? state.presetName.value : '').trim();
         if (!name) {
-            notify(new Error('Preset name is required.'));
+            notify(new Error(I18n.t('status.presetNameRequired')));
             return;
         }
         await controller.savePreset(definition.noteId, name, state.values);
@@ -693,14 +720,14 @@ function openPalette(controller, options) {
         state.loaded = loaded;
         state.presets = loaded.presets || [];
         renderDetail();
-        setStatus('Preset saved.');
+        setStatus(I18n.t('status.presetSaved'));
     }
 
     async function deletePreset() {
         const definition = state.definition;
         const name = state.presetSelect ? state.presetSelect.value : '';
         if (!definition || !name) {
-            notify(new Error('Pick a preset first.'));
+            notify(new Error(I18n.t('status.pickPreset')));
             return;
         }
         await controller.deletePreset(definition.noteId, name);
@@ -714,32 +741,32 @@ function openPalette(controller, options) {
         state.loaded = loaded;
         state.presets = loaded.presets || [];
         renderDetail();
-        setStatus('Preset deleted.');
+        setStatus(I18n.t('status.presetDeleted'));
     }
 
     function presetBlock() {
         const block = Dom.el('div', 'cm-presets');
-        block.appendChild(Dom.el('div', 'cm-section', 'Presets'));
+        block.appendChild(Dom.el('div', 'cm-section', I18n.t('ui.presets')));
         if (state.loaded && state.loaded.presetsInvalid) {
-            block.appendChild(Dom.el('div', 'cm-warning', 'The Presets note is not valid JSON. Fix or delete it before saving a preset.'));
+            block.appendChild(Dom.el('div', 'cm-warning', I18n.t('warn.presetsInvalid')));
         }
 
         const row = Dom.el('div', 'cm-row');
         const select = document.createElement('select');
         select.className = 'cm-control cm-select';
-        select.setAttribute('aria-label', 'Preset');
+        select.setAttribute('aria-label', I18n.t('ui.preset'));
         state.presetSelect = select;
         row.appendChild(select);
-        row.appendChild(button('Load', loadPreset));
+        row.appendChild(button(I18n.t('ui.load'), loadPreset));
 
-        const deleteButton = Dom.el('button', 'cm-button cm-danger', 'Delete');
+        const deleteButton = Dom.el('button', 'cm-button cm-danger', I18n.t('ui.delete'));
         deleteButton.type = 'button';
         let deleteArmed = false;
         let deleteTimer = null;
         let deleteRunning = false;
         function disarmDelete() {
             deleteArmed = false;
-            deleteButton.textContent = 'Delete';
+            deleteButton.textContent = I18n.t('ui.delete');
             deleteButton.classList.remove('cm-danger-armed');
             if (deleteTimer) {
                 clearTimeout(deleteTimer);
@@ -753,14 +780,14 @@ function openPalette(controller, options) {
             }
             const name = state.presetSelect ? state.presetSelect.value : '';
             if (!name) {
-                notify(new Error('Pick a preset first.'));
+                notify(new Error(I18n.t('status.pickPreset')));
                 return;
             }
             if (!deleteArmed) {
                 deleteArmed = true;
-                deleteButton.textContent = 'Confirm delete';
+                deleteButton.textContent = I18n.t('ui.confirmDelete');
                 deleteButton.classList.add('cm-danger-armed');
-                setStatus('Press Delete again to remove "' + name + '".');
+                setStatus(I18n.t('status.confirmDelete', { name: name }));
                 deleteTimer = setTimeout(disarmDelete, 5000);
                 return;
             }
@@ -784,11 +811,11 @@ function openPalette(controller, options) {
         const nameInput = document.createElement('input');
         nameInput.type = 'text';
         nameInput.className = 'cm-control';
-        nameInput.placeholder = 'Preset name';
-        nameInput.setAttribute('aria-label', 'Preset name');
+        nameInput.placeholder = I18n.t('ui.presetName');
+        nameInput.setAttribute('aria-label', I18n.t('ui.presetName'));
         state.presetName = nameInput;
         saveRow.appendChild(nameInput);
-        saveRow.appendChild(button('Save preset', savePreset));
+        saveRow.appendChild(button(I18n.t('ui.savePreset'), savePreset));
         block.appendChild(saveRow);
 
         renderPresets();
@@ -800,11 +827,11 @@ function openPalette(controller, options) {
             return null;
         }
         const block = Dom.el('div', 'cm-examples');
-        block.appendChild(Dom.el('div', 'cm-section', 'Examples'));
+        block.appendChild(Dom.el('div', 'cm-section', I18n.t('ui.examples')));
         state.loaded.usageExamples.forEach(function (example) {
             const row = Dom.el('div', 'cm-example');
             row.appendChild(Dom.el('code', 'cm-example-text', example));
-            row.appendChild(button('Use', function () {
+            row.appendChild(button(I18n.t('ui.use'), function () {
                 state.values = Model.valuesFromExample(state.definition, example);
                 state.edited = false;
                 state.exampleLoaded = false;
@@ -814,9 +841,9 @@ function openPalette(controller, options) {
                     state.edited = true;
                     state.exampleLoaded = true;
                 }
-                setStatus('Example loaded into the form.');
+                setStatus(I18n.t('status.exampleLoaded'));
             }));
-            row.appendChild(button('Copy', function () {
+            row.appendChild(button(I18n.t('ui.copy'), function () {
                 return copyTextToClipboard(example);
             }));
             block.appendChild(row);
@@ -868,7 +895,7 @@ function openPalette(controller, options) {
         const box = Dom.el('div', 'cm-install');
         // Only allowlisted tags and attributes reach the DOM; the copy control is
         // our own trusted markup.
-        box.innerHTML = Sections.wrapCodeBlocks(Sections.sanitizeNoteHtml(html), CODE_COPY_BUTTON);
+        box.innerHTML = Sections.wrapCodeBlocks(Sections.sanitizeNoteHtml(html), codeCopyButton());
         box.addEventListener('click', function (event) {
             const target = event.target;
             if (!target || typeof target.closest !== 'function') {
@@ -884,7 +911,7 @@ function openPalette(controller, options) {
             const pre = wrapper && typeof wrapper.querySelector === 'function'
                 ? wrapper.querySelector('pre')
                 : null;
-            copyTextToClipboard(pre ? pre.textContent : '', 'Code copied to the clipboard.').catch(notify);
+            copyTextToClipboard(pre ? pre.textContent : '', I18n.t('status.codeCopied')).catch(notify);
         });
         details.appendChild(box);
         return details;
@@ -892,12 +919,12 @@ function openPalette(controller, options) {
 
     function baseRow() {
         const row = Dom.el('div', 'cm-base-row');
-        row.appendChild(Dom.el('span', 'cm-base-label', 'Base command'));
+        row.appendChild(Dom.el('span', 'cm-base-label', I18n.t('ui.baseCommand')));
         const input = document.createElement('input');
         input.type = 'text';
         input.className = 'cm-control';
         input.value = state.definition.base;
-        input.setAttribute('aria-label', 'Base command');
+        input.setAttribute('aria-label', I18n.t('ui.baseCommand'));
         input.addEventListener('change', function () {
             if (input.disabled || !state.definition) {
                 return;
@@ -927,7 +954,7 @@ function openPalette(controller, options) {
                 state.values = Object.assign(Model.defaultValueMap(definition), state.values);
                 state.exampleLoaded = false;
                 renderDetail();
-                setStatus('Base command updated.');
+                setStatus(I18n.t('status.baseUpdated'));
             })();
         });
         row.appendChild(input);
@@ -944,7 +971,7 @@ function openPalette(controller, options) {
         state.optionGroups = [];
 
         if (!state.definition) {
-            detail.appendChild(Dom.el('div', 'cm-empty', 'Pick a tool from the list.'));
+            detail.appendChild(Dom.el('div', 'cm-empty', I18n.t('ui.pickTool')));
             return;
         }
 
@@ -962,7 +989,7 @@ function openPalette(controller, options) {
         detail.appendChild(header);
 
         if (state.loaded && state.loaded.whatIs) {
-            detail.appendChild(Dom.el('div', 'cm-section', 'What is?'));
+            detail.appendChild(Dom.el('div', 'cm-section', I18n.t('ui.whatIs')));
             detail.appendChild(Dom.el('p', 'cm-what', state.loaded.whatIs));
         }
 
@@ -974,12 +1001,12 @@ function openPalette(controller, options) {
         detail.appendChild(baseRow());
         detail.appendChild(presetBlock());
 
-        detail.appendChild(Dom.el('div', 'cm-section', 'Options (' + definition.options.length + ')'));
+        detail.appendChild(Dom.el('div', 'cm-section', I18n.t('ui.optionsCount', { count: definition.options.length })));
         const filter = document.createElement('input');
         filter.type = 'search';
         filter.className = 'cm-control cm-filter';
-        filter.placeholder = 'Filter options…';
-        filter.setAttribute('aria-label', 'Filter options');
+        filter.placeholder = I18n.t('ui.filterPlaceholder');
+        filter.setAttribute('aria-label', I18n.t('ui.filterLabel'));
         filter.addEventListener('input', function () {
             const needle = String(filter.value || '').trim().toLowerCase();
             state.optionRows.forEach(function (entry) {
@@ -1022,30 +1049,30 @@ function openPalette(controller, options) {
         }
 
         if (!requiredOptions.length && !optionalOptions.length) {
-            form.appendChild(Dom.el('div', 'cm-empty', 'This tool has no options yet. Use "Import options" or add option notes under Options.'));
+            form.appendChild(Dom.el('div', 'cm-empty', I18n.t('ui.noOptions')));
         }
-        optionGroup('Required', requiredOptions);
-        optionGroup('Optional', optionalOptions);
+        optionGroup(I18n.t('ui.required'), requiredOptions);
+        optionGroup(I18n.t('ui.optional'), optionalOptions);
         detail.appendChild(form);
 
-        detail.appendChild(Dom.el('div', 'cm-section', 'Extra arguments'));
+        detail.appendChild(Dom.el('div', 'cm-section', I18n.t('ui.extraArgs')));
         const extra = document.createElement('input');
         extra.type = 'text';
         extra.className = 'cm-control';
-        extra.placeholder = 'Positional arguments or subcommands, inserted after the base';
-        extra.setAttribute('aria-label', 'Extra arguments');
+        extra.placeholder = I18n.t('ui.extraPlaceholder');
+        extra.setAttribute('aria-label', I18n.t('ui.extraArgs'));
         extra.value = state.values[Render.EXTRA_KEY] === undefined ? '' : String(state.values[Render.EXTRA_KEY]);
         extra.addEventListener('input', function () {
             setValue(Render.EXTRA_KEY, extra.value);
         });
         detail.appendChild(extra);
 
-        detail.appendChild(Dom.el('div', 'cm-section', 'Command'));
+        detail.appendChild(Dom.el('div', 'cm-section', I18n.t('ui.command')));
         const preview = document.createElement('textarea');
         preview.className = 'cm-preview';
         preview.spellcheck = false;
         preview.rows = 3;
-        preview.setAttribute('aria-label', 'Command preview');
+        preview.setAttribute('aria-label', I18n.t('ui.commandPreview'));
         const codeTheme = Dom.codeBlockTheme();
         if (codeTheme) {
             preview.style.background = codeTheme.background;
@@ -1064,14 +1091,14 @@ function openPalette(controller, options) {
         detail.appendChild(state.warningsEl);
 
         const actions = Dom.el('div', 'cm-actions');
-        actions.appendChild(button('Copy', copy));
-        actions.appendChild(button('Insert', insert));
-        actions.appendChild(button('Regenerate', function () {
+        actions.appendChild(button(I18n.t('ui.copy'), copy));
+        actions.appendChild(button(I18n.t('ui.insert'), insert));
+        actions.appendChild(button(I18n.t('ui.regenerate'), function () {
             state.edited = false;
             state.exampleLoaded = false;
             updatePreview(true);
         }));
-        actions.appendChild(button('Open note', function () {
+        actions.appendChild(button(I18n.t('ui.openNote'), function () {
             return controller.openNote(definition.noteId);
         }));
         detail.appendChild(actions);
@@ -1081,17 +1108,17 @@ function openPalette(controller, options) {
             detail.appendChild(examples);
         }
 
-        const help = foldBlock('Help output', state.loaded ? state.loaded.helpText : '');
+        const help = foldBlock(I18n.t('ui.helpOutput'), state.loaded ? state.loaded.helpText : '');
         if (help) {
             detail.appendChild(help);
         }
         let install = null;
         if (state.loaded && state.loaded.installHtml) {
             install = state.loaded.installIsCode
-                ? foldHtmlBlock('Install', '<pre><code>' + Sections.escapeHtml(state.loaded.installHtml) + '</code></pre>')
-                : foldHtmlBlock('Install', state.loaded.installHtml);
+                ? foldHtmlBlock(I18n.t('ui.install'), '<pre><code>' + Sections.escapeHtml(state.loaded.installHtml) + '</code></pre>')
+                : foldHtmlBlock(I18n.t('ui.install'), state.loaded.installHtml);
         } else if (state.loaded) {
-            install = foldBlock('Install', state.loaded.installText);
+            install = foldBlock(I18n.t('ui.install'), state.loaded.installText);
         }
         if (install) {
             detail.appendChild(install);
@@ -1116,12 +1143,12 @@ function openPalette(controller, options) {
         const titleInput = document.createElement('input');
         titleInput.type = 'text';
         titleInput.className = 'cm-control';
-        titleInput.placeholder = 'Tool name (e.g. docker)';
-        titleInput.setAttribute('aria-label', 'Tool name');
+        titleInput.placeholder = I18n.t('ui.toolNamePlaceholder');
+        titleInput.setAttribute('aria-label', I18n.t('ui.toolName'));
 
         const categorySelect = document.createElement('select');
         categorySelect.className = 'cm-control cm-select';
-        categorySelect.setAttribute('aria-label', 'Category');
+        categorySelect.setAttribute('aria-label', I18n.t('ui.category'));
         const categories = controller.categories();
         categories.forEach(function (name) {
             const option = document.createElement('option');
@@ -1131,7 +1158,7 @@ function openPalette(controller, options) {
         });
         const newCategoryOption = document.createElement('option');
         newCategoryOption.value = NEW_CATEGORY;
-        newCategoryOption.textContent = 'New category…';
+        newCategoryOption.textContent = I18n.t('ui.newCategory');
         categorySelect.appendChild(newCategoryOption);
         if (!categories.length) {
             categorySelect.value = NEW_CATEGORY;
@@ -1140,8 +1167,8 @@ function openPalette(controller, options) {
         const newCategoryInput = document.createElement('input');
         newCategoryInput.type = 'text';
         newCategoryInput.className = 'cm-control';
-        newCategoryInput.placeholder = 'New category name';
-        newCategoryInput.setAttribute('aria-label', 'New category name');
+        newCategoryInput.placeholder = I18n.t('ui.newCategoryPlaceholder');
+        newCategoryInput.setAttribute('aria-label', I18n.t('ui.newCategoryPlaceholder'));
         newCategoryInput.style.display = categorySelect.value === NEW_CATEGORY ? '' : 'none';
         categorySelect.addEventListener('change', function () {
             newCategoryInput.style.display = categorySelect.value === NEW_CATEGORY ? '' : 'none';
@@ -1150,19 +1177,19 @@ function openPalette(controller, options) {
         const baseInput = document.createElement('input');
         baseInput.type = 'text';
         baseInput.className = 'cm-control';
-        baseInput.placeholder = 'Base command (optional, defaults to the name)';
-        baseInput.setAttribute('aria-label', 'Base command');
+        baseInput.placeholder = I18n.t('ui.baseOptional');
+        baseInput.setAttribute('aria-label', I18n.t('ui.baseCommand'));
 
-        const create = button('Create', async function () {
+        const create = button(I18n.t('ui.create'), async function () {
             const title = titleInput.value.trim();
             if (!title) {
-                notify(new Error('Tool name is required.'));
+                notify(new Error(I18n.t('status.toolNameRequired')));
                 return;
             }
             const isNewCategory = categorySelect.value === NEW_CATEGORY;
             const category = isNewCategory ? newCategoryInput.value.trim() : categorySelect.value;
             if (isNewCategory && !category) {
-                notify(new Error('Category name is required.'));
+                notify(new Error(I18n.t('status.categoryRequired')));
                 return;
             }
             const created = await controller.createTool({
@@ -1179,7 +1206,7 @@ function openPalette(controller, options) {
             if (item) {
                 await selectItem(item);
             }
-            setStatus('Tool created.');
+            setStatus(I18n.t('status.toolCreated'));
         });
 
         row.appendChild(titleInput);
@@ -1203,7 +1230,7 @@ function openPalette(controller, options) {
         modalHead.appendChild(Dom.el('span', 'cm-modal-title', title));
         const closeModalButton = Dom.el('button', 'cm-close', '✕');
         closeModalButton.type = 'button';
-        closeModalButton.setAttribute('aria-label', 'Close dialog');
+        closeModalButton.setAttribute('aria-label', I18n.t('ui.closeDialog'));
         closeModalButton.addEventListener('click', closeModal);
         modalHead.appendChild(closeModalButton);
         const modalBody = Dom.el('div', 'cm-modal-body');
@@ -1226,7 +1253,7 @@ function openPalette(controller, options) {
 
     /** The Close action shared by every palette modal. */
     function modalCloseButton() {
-        const node = Dom.el('button', 'cm-button', 'Close');
+        const node = Dom.el('button', 'cm-button', I18n.t('ui.close'));
         node.type = 'button';
         node.addEventListener('click', closeModal);
         return node;
@@ -1234,22 +1261,22 @@ function openPalette(controller, options) {
 
     function openImport() {
         if (!state.current) {
-            notify(new Error('Select a tool first.'));
+            notify(new Error(I18n.t('status.selectToolFirst')));
             return;
         }
         const tool = state.current;
         const picker = SourcePicker.createSourcePicker({
             controller: controller,
-            hint: 'Paste "--help" output, a JSON options file, or a markdown table. Nothing is written until you import.',
-            placeholder: '--help output, JSON or a markdown table…',
+            hint: I18n.t('import.hint'),
+            placeholder: I18n.t('import.placeholder'),
             accept: '.txt,.json,.md,.markdown,.log,.help,.text',
             onStatus: setStatus,
             onError: notify
         });
 
-        const parseButton = Dom.el('button', 'cm-button', 'Parse');
+        const parseButton = Dom.el('button', 'cm-button', I18n.t('ui.parse'));
         parseButton.type = 'button';
-        const importSelected = Dom.el('button', 'cm-button', 'Import selected');
+        const importSelected = Dom.el('button', 'cm-button', I18n.t('ui.importSelected'));
         importSelected.type = 'button';
         importSelected.disabled = true;
         const closeButton2 = modalCloseButton();
@@ -1271,7 +1298,7 @@ function openPalette(controller, options) {
             });
             const options = state.importParsed.options || [];
             if (!options.length) {
-                previewList.appendChild(Dom.el('div', 'cm-empty', 'No options found. Check the format and try again.'));
+                previewList.appendChild(Dom.el('div', 'cm-empty', I18n.t('import.noOptions')));
                 return;
             }
             options.forEach(function (option, index) {
@@ -1280,7 +1307,7 @@ function openPalette(controller, options) {
                 const checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
                 checkbox.checked = true;
-                checkbox.setAttribute('aria-label', 'Select ' + (option.flag || option.label));
+                checkbox.setAttribute('aria-label', I18n.t('import.selectOption', { name: option.flag || option.label }));
                 checkbox.addEventListener('change', function () {
                     state.importRows[index].checked = checkbox.checked;
                     importSelected.disabled = !state.importRows.some(function (entry) {
@@ -1299,12 +1326,12 @@ function openPalette(controller, options) {
                 const requiredBox = document.createElement('input');
                 requiredBox.type = 'checkbox';
                 requiredBox.checked = Boolean(option.required);
-                requiredBox.setAttribute('aria-label', 'Required');
+                requiredBox.setAttribute('aria-label', I18n.t('import.required'));
                 requiredBox.addEventListener('change', function () {
                     state.importRows[index].required = requiredBox.checked;
                 });
                 requiredLabel.appendChild(requiredBox);
-                requiredLabel.appendChild(Dom.el('span', '', 'Required'));
+                requiredLabel.appendChild(Dom.el('span', '', I18n.t('import.required')));
                 row.appendChild(requiredLabel);
                 previewList.appendChild(row);
                 state.importRows.push({ option: option, checked: true, required: Boolean(option.required) });
@@ -1315,12 +1342,12 @@ function openPalette(controller, options) {
         parseButton.addEventListener('click', guarded(function () {
             const text = picker.getText();
             if (!String(text || '').trim()) {
-                notify(new Error('Nothing to parse. Paste help output, read the active note or choose a file.'));
+                notify(new Error(I18n.t('import.nothingToParse')));
                 return;
             }
             state.importParsed = Parse.parseImport(text);
             renderImportPreview();
-            setStatus('Parsed ' + (state.importParsed.options || []).length + ' option(s).');
+            setStatus(I18n.t('import.parsed', { count: (state.importParsed.options || []).length }));
         }, notify));
 
         importSelected.addEventListener('click', guarded(async function () {
@@ -1332,14 +1359,16 @@ function openPalette(controller, options) {
                     return Object.assign({}, entry.option, { required: entry.required });
                 });
             if (!selected.length) {
-                throw new Error('Select at least one option.');
+                throw new Error(I18n.t('import.selectOne'));
             }
             const result = await controller.importOptions(tool.noteId, selected);
             closeModal();
-            const created = result && typeof result.created === 'number' ? result.created : 'the selected';
-            const skipped = result && result.skipped ? ' Skipped ' + result.skipped + ' duplicate(s).' : '';
-            const capped = result && result.capped ? ' Ignored ' + result.capped + ' options over the per-import limit.' : '';
-            statusMessage = 'Imported ' + created + ' option(s).' + skipped + capped;
+            const created = result && typeof result.created === 'number' ? result.created : 0;
+            statusMessage = I18n.t('import.imported', {
+                created: created,
+                skipped: result && result.skipped ? result.skipped : 0,
+                capped: result && result.capped ? result.capped : 0
+            });
             await controller.refresh();
             await runSearch();
             await selectItem(tool, { preserveValues: true });
@@ -1356,25 +1385,25 @@ function openPalette(controller, options) {
         actionsNode.appendChild(importSelected);
         actionsNode.appendChild(closeButton2);
 
-        modalShell('Import options into "' + tool.title + '"', bodyNode, actionsNode);
+        modalShell(I18n.t('import.title', { title: tool.title }), bodyNode, actionsNode);
     }
 
     function openImportTool() {
         const picker = SourcePicker.createSourcePicker({
             controller: controller,
-            hint: 'Paste a tool file (JSON) exported from another tool, or one generated with "Copy AI prompt". Nothing is written until you import.',
-            placeholder: 'Tool file JSON, or the output of the tool\'s --help command…',
+            hint: I18n.t('importTool.hint'),
+            placeholder: I18n.t('importTool.placeholder'),
             accept: '.json,.txt,.text',
             onStatus: setStatus,
             onError: notify
         });
 
-        const promptButton = Dom.el('button', 'cm-button', 'Copy AI prompt');
+        const promptButton = Dom.el('button', 'cm-button', I18n.t('importTool.copyPrompt'));
         promptButton.type = 'button';
-        promptButton.title = 'Copy a prompt for any AI model, including the pasted --help output';
-        const parseButton = Dom.el('button', 'cm-button', 'Parse');
+        promptButton.title = I18n.t('importTool.copyPromptTitle');
+        const parseButton = Dom.el('button', 'cm-button', I18n.t('ui.parse'));
         parseButton.type = 'button';
-        const importSelected = Dom.el('button', 'cm-button', 'Import tool');
+        const importSelected = Dom.el('button', 'cm-button', I18n.t('ui.importTool'));
         importSelected.type = 'button';
         importSelected.disabled = true;
         const closeButton2 = modalCloseButton();
@@ -1399,9 +1428,9 @@ function openPalette(controller, options) {
                 return;
             }
             [
-                ['Title', tool.title],
-                ['Category', tool.category || 'Uncategorized'],
-                ['Base command', tool.base || Model.deriveBase(tool.title)]
+                [I18n.t('importTool.fieldTitle'), tool.title],
+                [I18n.t('importTool.fieldCategory'), tool.category || I18n.t('importTool.uncategorized')],
+                [I18n.t('importTool.fieldBase'), tool.base || Model.deriveBase(tool.title)]
             ].forEach(function (line) {
                 previewList.appendChild(Dom.el('div', 'cm-import-flag', line[0] + ': ' + line[1]));
             });
@@ -1409,12 +1438,12 @@ function openPalette(controller, options) {
                 previewList.appendChild(Dom.el('div', 'cm-note', tool.description));
             }
             if (!tool.options.length) {
-                previewList.appendChild(Dom.el('div', 'cm-empty', 'This tool file has no options.'));
+                previewList.appendChild(Dom.el('div', 'cm-empty', I18n.t('importTool.noOptions')));
             }
             tool.options.forEach(function (option) {
                 const row = Dom.el('div', 'cm-import-row');
                 const main = Dom.el('div', 'cm-import-main');
-                const flag = option.flag || '(positional)';
+                const flag = option.flag || I18n.t('importTool.positional');
                 main.appendChild(Dom.el('div', 'cm-import-flag', flag + '  (' + option.type + ')  ' + option.label));
                 if (option.help) {
                     main.appendChild(Dom.el('div', 'cm-import-help', option.help));
@@ -1430,30 +1459,32 @@ function openPalette(controller, options) {
             const looksJson = /^\s*[{[]/.test(String(pasted || ''));
             copyTextToClipboard(Prompt.buildToolPrompt({
                 helpText: looksJson ? '' : pasted
-            }), 'AI prompt copied to the clipboard.').catch(notify);
+            }), I18n.t('status.promptCopied')).catch(notify);
         });
 
         parseButton.addEventListener('click', guarded(function () {
             const text = picker.getText();
             if (!String(text || '').trim()) {
-                notify(new Error('Nothing to parse. Paste a tool file, read the active note or choose a file.'));
+                notify(new Error(I18n.t('importTool.nothingToParse')));
                 return;
             }
             state.importToolParsed = ToolFile.parseToolFile(text);
             renderToolPreview();
             const tool = state.importToolParsed.tool;
-            setStatus(tool ? 'Parsed tool "' + tool.title + '".' : 'The tool file could not be parsed.');
+            setStatus(tool
+                ? I18n.t('importTool.parsed', { title: tool.title })
+                : I18n.t('importTool.parseFailed'));
         }, notify));
 
         importSelected.addEventListener('click', guarded(async function () {
             const parsed = state.importToolParsed;
             if (!parsed || !parsed.tool) {
-                notify(new Error('Parse a tool file first.'));
+                notify(new Error(I18n.t('importTool.parseFirst')));
                 return;
             }
             const created = await controller.importTool(parsed.tool);
             closeModal();
-            statusMessage = 'Imported tool "' + parsed.tool.title + '".';
+            statusMessage = I18n.t('importTool.imported', { title: parsed.tool.title });
             await controller.refresh();
             await runSearch();
             const item = created
@@ -1478,12 +1509,12 @@ function openPalette(controller, options) {
         actionsNode.appendChild(importSelected);
         actionsNode.appendChild(closeButton2);
 
-        modalShell('Import a tool', bodyNode, actionsNode);
+        modalShell(I18n.t('importTool.title'), bodyNode, actionsNode);
     }
 
     async function openExportTool() {
         if (!state.current) {
-            notify(new Error('Select a tool first.'));
+            notify(new Error(I18n.t('status.selectToolFirst')));
             return;
         }
         const file = await controller.exportTool(state.current.noteId);
@@ -1491,26 +1522,26 @@ function openPalette(controller, options) {
         const filename = (Render.slugify(file.tool.title) || 'tool') + '.tool.json';
 
         const bodyNode = Dom.el('div', '');
-        bodyNode.appendChild(Dom.el('div', 'cm-note', 'This plain-JSON file carries the tags, options and presets, so it can be imported here, kept as a backup, or shared.'));
+        bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('export.note')));
         const area = document.createElement('textarea');
         area.className = 'cm-control cm-preview';
         area.rows = 18;
         area.readOnly = true;
         area.value = json;
         bodyNode.appendChild(area);
-        bodyNode.appendChild(Dom.el('div', 'cm-note', 'Suggested file name: ' + filename));
+        bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('export.filename', { name: filename })));
 
-        const copyButton = Dom.el('button', 'cm-button', 'Copy JSON');
+        const copyButton = Dom.el('button', 'cm-button', I18n.t('export.copyJson'));
         copyButton.type = 'button';
         copyButton.addEventListener('click', function () {
-            copyTextToClipboard(json, 'Tool file copied to the clipboard.').catch(notify);
+            copyTextToClipboard(json, I18n.t('status.toolFileCopied')).catch(notify);
         });
 
-        const downloadButton = Dom.el('button', 'cm-button', 'Download .json');
+        const downloadButton = Dom.el('button', 'cm-button', I18n.t('export.download'));
         downloadButton.type = 'button';
         downloadButton.addEventListener('click', guarded(function () {
             Dom.downloadText(filename, json);
-            setStatus('Downloaded ' + filename + '.');
+            setStatus(I18n.t('status.downloaded', { name: filename }));
         }, notify));
 
         const closeButton2 = modalCloseButton();
@@ -1520,12 +1551,12 @@ function openPalette(controller, options) {
         actionsNode.appendChild(downloadButton);
         actionsNode.appendChild(closeButton2);
 
-        modalShell('Export "' + file.tool.title + '"', bodyNode, actionsNode);
+        modalShell(I18n.t('export.title', { title: file.tool.title }), bodyNode, actionsNode);
     }
 
     function openAddOption() {
         if (!state.current) {
-            notify(new Error('Select a tool first.'));
+            notify(new Error(I18n.t('status.selectToolFirst')));
             return;
         }
         const tool = state.current;
@@ -1540,31 +1571,31 @@ function openPalette(controller, options) {
 
         const labelInput = document.createElement('input');
         labelInput.type = 'text';
-        labelInput.placeholder = 'Option label, e.g. Output file';
+        labelInput.placeholder = I18n.t('addOption.labelPlaceholder');
 
         const flagInput = document.createElement('input');
         flagInput.type = 'text';
-        flagInput.placeholder = 'Flag, e.g. --output (empty = positional)';
+        flagInput.placeholder = I18n.t('addOption.flagPlaceholder');
 
         const helpInput = document.createElement('input');
         helpInput.type = 'text';
-        helpInput.placeholder = 'What is this option for?';
+        helpInput.placeholder = I18n.t('addOption.helpPlaceholder');
 
         const typeSelect = document.createElement('select');
         Model.TYPES.forEach(function (type) {
             const entry = document.createElement('option');
             entry.value = type;
-            entry.textContent = type;
+            entry.textContent = I18n.t('type.' + type);
             typeSelect.appendChild(entry);
         });
 
         const defaultInput = document.createElement('input');
         defaultInput.type = 'text';
-        defaultInput.placeholder = 'Default value (optional)';
+        defaultInput.placeholder = I18n.t('addOption.defaultPlaceholder');
 
         const valuesInput = document.createElement('input');
         valuesInput.type = 'text';
-        valuesInput.placeholder = 'Enum values, comma separated (optional)';
+        valuesInput.placeholder = I18n.t('addOption.valuesPlaceholder');
 
         const orderInput = document.createElement('input');
         orderInput.type = 'number';
@@ -1574,15 +1605,15 @@ function openPalette(controller, options) {
         const requiredInput = document.createElement('input');
         requiredInput.type = 'checkbox';
         const requiredRow = Dom.el('label', 'cm-row');
-        requiredRow.appendChild(Dom.el('span', 'cm-base-label', 'Required'));
+        requiredRow.appendChild(Dom.el('span', 'cm-base-label', I18n.t('ui.required')));
         requiredRow.appendChild(requiredInput);
 
-        const add = Dom.el('button', 'cm-button', 'Add');
+        const add = Dom.el('button', 'cm-button', I18n.t('ui.add'));
         add.type = 'button';
         add.addEventListener('click', guarded(async function () {
             const label = labelInput.value.trim();
             if (!label) {
-                throw new Error('Option label is required.');
+                throw new Error(I18n.t('status.optionLabelRequired'));
             }
             const values = valuesInput.value.split(',')
                 .map(function (entry) {
@@ -1606,39 +1637,39 @@ function openPalette(controller, options) {
             await controller.refresh();
             await runSearch();
             await selectItem(tool, { preserveValues: true });
-            setStatus('Option added.');
+            setStatus(I18n.t('status.optionAdded'));
         }, notify));
 
         const closeButton2 = modalCloseButton();
 
         const bodyNode = Dom.el('div', '');
-        bodyNode.appendChild(Dom.el('div', 'cm-note', 'The option is stored as a note under the tool\'s Options folder.'));
-        bodyNode.appendChild(field('Label', labelInput));
-        bodyNode.appendChild(field('Flag', flagInput));
-        bodyNode.appendChild(field('Help', helpInput));
-        bodyNode.appendChild(field('Type', typeSelect));
-        bodyNode.appendChild(field('Default', defaultInput));
-        bodyNode.appendChild(field('Values', valuesInput));
-        bodyNode.appendChild(field('Order', orderInput));
+        bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('addOption.note')));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldLabel'), labelInput));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldFlag'), flagInput));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldHelp'), helpInput));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldType'), typeSelect));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldDefault'), defaultInput));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldValues'), valuesInput));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldOrder'), orderInput));
         bodyNode.appendChild(requiredRow);
-        bodyNode.appendChild(Dom.el('div', 'cm-note', 'Required options are grouped first under Required in the palette.'));
+        bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('addOption.requiredNote')));
 
         const actionsNode = Dom.el('div', 'cm-inline');
         actionsNode.appendChild(add);
         actionsNode.appendChild(closeButton2);
 
-        modalShell('Add an option to "' + tool.title + '"', bodyNode, actionsNode);
+        modalShell(I18n.t('addOption.title', { title: tool.title }), bodyNode, actionsNode);
         labelInput.focus();
     }
 
     function openToolsFolder() {
         const bodyNode = Dom.el('div', '');
-        const info = Dom.el('div', 'cm-note', 'Loading…');
+        const info = Dom.el('div', 'cm-note', I18n.t('ui.loading'));
         bodyNode.appendChild(info);
 
-        const active = Dom.el('button', 'cm-button', 'Use the active note');
+        const active = Dom.el('button', 'cm-button', I18n.t('toolsFolder.useActive'));
         active.type = 'button';
-        const openFolder = Dom.el('button', 'cm-button', 'Open Tools folder');
+        const openFolder = Dom.el('button', 'cm-button', I18n.t('toolsFolder.open'));
         openFolder.type = 'button';
         openFolder.disabled = true;
 
@@ -1646,9 +1677,9 @@ function openPalette(controller, options) {
         const idInput = document.createElement('input');
         idInput.type = 'text';
         idInput.className = 'cm-control';
-        idInput.placeholder = 'Note ID of an existing folder';
-        idInput.setAttribute('aria-label', 'Note ID of an existing folder');
-        const useId = Dom.el('button', 'cm-button', 'Use this note ID');
+        idInput.placeholder = I18n.t('toolsFolder.idPlaceholder');
+        idInput.setAttribute('aria-label', I18n.t('toolsFolder.idPlaceholder'));
+        const useId = Dom.el('button', 'cm-button', I18n.t('toolsFolder.useId'));
         useId.type = 'button';
         idRow.appendChild(idInput);
         idRow.appendChild(useId);
@@ -1658,15 +1689,15 @@ function openPalette(controller, options) {
         guarded(async function () {
             root = await controller.currentToolsRoot();
             info.textContent = root
-                ? 'Current Tools folder: "' + root.title + '" (' + root.noteId + ').'
-                : 'No Tools folder yet.';
+                ? I18n.t('toolsFolder.current', { title: root.title, id: root.noteId })
+                : I18n.t('toolsFolder.none');
             openFolder.disabled = !root;
         }, notify)();
 
         active.addEventListener('click', guarded(async function () {
             await controller.useActiveNoteAsToolsRoot();
             closeModal();
-            setStatus('Tools folder updated to the active note.');
+            setStatus(I18n.t('status.toolsRootActive'));
             await runSearch();
         }, notify));
 
@@ -1680,11 +1711,11 @@ function openPalette(controller, options) {
         useId.addEventListener('click', guarded(async function () {
             const noteId = idInput.value.trim();
             if (!noteId) {
-                throw new Error('Enter a note ID.');
+                throw new Error(I18n.t('status.enterNoteId'));
             }
             await controller.setToolsRoot(noteId);
             closeModal();
-            setStatus('Tools folder updated.');
+            setStatus(I18n.t('status.toolsRootUpdated'));
             await runSearch();
         }, notify));
 
@@ -1694,7 +1725,7 @@ function openPalette(controller, options) {
         const closeButton2 = modalCloseButton();
         actionsNode.appendChild(closeButton2);
 
-        modalShell('Tools folder', bodyNode, actionsNode);
+        modalShell(I18n.t('ui.toolsFolder'), bodyNode, actionsNode);
     }
 
     searchInput.addEventListener('input', onSearchInput);
@@ -1723,6 +1754,20 @@ function openPalette(controller, options) {
     importButton.addEventListener('click', openImport);
     addOptionButton.addEventListener('click', openAddOption);
     toolsButton.addEventListener('click', openToolsFolder);
+    languageSelect.addEventListener('change', guarded(async function () {
+        if (typeof controller.setLanguage !== 'function') {
+            languageSelect.value = I18n.getLocale();
+            return;
+        }
+        try {
+            await controller.setLanguage(languageSelect.value);
+        } catch (error) {
+            // The write failed: show the language that is actually active.
+            languageSelect.value = I18n.getLocale();
+            throw error;
+        }
+        remount();
+    }, notify));
     if (embedded) {
         shell.addEventListener('keydown', onKeyDown);
     } else {

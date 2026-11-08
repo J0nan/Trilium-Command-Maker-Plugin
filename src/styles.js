@@ -86,6 +86,7 @@ const CSS = [
     '.cm-version{font-size:12px;opacity:.7;border:0;background:transparent;color:inherit;cursor:pointer;padding:2px 6px;font:inherit;}',
     '.cm-version:hover{opacity:1;text-decoration:underline;}',
     '.cm-version-link{font-size:11px;opacity:.6;color:inherit;text-decoration:none;padding:2px 4px;}',
+    '.cm-lang{font-size:12px;padding:2px 6px;max-width:8.5em;}',
     '.cm-version-link:hover{opacity:1;text-decoration:underline;}',
     '.cm-badge{font-size:11px;padding:1px 6px;border-radius:999px;background:var(--accented-background-color,#eef2ff);opacity:.8;}',
     '.cm-example{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:6px;}',

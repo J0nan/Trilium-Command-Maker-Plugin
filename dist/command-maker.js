@@ -14,8 +14,947 @@
         }
         return module.exports;
     }
+__def("i18n", function (module, exports, __require) {
+'use strict';
+
+/**
+ * Locale catalog for the whole plugin. One bundle ships every language; the
+ * active locale comes from the `cmLang` label on the Command Maker settings
+ * note (see src/runtime.js) and falls back to the browser/Trilium language,
+ * then English.
+ *
+ * Contract:
+ *   t(key, params)        -> localized string (falls back to English, then key)
+ *   setLocale(value)      -> activate a locale, returns the normalized code
+ *   getLocale()           -> the active code
+ *   detectLocale(list)    -> first supported language in a preference list
+ *   backendStrings()      -> plain, parameter-free strings for runOnBackend
+ *
+ * `backend.js` runs serialized on the Trilium backend, so it cannot require
+ * this module; it receives its strings in the action options instead.
+ */
+
+const DEFAULT_LOCALE = 'en';
+const LOCALES = ['en', 'es'];
+
+const EN = {
+    // --- palette shell -----------------------------------------------------
+    'ui.searchPlaceholder': 'Search tools…',
+    'ui.searchLabel': 'Search tools',
+    'ui.openInTab': 'Open in tab',
+    'ui.openInTabTitle': 'Open Command Maker in a new Trilium tab',
+    'ui.closeTitle': 'Close (Esc)',
+    'ui.closeLabel': 'Close palette',
+    'ui.closeDialog': 'Close dialog',
+    'ui.close': 'Close',
+    'ui.newTool': 'New tool',
+    'ui.importTool': 'Import tool',
+    'ui.exportTool': 'Export tool',
+    'ui.importOptions': 'Import options',
+    'ui.addOption': 'Add option',
+    'ui.toolsFolder': 'Tools folder',
+    'ui.repository': 'Repository',
+    'ui.language': 'Language',
+    'ui.checkUpdates': 'Check for updates',
+    'ui.loading': 'Loading…',
+    'ui.noToolsMatch': 'No tools match.',
+    'ui.pickTool': 'Pick a tool from the list.',
+    'ui.noOptions': 'This tool has no options yet. Use "Import options" or add option notes under Options.',
+    'ui.required': 'Required',
+    'ui.optional': 'Optional',
+    'ui.inferred': 'inferred',
+    'ui.examples': 'Examples',
+    'ui.whatIs': 'What is?',
+    'ui.baseCommand': 'Base command',
+    'ui.extraArgs': 'Extra arguments',
+    'ui.extraPlaceholder': 'Positional arguments or subcommands, inserted after the base',
+    'ui.command': 'Command',
+    'ui.commandPreview': 'Command preview',
+    'ui.copy': 'Copy',
+    'ui.insert': 'Insert',
+    'ui.regenerate': 'Regenerate',
+    'ui.openNote': 'Open note',
+    'ui.use': 'Use',
+    'ui.load': 'Load',
+    'ui.delete': 'Delete',
+    'ui.confirmDelete': 'Confirm delete',
+    'ui.preset': 'Preset',
+    'ui.presets': 'Presets',
+    'ui.presetName': 'Preset name',
+    'ui.savePreset': 'Save preset',
+    'ui.presetsBroken': 'Presets note needs fixing',
+    'ui.noPresets': 'No presets yet',
+    'ui.helpOutput': 'Help output',
+    'ui.install': 'Install',
+    'ui.parse': 'Parse',
+    'ui.importSelected': 'Import selected',
+    'ui.add': 'Add',
+    'ui.create': 'Create',
+    'ui.optionsCount': function (params) {
+        return 'Options (' + params.count + ')';
+    },
+    'ui.filterPlaceholder': 'Filter options…',
+    'ui.filterLabel': 'Filter options',
+    'ui.toolName': 'Tool name',
+    'ui.toolNamePlaceholder': 'Tool name (e.g. docker)',
+    'ui.category': 'Category',
+    'ui.newCategory': 'New category…',
+    'ui.newCategoryPlaceholder': 'New category name',
+    'ui.baseOptional': 'Base command (optional, defaults to the name)',
+
+    // --- option types ------------------------------------------------------
+    'type.string': 'string',
+    'type.path': 'path',
+    'type.number': 'number',
+    'type.boolean': 'boolean',
+    'type.enum': 'enum',
+
+    // --- status messages ---------------------------------------------------
+    'status.updateUnavailable': 'Update check is unavailable.',
+    'status.checkingUpdates': 'Checking for updates…',
+    'status.updateError': 'v{version}: {error} See the Repository link.',
+    'status.installedLatest': 'Installed v{current}; latest v{latest}. Click to check again.',
+    'status.latest': 'v{version} is the latest version.',
+    'status.outdated': 'v{current} installed · latest is v{latest}.',
+    'status.ahead': 'v{current} is newer than the latest published tag (v{latest}).',
+    'status.noPublished': 'v{version}: no published version found.',
+    'status.nothingToCopy': 'Nothing to copy.',
+    'status.copied': 'Copied to the clipboard.',
+    'status.clipboardFailed': 'Could not write to the clipboard.',
+    'status.inserted': 'Inserted into the active note.',
+    'status.pickPreset': 'Pick a preset first.',
+    'status.presetLoaded': 'Preset loaded.',
+    'status.presetNameRequired': 'Preset name is required.',
+    'status.presetSaved': 'Preset saved.',
+    'status.presetDeleted': 'Preset deleted.',
+    'status.confirmDelete': 'Press Delete again to remove "{name}".',
+    'status.exampleLoaded': 'Example loaded into the form.',
+    'status.codeCopied': 'Code copied to the clipboard.',
+    'status.baseUpdated': 'Base command updated.',
+    'status.toolNameRequired': 'Tool name is required.',
+    'status.categoryRequired': 'Category name is required.',
+    'status.toolCreated': 'Tool created.',
+    'status.selectToolFirst': 'Select a tool first.',
+    'status.promptCopied': 'AI prompt copied to the clipboard.',
+    'status.toolFileCopied': 'Tool file copied to the clipboard.',
+    'status.downloaded': 'Downloaded {name}.',
+    'status.optionLabelRequired': 'Option label is required.',
+    'status.optionAdded': 'Option added.',
+    'status.toolsRootActive': 'Tools folder updated to the active note.',
+    'status.enterNoteId': 'Enter a note ID.',
+    'status.toolsRootUpdated': 'Tools folder updated.',
+    'status.noteRead': 'Note read.',
+    'status.fileRead': 'File read.',
+
+    // --- warnings rendered in the UI --------------------------------------
+    'warn.presetsInvalid': 'The Presets note is not valid JSON. Fix or delete it before saving a preset.',
+    'warn.placeholderNoValue': function (params) {
+        return 'Placeholder {{' + params.name + '}} has no value.';
+    },
+    'warn.placeholderNotNumber': function (params) {
+        return 'Placeholder {{' + params.name + '}} expects a number.';
+    },
+    'warn.inlineMissing': function (params) {
+        return 'Option "' + params.title + '" is inline but {{' + params.placeholder + '}} is not in the command.';
+    },
+    'warn.optionRequired': function (params) {
+        return 'Option "' + params.title + '" is required.';
+    },
+    'warn.optionNotNumber': function (params) {
+        return 'Option "' + params.title + '" expects a number.';
+    },
+    'warn.missingPlaceholderName': function (params) {
+        return 'Option "' + params.title + '" has an empty placeholder name.';
+    },
+    'warn.duplicatePlaceholder': function (params) {
+        return 'Two options share the placeholder "' + params.name + '"; the first one wins.';
+    },
+    'warn.duplicateFlag': function (params) {
+        return 'Two options use the flag "' + params.flag + '"; the command will repeat it.';
+    },
+    'warn.duplicateFlagOption': 'Option "{flag}" from {origin} duplicates the earlier one on {first}; the first one wins.',
+    'warn.unparsedOptionLine': 'Could not parse the option line "{text}".',
+    'warn.jsonEmpty': 'The JSON import is empty.',
+    'warn.notValidJson': 'Not valid JSON: {error}',
+    'warn.noOptionsArray': 'No options array found in the JSON.',
+    'warn.entryNotObject': '{origin} is not an object.',
+    'warn.entryNoFlag': '{origin} has no flag.',
+    'warn.entryUnusableFlag': '{origin} has an unusable flag.',
+    'warn.entryUnusableFlagValue': '{origin} has an unusable flag "{flag}".',
+    'warn.htmlTable': 'HTML tables are not supported; use a markdown table.',
+    'warn.noTableRows': 'No markdown table rows were found.',
+    'warn.noFlagColumn': 'The table header has no flag column.',
+    'warn.unknownType': 'Unknown option type "{value}"; using string.',
+    'warn.optionEntryNotObject': 'Option entry {index} is not an object.',
+    'warn.optionEntryNoName': 'Option entry {index} has no label and no flag.',
+    'warn.optionsNotArray': 'The tool "options" field is not an array; no options were read.',
+    'warn.fileEmpty': 'The tool file is empty.',
+    'warn.fileNotObject': 'The tool file must be a JSON object.',
+    'warn.unsupportedVersion': 'This plugin reads tool files version {supported}; the file declares version "{version}".',
+    'warn.unexpectedKind': 'Unexpected file kind "{kind}"; expected "{expected}".',
+    'warn.missingTitle': 'The tool file has no "title".',
+    'warn.tooManyOptions': 'The tool file lists {count} options; only the first {max} are imported.',
+
+    // --- import options dialog --------------------------------------------
+    'import.hint': 'Paste "--help" output, a JSON options file, or a markdown table. Nothing is written until you import.',
+    'import.placeholder': '--help output, JSON or a markdown table…',
+    'import.noOptions': 'No options found. Check the format and try again.',
+    'import.selectOption': 'Select {name}',
+    'import.nothingToParse': 'Nothing to parse. Paste help output, read the active note or choose a file.',
+    'import.parsed': function (params) {
+        return 'Parsed ' + params.count + ' option' + (params.count === 1 ? '' : 's') + '.';
+    },
+    'import.selectOne': 'Select at least one option.',
+    'import.imported': function (params) {
+        const created = params.created;
+        let text = 'Imported ' + created + ' option' + (created === 1 ? '' : 's') + '.';
+        if (params.skipped) {
+            text += ' Skipped ' + params.skipped + ' duplicate' + (params.skipped === 1 ? '' : 's') + '.';
+        }
+        if (params.capped) {
+            text += ' Ignored ' + params.capped + ' option' + (params.capped === 1 ? '' : 's') + ' over the per-import limit.';
+        }
+        return text;
+    },
+    'import.required': 'Required',
+    'import.title': 'Import options into "{title}"',
+
+    // --- import tool dialog ------------------------------------------------
+    'importTool.hint': 'Paste a tool file (JSON) exported from another tool, or one generated with "Copy AI prompt". Nothing is written until you import.',
+    'importTool.placeholder': "Tool file JSON, or the output of the tool's --help command…",
+    'importTool.copyPrompt': 'Copy AI prompt',
+    'importTool.copyPromptTitle': 'Copy a prompt for any AI model, including the pasted --help output',
+    'importTool.nothingToParse': 'Nothing to parse. Paste a tool file, read the active note or choose a file.',
+    'importTool.parsed': 'Parsed tool "{title}".',
+    'importTool.parseFailed': 'The tool file could not be parsed.',
+    'importTool.parseFirst': 'Parse a tool file first.',
+    'importTool.imported': 'Imported tool "{title}".',
+    'importTool.title': 'Import a tool',
+    'importTool.fieldTitle': 'Title',
+    'importTool.fieldCategory': 'Category',
+    'importTool.fieldBase': 'Base command',
+    'importTool.uncategorized': 'Uncategorized',
+    'importTool.noOptions': 'This tool file has no options.',
+    'importTool.positional': '(positional)',
+
+    // --- export tool dialog ------------------------------------------------
+    'export.note': 'This plain-JSON file carries the tags, options and presets, so it can be imported here, kept as a backup, or shared.',
+    'export.filename': 'Suggested file name: {name}',
+    'export.copyJson': 'Copy JSON',
+    'export.download': 'Download .json',
+    'export.title': 'Export "{title}"',
+
+    // --- add option dialog -------------------------------------------------
+    'addOption.labelPlaceholder': 'Option label, e.g. Output file',
+    'addOption.flagPlaceholder': 'Flag, e.g. --output (empty = positional)',
+    'addOption.helpPlaceholder': 'What is this option for?',
+    'addOption.defaultPlaceholder': 'Default value (optional)',
+    'addOption.valuesPlaceholder': 'Enum values, comma separated (optional)',
+    'addOption.note': "The option is stored as a note under the tool's Options folder.",
+    'addOption.requiredNote': 'Required options are grouped first under Required in the palette.',
+    'addOption.fieldLabel': 'Label',
+    'addOption.fieldFlag': 'Flag',
+    'addOption.fieldHelp': 'Help',
+    'addOption.fieldType': 'Type',
+    'addOption.fieldDefault': 'Default',
+    'addOption.fieldValues': 'Values',
+    'addOption.fieldOrder': 'Order',
+    'addOption.title': 'Add an option to "{title}"',
+
+    // --- tools folder dialog ----------------------------------------------
+    'toolsFolder.useActive': 'Use the active note',
+    'toolsFolder.open': 'Open Tools folder',
+    'toolsFolder.idPlaceholder': 'Note ID of an existing folder',
+    'toolsFolder.useId': 'Use this note ID',
+    'toolsFolder.current': 'Current Tools folder: "{title}" ({id}).',
+    'toolsFolder.none': 'No Tools folder yet.',
+
+    // --- source picker -----------------------------------------------------
+    'source.paste': 'Paste text',
+    'source.note': 'Active note',
+    'source.file': 'File',
+    'source.readNote': 'Read active note',
+    'source.read': function (params) {
+        return 'Read "' + params.label + '" (' + params.count + ' characters).';
+    },
+    'source.fileName': 'file',
+
+    // --- frontend errors ---------------------------------------------------
+    'error.downloadUnsupported': 'This environment cannot download files. Copy the text instead.',
+    'error.filesUnsupported': 'This browser cannot read local files.',
+    'error.fileRead': 'Could not read the selected file.',
+    'error.apiUnavailable': 'Trilium api is not available.',
+    'error.toolNotFound': 'Tool not found. Reopen the palette.',
+    'error.toolReadFailed': 'Tool "{title}" could not be read; it may have been deleted. Reopen the palette to refresh.',
+    'error.insertUnsupported': 'This Trilium version cannot insert into the editor. Copy the command instead.',
+    'error.toolsRootUnavailable': 'Tools folder is not available yet. Reopen the palette.',
+    'error.notReady': 'Command Maker is not ready yet. Reopen the palette.',
+    'error.pluginNoteMissing': 'Cannot locate the Command Maker plugin note.',
+    'error.tabUnsupported': 'This Trilium version cannot open notes in a new tab.',
+    'error.noActiveNote': 'No active note.',
+    'error.noActiveNoteForTools': 'No active note to use as the Tools folder.',
+    'error.noteNotFound': 'Note not found: {id}',
+    'error.updateCheckUnavailable': 'This environment cannot check for updates.',
+    'error.noPublishedVersion': 'No published version found.',
+    'error.updateCheckFailed': 'Could not check for updates: {error}',
+
+    // --- AI prompt ---------------------------------------------------------
+    'prompt.intro': 'You convert command-line tool documentation into a Command Maker tool file.',
+    'prompt.returnOnly': 'Return only the JSON object. Do not wrap it in a markdown code fence, do not add commentary,',
+    'prompt.noOmit': 'and do not omit fields. Use this exact shape:',
+    'prompt.rulesHeading': 'Rules:',
+    'prompt.inputHeading': 'Input:',
+    'prompt.toolName': 'Tool name: {title}',
+    'prompt.toolNamePlaceholder': 'Tool name: <tool name>',
+    'prompt.helpLabel': '--help output:',
+    'prompt.helpPlaceholder': "<paste the output of the tool's --help command here>",
+    'prompt.convert': 'Convert the input above now. Return only the JSON object.',
+    'prompt.schemaTitle': '<command name, e.g. git commit>',
+    'prompt.schemaCategory': '<short group, e.g. Version control>',
+    'prompt.schemaBase': '<command the user types, e.g. git commit>',
+    'prompt.schemaDescription': '<one sentence>',
+    'prompt.schemaInstall': '<p>Install on Windows:</p><pre><code>winget install tool</code></pre>',
+    'prompt.schemaUsage': '<p>Example:</p><pre><code>...</code></pre>',
+    'prompt.schemaHelp': '<the exact --help output, unchanged>',
+    'prompt.schemaOptionLabel': 'Input file',
+    'prompt.schemaOptionHelp': 'Input file to read.',
+    'prompt.ruleTitleBase': '- title: the command name. base: the exact command the user types (keep subcommands, e.g. "git commit").',
+    'prompt.ruleTags': '- tags, presets and per-option "content" exist for full backups; leave them out unless a backup was asked for.',
+    'prompt.ruleCategory': '- category: a short group such as "Network", "Media" or "Version control".',
+    'prompt.ruleDescription': '- description: one sentence that explains what the tool does.',
+    'prompt.ruleContent': function () {
+        return '- content: HTML with exactly three <h2> sections in this order: "'
+            + t('model.headingWhatIs') + '", "' + t('model.headingOfficial')
+            + '", "' + t('model.headingUseful') + '".';
+    },
+    'prompt.ruleContentBody': function () {
+        return '  Put a <p> summary under "' + t('model.headingWhatIs')
+            + '" and one <ul><li><a href="...">...</a></li></ul> list under each links section.';
+    },
+    'prompt.ruleContentNoLinks': '  If no URL is known, leave an empty <ul></ul>; never invent links.',
+    'prompt.ruleInstall': '- install: HTML install steps (Windows, macOS, Linux) when known; otherwise a short placeholder paragraph.',
+    'prompt.ruleInstallBlocks': '  Put every install command in its own <pre><code>command</code></pre> block. Never use inline <code> for install commands;',
+    'prompt.ruleInstallInline': '  inline code is only for short words, file names or values mentioned in prose.',
+    'prompt.ruleUsage': '- usage: HTML with two or three realistic <pre><code>command</code></pre> examples.',
+    'prompt.ruleHelp': '- help: the raw --help text, unchanged.',
+    'prompt.ruleOptions': '- options: one entry per documented option or positional argument.',
+    'prompt.ruleFlag': '  - flag: the primary flag ("-i", "--ignore-case"), or "" for a positional argument.',
+    'prompt.ruleLabel': '  - label: a short human name ("Ignore case"); required when flag is "".',
+    'prompt.ruleOptionHelp': '  - help: what the option does, taken from the help output.',
+    'prompt.ruleType': '  - type: "boolean" when it takes no value, "path" for files or directories, "number" for counts or sizes,',
+    'prompt.ruleTypeMore': '    "enum" when there is a fixed set of values, "string" otherwise.',
+    'prompt.ruleValues': '  - values: the enum choices only, otherwise [].',
+    'prompt.ruleDefault': '  - default: the default stated in the help output, otherwise "".',
+    'prompt.ruleRequired': '  - required: true only for positional arguments or options the tool requires.',
+    'prompt.rulePlaceholder': '  - placeholder: a short unique identifier ("input", "url").',
+    'prompt.ruleOrder': '  - order: 10, 20, 30... in the order the options appear.',
+    'prompt.ruleQuote': '  - quote: "double" for free text or URLs that may contain spaces, otherwise "none".',
+    'prompt.ruleSep': '  - sep: " " normally, "=" only for --flag=value style options.',
+    'prompt.ruleMode': '  - mode: "flag" unless the base command itself must contain {{placeholder}}.',
+    'prompt.ruleNoInvention': 'Do not invent options that are not in the help output.',
+
+    // --- backend (serialized: parameter-free strings only) ----------------
+    'back.noteOptions': 'Options',
+    'back.notePresets': 'Presets',
+    'back.noteInstall': 'Install',
+    'back.noteUsage': 'Usage',
+    'back.noteHelp': 'Help',
+    'back.noteUncategorized': 'Uncategorized',
+    'back.noteNewTool': 'New tool',
+    'back.noteOption': 'Option',
+    'back.noteSettings': 'Command Maker',
+    'back.noteSettingsContent': 'Command Maker settings. The plugin finds this note through its label.',
+    'back.noteTools': 'Tools',
+    'back.noteToolsContent': 'Tool notes live in this folder, grouped by category. Move it anywhere; the label is what matters.',
+    'back.noteTabTitle': 'Command Maker tab',
+    'back.noteTabRenderTitle': 'Command Maker',
+    'back.errorToolsRoot': 'Tools root not found',
+    'back.errorToolNote': 'Tool note not found',
+    'back.errorOptionNote': 'Option note not found',
+    'back.errorSettingsNote': 'Command Maker settings note not found',
+    'back.errorNotAnOptionPrefix': 'Note is not an option of a tool: ',
+    'back.errorNoteNotFound': 'Note not found',
+    'back.errorPresetsSave': 'The Presets note is not valid JSON. Fix or delete it before saving a preset.',
+    'back.errorPresetsDelete': 'The Presets note is not valid JSON. Fix or delete it before deleting a preset.',
+    'back.errorUnknownActionPrefix': 'Unknown action: ',
+
+    // --- tool note templates and seeds ------------------------------------
+    'model.headingWhatIs': 'What is?',
+    'model.headingOfficial': 'Official links',
+    'model.headingUseful': 'Useful links',
+    'model.toolTemplate': [
+        '<h2>What is?</h2>',
+        '<p>Describe what this tool does and when to use it.</p>',
+        '<h2>Official links</h2>',
+        '<p>Add the official documentation, repository or website links here.</p>',
+        '<h2>Useful links</h2>',
+        '<p>Add useful guides, cheat sheets or articles here.</p>'
+    ].join('\n'),
+    'model.installTemplate': '<p>Add the installation steps or commands for this tool.</p>',
+    'model.usageTemplate': '<p>Add examples of commands with this tool. Put each example in a code block.</p>',
+    'model.categoryVersionControl': 'Version control',
+    'model.categoryNetwork': 'Network',
+    'model.gitDescription': 'Record staged changes in the current Git repository.',
+    'model.gitWhatIs': '<code>git commit</code> records the staged changes of the repository as a new commit.',
+    'model.gitOfficial': 'Official git-commit documentation',
+    'model.gitUseful': 'Conventional Commits',
+    'model.gitCommitExample': 'Commit with a message:',
+    'model.gitAddAllExample': 'Add all tracked changes and commit:',
+    'model.gitAmendExample': 'Amend the last commit without changing its message:',
+    'model.gitOptionMessage': 'Commit message. Repeat the flag to add paragraphs.',
+    'model.gitOptionMessageLabel': 'Message',
+    'model.gitOptionAll': 'Stage all tracked changes before committing.',
+    'model.gitOptionAllLabel': 'All changes',
+    'model.gitOptionAmend': 'Replace the previous commit instead of creating a new one.',
+    'model.gitOptionAmendLabel': 'Amend last commit',
+    'model.gitOptionEmpty': 'Record a commit with no changes.',
+    'model.gitOptionEmptyLabel': 'Allow empty',
+    'model.gitOptionHooks': 'Bypass pre-commit and commit-msg hooks.',
+    'model.gitOptionHooksLabel': 'Skip hooks',
+    'model.gitOptionAuthor': 'Override the commit author, for example "Name <mail@example.com>".',
+    'model.gitOptionAuthorLabel': 'Author',
+    'model.gitOptionDate': 'Override the author date.',
+    'model.gitOptionDateLabel': 'Date',
+    'model.curlDescription': 'Transfer data from or to a server with the curl command-line client.',
+    'model.curlWhatIs': 'curl is a command-line tool for transferring data with URLs. It supports HTTP, HTTPS, FTP and many other protocols.',
+    'model.curlOfficial': 'Official curl documentation',
+    'model.curlUseful': 'curl man page',
+    'model.curlPostExample': 'POST JSON:',
+    'model.curlDownloadExample': 'Download a file, following redirects:',
+    'model.curlHeadersExample': 'Show only the response headers:',
+    'model.curlOptionRequest': 'HTTP request method.',
+    'model.curlOptionRequestLabel': 'Request method',
+    'model.curlOptionHeader': 'Add a request header, for example "Content-Type: application/json".',
+    'model.curlOptionHeaderLabel': 'Header',
+    'model.curlOptionData': 'Request body sent to the server.',
+    'model.curlOptionDataLabel': 'Data',
+    'model.curlOptionOutput': 'Write the response body to this file instead of stdout.',
+    'model.curlOptionOutputLabel': 'Output file',
+    'model.curlOptionFollow': 'Follow HTTP redirects.',
+    'model.curlOptionFollowLabel': 'Follow redirects',
+    'model.curlOptionSilent': 'Do not show progress or error messages.',
+    'model.curlOptionSilentLabel': 'Silent',
+    'model.curlOptionCompressed': 'Ask the server for a compressed response and decompress it.',
+    'model.curlOptionCompressedLabel': 'Compressed',
+    'model.curlOptionUser': 'Server credentials as user:password.',
+    'model.curlOptionUserLabel': 'User',
+    'model.curlOptionInsecure': 'Allow insecure TLS connections (skip certificate checks).',
+    'model.curlOptionInsecureLabel': 'Insecure',
+    'model.curlOptionUrl': 'URL to request. Positional; appended last.',
+    'model.curlOptionUrlLabel': 'URL'
+};
+
+const ES = {
+    // --- palette shell -----------------------------------------------------
+    'ui.searchPlaceholder': 'Buscar herramientas…',
+    'ui.searchLabel': 'Buscar herramientas',
+    'ui.openInTab': 'Abrir en pestaña',
+    'ui.openInTabTitle': 'Abrir Command Maker en una pestaña nueva de Trilium',
+    'ui.closeTitle': 'Cerrar (Esc)',
+    'ui.closeLabel': 'Cerrar la paleta',
+    'ui.closeDialog': 'Cerrar el diálogo',
+    'ui.close': 'Cerrar',
+    'ui.newTool': 'Nueva herramienta',
+    'ui.importTool': 'Importar herramienta',
+    'ui.exportTool': 'Exportar herramienta',
+    'ui.importOptions': 'Importar opciones',
+    'ui.addOption': 'Añadir opción',
+    'ui.toolsFolder': 'Carpeta de herramientas',
+    'ui.repository': 'Repositorio',
+    'ui.language': 'Idioma',
+    'ui.checkUpdates': 'Buscar actualizaciones',
+    'ui.loading': 'Cargando…',
+    'ui.noToolsMatch': 'Ninguna herramienta coincide.',
+    'ui.pickTool': 'Elige una herramienta de la lista.',
+    'ui.noOptions': 'Esta herramienta aún no tiene opciones. Usa "Importar opciones" o añade notas de opción dentro de Opciones.',
+    'ui.required': 'Obligatorias',
+    'ui.optional': 'Opcionales',
+    'ui.inferred': 'inferida',
+    'ui.examples': 'Ejemplos',
+    'ui.whatIs': '¿Qué es?',
+    'ui.baseCommand': 'Comando base',
+    'ui.extraArgs': 'Argumentos adicionales',
+    'ui.extraPlaceholder': 'Argumentos posicionales o subcomandos, insertados después del comando base',
+    'ui.command': 'Comando',
+    'ui.commandPreview': 'Vista previa del comando',
+    'ui.copy': 'Copiar',
+    'ui.insert': 'Insertar',
+    'ui.regenerate': 'Regenerar',
+    'ui.openNote': 'Abrir nota',
+    'ui.use': 'Usar',
+    'ui.load': 'Cargar',
+    'ui.delete': 'Borrar',
+    'ui.confirmDelete': 'Confirmar borrado',
+    'ui.preset': 'Preset',
+    'ui.presets': 'Presets',
+    'ui.presetName': 'Nombre del preset',
+    'ui.savePreset': 'Guardar preset',
+    'ui.presetsBroken': 'La nota de presets necesita arreglo',
+    'ui.noPresets': 'Aún no hay presets',
+    'ui.helpOutput': 'Salida de --help',
+    'ui.install': 'Instalación',
+    'ui.parse': 'Analizar',
+    'ui.importSelected': 'Importar selección',
+    'ui.add': 'Añadir',
+    'ui.create': 'Crear',
+    'ui.optionsCount': function (params) {
+        return 'Opciones (' + params.count + ')';
+    },
+    'ui.filterPlaceholder': 'Filtrar opciones…',
+    'ui.filterLabel': 'Filtrar opciones',
+    'ui.toolName': 'Nombre de la herramienta',
+    'ui.toolNamePlaceholder': 'Nombre de la herramienta (p. ej. docker)',
+    'ui.category': 'Categoría',
+    'ui.newCategory': 'Nueva categoría…',
+    'ui.newCategoryPlaceholder': 'Nombre de la nueva categoría',
+    'ui.baseOptional': 'Comando base (opcional, por defecto el nombre)',
+
+    // --- option types ------------------------------------------------------
+    'type.string': 'texto',
+    'type.path': 'ruta',
+    'type.number': 'número',
+    'type.boolean': 'booleano',
+    'type.enum': 'enumerado',
+
+    // --- status messages ---------------------------------------------------
+    'status.updateUnavailable': 'La comprobación de actualizaciones no está disponible.',
+    'status.checkingUpdates': 'Buscando actualizaciones…',
+    'status.updateError': 'v{version}: {error} Consulta el enlace al repositorio.',
+    'status.installedLatest': 'Instalada la v{current}; última v{latest}. Haz clic para comprobar de nuevo.',
+    'status.latest': 'La v{version} es la última versión.',
+    'status.outdated': 'Instalada la v{current} · la última es la v{latest}.',
+    'status.ahead': 'La v{current} es más reciente que la última etiqueta publicada (v{latest}).',
+    'status.noPublished': 'v{version}: no se encontró ninguna versión publicada.',
+    'status.nothingToCopy': 'No hay nada que copiar.',
+    'status.copied': 'Copiado al portapapeles.',
+    'status.clipboardFailed': 'No se pudo escribir en el portapapeles.',
+    'status.inserted': 'Insertado en la nota activa.',
+    'status.pickPreset': 'Elige primero un preset.',
+    'status.presetLoaded': 'Preset cargado.',
+    'status.presetNameRequired': 'El nombre del preset es obligatorio.',
+    'status.presetSaved': 'Preset guardado.',
+    'status.presetDeleted': 'Preset borrado.',
+    'status.confirmDelete': 'Pulsa Borrar otra vez para eliminar "{name}".',
+    'status.exampleLoaded': 'Ejemplo cargado en el formulario.',
+    'status.codeCopied': 'Código copiado al portapapeles.',
+    'status.baseUpdated': 'Comando base actualizado.',
+    'status.toolNameRequired': 'El nombre de la herramienta es obligatorio.',
+    'status.categoryRequired': 'El nombre de la categoría es obligatorio.',
+    'status.toolCreated': 'Herramienta creada.',
+    'status.selectToolFirst': 'Selecciona primero una herramienta.',
+    'status.promptCopied': 'Prompt de IA copiado al portapapeles.',
+    'status.toolFileCopied': 'Archivo de herramienta copiado al portapapeles.',
+    'status.downloaded': 'Se descargó {name}.',
+    'status.optionLabelRequired': 'La etiqueta de la opción es obligatoria.',
+    'status.optionAdded': 'Opción añadida.',
+    'status.toolsRootActive': 'Carpeta de herramientas actualizada a la nota activa.',
+    'status.enterNoteId': 'Introduce un ID de nota.',
+    'status.toolsRootUpdated': 'Carpeta de herramientas actualizada.',
+    'status.noteRead': 'Nota leída.',
+    'status.fileRead': 'Archivo leído.',
+
+    // --- warnings rendered in the UI --------------------------------------
+    'warn.presetsInvalid': 'La nota de presets no es JSON válido. Arréglala o bórrala antes de guardar un preset.',
+    'warn.placeholderNoValue': function (params) {
+        return 'El marcador {{' + params.name + '}} no tiene valor.';
+    },
+    'warn.placeholderNotNumber': function (params) {
+        return 'El marcador {{' + params.name + '}} espera un número.';
+    },
+    'warn.inlineMissing': function (params) {
+        return 'La opción "' + params.title + '" es inline pero {{' + params.placeholder + '}} no está en el comando.';
+    },
+    'warn.optionRequired': function (params) {
+        return 'La opción "' + params.title + '" es obligatoria.';
+    },
+    'warn.optionNotNumber': function (params) {
+        return 'La opción "' + params.title + '" espera un número.';
+    },
+    'warn.missingPlaceholderName': function (params) {
+        return 'La opción "' + params.title + '" tiene un nombre de marcador vacío.';
+    },
+    'warn.duplicatePlaceholder': function (params) {
+        return 'Dos opciones comparten el marcador "' + params.name + '"; gana la primera.';
+    },
+    'warn.duplicateFlag': function (params) {
+        return 'Dos opciones usan el flag "' + params.flag + '"; el comando lo repetirá.';
+    },
+    'warn.duplicateFlagOption': 'La opción "{flag}" de {origin} duplica la anterior en {first}; gana la primera.',
+    'warn.unparsedOptionLine': 'No se pudo analizar la línea de opción "{text}".',
+    'warn.jsonEmpty': 'La importación JSON está vacía.',
+    'warn.notValidJson': 'JSON no válido: {error}',
+    'warn.noOptionsArray': 'No se encontró ningún array de opciones en el JSON.',
+    'warn.entryNotObject': '{origin} no es un objeto.',
+    'warn.entryNoFlag': '{origin} no tiene flag.',
+    'warn.entryUnusableFlag': '{origin} tiene un flag inutilizable.',
+    'warn.entryUnusableFlagValue': '{origin} tiene un flag inutilizable "{flag}".',
+    'warn.htmlTable': 'Las tablas HTML no son compatibles; usa una tabla markdown.',
+    'warn.noTableRows': 'No se encontraron filas de tabla markdown.',
+    'warn.noFlagColumn': 'La cabecera de la tabla no tiene columna de flag.',
+    'warn.unknownType': 'Tipo de opción desconocido "{value}"; se usa texto.',
+    'warn.optionEntryNotObject': 'La entrada de opción {index} no es un objeto.',
+    'warn.optionEntryNoName': 'La entrada de opción {index} no tiene etiqueta ni flag.',
+    'warn.optionsNotArray': 'El campo "options" de la herramienta no es un array; no se leyó ninguna opción.',
+    'warn.fileEmpty': 'El archivo de herramienta está vacío.',
+    'warn.fileNotObject': 'El archivo de herramienta debe ser un objeto JSON.',
+    'warn.unsupportedVersion': 'Este plugin lee archivos de herramienta de la versión {supported}; el archivo declara la versión "{version}".',
+    'warn.unexpectedKind': 'Tipo de archivo inesperado "{kind}"; se esperaba "{expected}".',
+    'warn.missingTitle': 'El archivo de herramienta no tiene "title".',
+    'warn.tooManyOptions': 'El archivo de herramienta lista {count} opciones; solo se importan las primeras {max}.',
+
+    // --- import options dialog --------------------------------------------
+    'import.hint': 'Pega la salida de "--help", un archivo JSON de opciones o una tabla markdown. No se escribe nada hasta que importes.',
+    'import.placeholder': 'Salida de --help, JSON o una tabla markdown…',
+    'import.noOptions': 'No se encontraron opciones. Revisa el formato e inténtalo de nuevo.',
+    'import.selectOption': 'Seleccionar {name}',
+    'import.nothingToParse': 'No hay nada que analizar. Pega la salida de --help, lee la nota activa o elige un archivo.',
+    'import.parsed': function (params) {
+        return params.count === 1
+            ? 'Se analizó 1 opción.'
+            : 'Se analizaron ' + params.count + ' opciones.';
+    },
+    'import.selectOne': 'Selecciona al menos una opción.',
+    'import.imported': function (params) {
+        const created = params.created;
+        let text = created === 1
+            ? 'Se importó 1 opción.'
+            : 'Se importaron ' + created + ' opciones.';
+        if (params.skipped) {
+            text += params.skipped === 1
+                ? ' Se omitió 1 duplicada.'
+                : ' Se omitieron ' + params.skipped + ' duplicadas.';
+        }
+        if (params.capped) {
+            text += params.capped === 1
+                ? ' Se ignoró 1 opción por el límite por importación.'
+                : ' Se ignoraron ' + params.capped + ' opciones por el límite por importación.';
+        }
+        return text;
+    },
+    'import.required': 'Obligatoria',
+    'import.title': 'Importar opciones en "{title}"',
+
+    // --- import tool dialog ------------------------------------------------
+    'importTool.hint': 'Pega un archivo de herramienta (JSON) exportado desde otra herramienta o generado con "Copiar prompt de IA". No se escribe nada hasta que importes.',
+    'importTool.placeholder': 'JSON del archivo de herramienta o la salida del comando --help…',
+    'importTool.copyPrompt': 'Copiar prompt de IA',
+    'importTool.copyPromptTitle': 'Copia un prompt para cualquier modelo de IA, con la salida de --help pegada',
+    'importTool.nothingToParse': 'No hay nada que analizar. Pega un archivo de herramienta, lee la nota activa o elige un archivo.',
+    'importTool.parsed': 'Herramienta "{title}" analizada.',
+    'importTool.parseFailed': 'No se pudo analizar el archivo de herramienta.',
+    'importTool.parseFirst': 'Analiza primero un archivo de herramienta.',
+    'importTool.imported': 'Herramienta "{title}" importada.',
+    'importTool.title': 'Importar una herramienta',
+    'importTool.fieldTitle': 'Título',
+    'importTool.fieldCategory': 'Categoría',
+    'importTool.fieldBase': 'Comando base',
+    'importTool.uncategorized': 'Sin categoría',
+    'importTool.noOptions': 'Este archivo de herramienta no tiene opciones.',
+    'importTool.positional': '(posicional)',
+
+    // --- export tool dialog ------------------------------------------------
+    'export.note': 'Este archivo JSON plano incluye las etiquetas, las opciones y los presets, así que puedes importarlo aquí, guardarlo como copia de seguridad o compartirlo.',
+    'export.filename': 'Nombre de archivo sugerido: {name}',
+    'export.copyJson': 'Copiar JSON',
+    'export.download': 'Descargar .json',
+    'export.title': 'Exportar "{title}"',
+
+    // --- add option dialog -------------------------------------------------
+    'addOption.labelPlaceholder': 'Etiqueta de la opción, p. ej. Archivo de salida',
+    'addOption.flagPlaceholder': 'Flag, p. ej. --output (vacío = posicional)',
+    'addOption.helpPlaceholder': '¿Para qué sirve esta opción?',
+    'addOption.defaultPlaceholder': 'Valor por defecto (opcional)',
+    'addOption.valuesPlaceholder': 'Valores de enumeración separados por comas (opcional)',
+    'addOption.note': 'La opción se guarda como una nota dentro de la carpeta de opciones de la herramienta.',
+    'addOption.requiredNote': 'Las opciones obligatorias se agrupan primero bajo Obligatorias en la paleta.',
+    'addOption.fieldLabel': 'Etiqueta',
+    'addOption.fieldFlag': 'Flag',
+    'addOption.fieldHelp': 'Ayuda',
+    'addOption.fieldType': 'Tipo',
+    'addOption.fieldDefault': 'Por defecto',
+    'addOption.fieldValues': 'Valores',
+    'addOption.fieldOrder': 'Orden',
+    'addOption.title': 'Añadir una opción a "{title}"',
+
+    // --- tools folder dialog ----------------------------------------------
+    'toolsFolder.useActive': 'Usar la nota activa',
+    'toolsFolder.open': 'Abrir la carpeta de herramientas',
+    'toolsFolder.idPlaceholder': 'ID de nota de una carpeta existente',
+    'toolsFolder.useId': 'Usar este ID de nota',
+    'toolsFolder.current': 'Carpeta de herramientas actual: "{title}" ({id}).',
+    'toolsFolder.none': 'Aún no hay carpeta de herramientas.',
+
+    // --- source picker -----------------------------------------------------
+    'source.paste': 'Pegar texto',
+    'source.note': 'Nota activa',
+    'source.file': 'Archivo',
+    'source.readNote': 'Leer la nota activa',
+    'source.read': function (params) {
+        return 'Se leyó "' + params.label + '" (' + params.count + ' caracteres).';
+    },
+    'source.fileName': 'archivo',
+
+    // --- frontend errors ---------------------------------------------------
+    'error.downloadUnsupported': 'Este entorno no puede descargar archivos. Copia el texto en su lugar.',
+    'error.filesUnsupported': 'Este navegador no puede leer archivos locales.',
+    'error.fileRead': 'No se pudo leer el archivo seleccionado.',
+    'error.apiUnavailable': 'La API de Trilium no está disponible.',
+    'error.toolNotFound': 'Herramienta no encontrada. Vuelve a abrir la paleta.',
+    'error.toolReadFailed': 'No se pudo leer la herramienta "{title}"; puede que se haya borrado. Vuelve a abrir la paleta para actualizar.',
+    'error.insertUnsupported': 'Esta versión de Trilium no puede insertar en el editor. Copia el comando en su lugar.',
+    'error.toolsRootUnavailable': 'La carpeta de herramientas aún no está disponible. Vuelve a abrir la paleta.',
+    'error.notReady': 'Command Maker aún no está listo. Vuelve a abrir la paleta.',
+    'error.pluginNoteMissing': 'No se encuentra la nota del plugin Command Maker.',
+    'error.tabUnsupported': 'Esta versión de Trilium no puede abrir notas en una pestaña nueva.',
+    'error.noActiveNote': 'No hay ninguna nota activa.',
+    'error.noActiveNoteForTools': 'No hay ninguna nota activa para usar como carpeta de herramientas.',
+    'error.noteNotFound': 'Nota no encontrada: {id}',
+    'error.updateCheckUnavailable': 'Este entorno no puede comprobar actualizaciones.',
+    'error.noPublishedVersion': 'No se encontró ninguna versión publicada.',
+    'error.updateCheckFailed': 'No se pudieron comprobar las actualizaciones: {error}',
+
+    // --- AI prompt ---------------------------------------------------------
+    'prompt.intro': 'Conviertes la documentación de herramientas de línea de comandos en un archivo de herramienta de Command Maker.',
+    'prompt.returnOnly': 'Devuelve solo el objeto JSON. No lo envuelvas en un bloque de código markdown, no añadas comentarios',
+    'prompt.noOmit': 'y no omitas campos. Usa exactamente esta forma:',
+    'prompt.rulesHeading': 'Reglas:',
+    'prompt.inputHeading': 'Entrada:',
+    'prompt.toolName': 'Nombre de la herramienta: {title}',
+    'prompt.toolNamePlaceholder': 'Nombre de la herramienta: <nombre de la herramienta>',
+    'prompt.helpLabel': 'Salida de --help:',
+    'prompt.helpPlaceholder': '<pega aquí la salida del comando --help de la herramienta>',
+    'prompt.convert': 'Convierte la entrada anterior ahora. Devuelve solo el objeto JSON.',
+    'prompt.schemaTitle': '<nombre del comando, p. ej. git commit>',
+    'prompt.schemaCategory': '<grupo corto, p. ej. Control de versiones>',
+    'prompt.schemaBase': '<comando que escribe el usuario, p. ej. git commit>',
+    'prompt.schemaDescription': '<una frase>',
+    'prompt.schemaInstall': '<p>Instalar en Windows:</p><pre><code>winget install tool</code></pre>',
+    'prompt.schemaUsage': '<p>Ejemplo:</p><pre><code>...</code></pre>',
+    'prompt.schemaHelp': '<la salida exacta de --help, sin cambios>',
+    'prompt.schemaOptionLabel': 'Archivo de entrada',
+    'prompt.schemaOptionHelp': 'Archivo de entrada que leer.',
+    'prompt.ruleTitleBase': '- title: el nombre del comando. base: el comando exacto que escribe el usuario (mantén los subcomandos, p. ej. "git commit").',
+    'prompt.ruleTags': '- tags, presets y el "content" de cada opción existen para copias de seguridad completas; omítelos salvo que se pida una copia de seguridad.',
+    'prompt.ruleCategory': '- category: un grupo corto como "Red", "Multimedia" o "Control de versiones".',
+    'prompt.ruleDescription': '- description: una frase que explique qué hace la herramienta.',
+    'prompt.ruleContent': function () {
+        return '- content: HTML con exactamente tres secciones <h2> en este orden: "'
+            + t('model.headingWhatIs') + '", "' + t('model.headingOfficial')
+            + '", "' + t('model.headingUseful') + '".';
+    },
+    'prompt.ruleContentBody': function () {
+        return '  Pon un resumen <p> bajo "' + t('model.headingWhatIs')
+            + '" y una lista <ul><li><a href="...">...</a></li></ul> bajo cada sección de enlaces.';
+    },
+    'prompt.ruleContentNoLinks': '  Si no conoces ninguna URL, deja un <ul></ul> vacío; nunca inventes enlaces.',
+    'prompt.ruleInstall': '- install: pasos de instalación en HTML (Windows, macOS, Linux) cuando se conozcan; si no, un párrafo breve de relleno.',
+    'prompt.ruleInstallBlocks': '  Pon cada comando de instalación en su propio bloque <pre><code>comando</code></pre>. No uses <code> en línea para comandos de instalación;',
+    'prompt.ruleInstallInline': '  el código en línea es solo para palabras cortas, nombres de archivo o valores mencionados en el texto.',
+    'prompt.ruleUsage': '- usage: HTML con dos o tres ejemplos realistas <pre><code>comando</code></pre>.',
+    'prompt.ruleHelp': '- help: el texto raw de --help, sin cambios.',
+    'prompt.ruleOptions': '- options: una entrada por cada opción documentada o argumento posicional.',
+    'prompt.ruleFlag': '  - flag: el flag principal ("-i", "--ignore-case"), o "" para un argumento posicional.',
+    'prompt.ruleLabel': '  - label: un nombre humano corto ("Ignorar mayúsculas"); obligatorio cuando flag es "".',
+    'prompt.ruleOptionHelp': '  - help: qué hace la opción, tomado de la salida de ayuda.',
+    'prompt.ruleType': '  - type: "boolean" cuando no lleva valor, "path" para archivos o directorios, "number" para recuentos o tamaños,',
+    'prompt.ruleTypeMore': '    "enum" cuando hay un conjunto fijo de valores, "string" en el resto de casos.',
+    'prompt.ruleValues': '  - values: solo las opciones de la enumeración; si no, [].',
+    'prompt.ruleDefault': '  - default: el valor por defecto indicado en la ayuda; si no, "".',
+    'prompt.ruleRequired': '  - required: true solo para argumentos posicionales u opciones que la herramienta exige.',
+    'prompt.rulePlaceholder': '  - placeholder: un identificador corto y único ("entrada", "url").',
+    'prompt.ruleOrder': '  - order: 10, 20, 30... en el orden en que aparecen las opciones.',
+    'prompt.ruleQuote': '  - quote: "double" para texto libre o URLs que puedan contener espacios; si no, "none".',
+    'prompt.ruleSep': '  - sep: " " normalmente, "=" solo para opciones con estilo --flag=valor.',
+    'prompt.ruleMode': '  - mode: "flag" salvo que el comando base deba contener {{placeholder}}.',
+    'prompt.ruleNoInvention': 'No inventes opciones que no aparezcan en la salida de ayuda.',
+
+    // --- backend (serialized: parameter-free strings only) ----------------
+    'back.noteOptions': 'Opciones',
+    'back.notePresets': 'Presets',
+    'back.noteInstall': 'Instalación',
+    'back.noteUsage': 'Uso',
+    'back.noteHelp': 'Ayuda',
+    'back.noteUncategorized': 'Sin categoría',
+    'back.noteNewTool': 'Nueva herramienta',
+    'back.noteOption': 'Opción',
+    'back.noteSettings': 'Command Maker',
+    'back.noteSettingsContent': 'Ajustes de Command Maker. El plugin encuentra esta nota por su etiqueta.',
+    'back.noteTools': 'Herramientas',
+    'back.noteToolsContent': 'Las notas de herramientas viven en esta carpeta, agrupadas por categoría. Muévela donde quieras; lo que importa es la etiqueta.',
+    'back.noteTabTitle': 'Pestaña de Command Maker',
+    'back.noteTabRenderTitle': 'Command Maker',
+    'back.errorToolsRoot': 'No se encontró la raíz de herramientas',
+    'back.errorToolNote': 'No se encontró la nota de la herramienta',
+    'back.errorOptionNote': 'No se encontró la nota de la opción',
+    'back.errorSettingsNote': 'No se encontró la nota de ajustes de Command Maker',
+    'back.errorNotAnOptionPrefix': 'La nota no es una opción de ninguna herramienta: ',
+    'back.errorNoteNotFound': 'Nota no encontrada',
+    'back.errorPresetsSave': 'La nota de presets no es JSON válido. Arréglala o bórrala antes de guardar un preset.',
+    'back.errorPresetsDelete': 'La nota de presets no es JSON válido. Arréglala o bórrala antes de borrar un preset.',
+    'back.errorUnknownActionPrefix': 'Acción desconocida: ',
+
+    // --- tool note templates and seeds ------------------------------------
+    'model.headingWhatIs': '¿Qué es?',
+    'model.headingOfficial': 'Enlaces oficiales',
+    'model.headingUseful': 'Enlaces útiles',
+    'model.toolTemplate': [
+        '<h2>¿Qué es?</h2>',
+        '<p>Describe qué hace esta herramienta y cuándo usarla.</p>',
+        '<h2>Enlaces oficiales</h2>',
+        '<p>Añade aquí la documentación oficial, el repositorio o el sitio web.</p>',
+        '<h2>Enlaces útiles</h2>',
+        '<p>Añade aquí guías, chuletas o artículos útiles.</p>'
+    ].join('\n'),
+    'model.installTemplate': '<p>Añade los pasos o comandos de instalación de esta herramienta.</p>',
+    'model.usageTemplate': '<p>Añade ejemplos de comandos con esta herramienta. Pon cada ejemplo en un bloque de código.</p>',
+    'model.categoryVersionControl': 'Control de versiones',
+    'model.categoryNetwork': 'Red',
+    'model.gitDescription': 'Registra los cambios preparados en el repositorio Git actual.',
+    'model.gitWhatIs': '<code>git commit</code> registra los cambios preparados del repositorio como un commit nuevo.',
+    'model.gitOfficial': 'Documentación oficial de git-commit',
+    'model.gitUseful': 'Conventional Commits',
+    'model.gitCommitExample': 'Haz un commit con mensaje:',
+    'model.gitAddAllExample': 'Añade todos los cambios rastreados y haz commit:',
+    'model.gitAmendExample': 'Modifica el último commit sin cambiar su mensaje:',
+    'model.gitOptionMessage': 'Mensaje del commit. Repite el flag para añadir párrafos.',
+    'model.gitOptionMessageLabel': 'Mensaje',
+    'model.gitOptionAll': 'Prepara todos los cambios rastreados antes de hacer commit.',
+    'model.gitOptionAllLabel': 'Todos los cambios',
+    'model.gitOptionAmend': 'Sustituye el commit anterior en lugar de crear uno nuevo.',
+    'model.gitOptionAmendLabel': 'Modificar el último commit',
+    'model.gitOptionEmpty': 'Registra un commit sin cambios.',
+    'model.gitOptionEmptyLabel': 'Permitir vacío',
+    'model.gitOptionHooks': 'Omite los hooks pre-commit y commit-msg.',
+    'model.gitOptionHooksLabel': 'Omitir hooks',
+    'model.gitOptionAuthor': 'Sustituye el autor del commit, por ejemplo "Nombre <correo@ejemplo.com>".',
+    'model.gitOptionAuthorLabel': 'Autor',
+    'model.gitOptionDate': 'Sustituye la fecha del autor.',
+    'model.gitOptionDateLabel': 'Fecha',
+    'model.curlDescription': 'Transfiere datos desde o hacia un servidor con el cliente de línea de comandos curl.',
+    'model.curlWhatIs': 'curl es una herramienta de línea de comandos para transferir datos con URLs. Admite HTTP, HTTPS, FTP y muchos otros protocolos.',
+    'model.curlOfficial': 'Documentación oficial de curl',
+    'model.curlUseful': 'Página man de curl',
+    'model.curlPostExample': 'Envía un POST con JSON:',
+    'model.curlDownloadExample': 'Descarga un archivo siguiendo redirecciones:',
+    'model.curlHeadersExample': 'Muestra solo las cabeceras de la respuesta:',
+    'model.curlOptionRequest': 'Método HTTP de la petición.',
+    'model.curlOptionRequestLabel': 'Método',
+    'model.curlOptionHeader': 'Añade una cabecera a la petición, por ejemplo "Content-Type: application/json".',
+    'model.curlOptionHeaderLabel': 'Cabecera',
+    'model.curlOptionData': 'Cuerpo de la petición que se envía al servidor.',
+    'model.curlOptionDataLabel': 'Datos',
+    'model.curlOptionOutput': 'Escribe el cuerpo de la respuesta en este archivo en lugar de la salida estándar.',
+    'model.curlOptionOutputLabel': 'Archivo de salida',
+    'model.curlOptionFollow': 'Sigue las redirecciones HTTP.',
+    'model.curlOptionFollowLabel': 'Seguir redirecciones',
+    'model.curlOptionSilent': 'No muestra el progreso ni los mensajes de error.',
+    'model.curlOptionSilentLabel': 'Silencioso',
+    'model.curlOptionCompressed': 'Pide al servidor una respuesta comprimida y la descomprime.',
+    'model.curlOptionCompressedLabel': 'Comprimido',
+    'model.curlOptionUser': 'Credenciales del servidor como usuario:contraseña.',
+    'model.curlOptionUserLabel': 'Usuario',
+    'model.curlOptionInsecure': 'Permite conexiones TLS inseguras (omite la comprobación de certificados).',
+    'model.curlOptionInsecureLabel': 'Inseguro',
+    'model.curlOptionUrl': 'URL que solicitar. Posicional; se añade al final.',
+    'model.curlOptionUrlLabel': 'URL'
+};
+
+// Backend fallback body: the same template the frontend sends, without
+// duplicating the HTML in two places.
+EN['back.toolContent'] = EN['model.toolTemplate'];
+ES['back.toolContent'] = ES['model.toolTemplate'];
+
+const DICTIONARIES = { en: EN, es: ES };
+
+let current = DEFAULT_LOCALE;
+
+function normalizeLocale(value) {
+    const base = String(value == null ? '' : value).trim().toLowerCase().split(/[-_]/)[0];
+    return LOCALES.indexOf(base) !== -1 ? base : '';
+}
+
+function detectLocale(candidates) {
+    const list = Array.isArray(candidates) ? candidates : [candidates];
+    for (const candidate of list) {
+        const found = normalizeLocale(candidate);
+        if (found) {
+            return found;
+        }
+    }
+    return DEFAULT_LOCALE;
+}
+
+function setLocale(value) {
+    current = normalizeLocale(value) || DEFAULT_LOCALE;
+    return current;
+}
+
+function getLocale() {
+    return current;
+}
+
+function interpolate(text, params) {
+    if (!params) {
+        return text;
+    }
+    return String(text).replace(/\{([A-Za-z0-9_]+)\}/g, function (match, name) {
+        return Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : match;
+    });
+}
+
+function t(key, params) {
+    const dictionary = DICTIONARIES[current] || EN;
+    let value = dictionary[key];
+    if (value === undefined) {
+        value = EN[key];
+    }
+    if (value === undefined) {
+        return key;
+    }
+    if (typeof value === 'function') {
+        return String(value(params || {}));
+    }
+    return interpolate(value, params);
+}
+
+/** Keys the backend needs; passed as plain values because it runs serialized. */
+const BACKEND_KEYS = [
+    'back.noteOptions', 'back.notePresets', 'back.noteInstall', 'back.noteUsage',
+    'back.noteHelp', 'back.noteUncategorized', 'back.noteNewTool', 'back.noteOption',
+    'back.noteSettings', 'back.noteSettingsContent', 'back.noteTools',
+    'back.noteToolsContent', 'back.noteTabTitle', 'back.noteTabRenderTitle',
+    'back.toolContent',
+    'back.errorToolsRoot', 'back.errorToolNote', 'back.errorOptionNote',
+    'back.errorSettingsNote', 'back.errorNotAnOptionPrefix',
+    'back.errorNoteNotFound', 'back.errorNoteNotFoundPrefix',
+    'back.errorPresetsSave', 'back.errorPresetsDelete',
+    'back.errorUnknownActionPrefix'
+];
+
+function backendStrings() {
+    const out = {};
+    for (const key of BACKEND_KEYS) {
+        out[key] = t(key);
+    }
+    return out;
+}
+
+module.exports = {
+    DEFAULT_LOCALE,
+    LOCALES,
+    DICTIONARIES,
+    normalizeLocale,
+    detectLocale,
+    setLocale,
+    getLocale,
+    t,
+    backendStrings
+};
+});
 __def("render", function (module, exports, __require) {
 'use strict';
+
+const I18n = __require("i18n");
 
 /**
  * Pure command assembly. No Trilium API, no DOM; safe to unit test in Node.
@@ -174,14 +1113,14 @@ function renderCommand(definition, values) {
         if (isEmpty(value)) {
             warnings.push({
                 code: 'missing-placeholder',
-                message: 'Placeholder {{' + name + '}} has no value.'
+                message: I18n.t('warn.placeholderNoValue', { name: name })
             });
             return '';
         }
         if (option && option.type === 'number' && !isFinite(Number(value))) {
             warnings.push({
                 code: 'invalid-number',
-                message: 'Placeholder {{' + name + '}} expects a number.'
+                message: I18n.t('warn.placeholderNotNumber', { name: name })
             });
         }
         return String(value);
@@ -200,7 +1139,7 @@ function renderCommand(definition, values) {
             if (option.placeholder) {
                 warnings.push({
                     code: 'unused-inline',
-                    message: 'Option "' + option.title + '" is inline but {{' + option.placeholder + '}} is not in the command.'
+                    message: I18n.t('warn.inlineMissing', { title: option.title, placeholder: option.placeholder })
                 });
             }
             continue;
@@ -211,7 +1150,7 @@ function renderCommand(definition, values) {
             if (option.required) {
                 warnings.push({
                     code: 'missing-required',
-                    message: 'Option "' + option.title + '" is required.'
+                    message: I18n.t('warn.optionRequired', { title: option.title })
                 });
             }
             continue;
@@ -220,7 +1159,7 @@ function renderCommand(definition, values) {
         if (option.type === 'number' && !isFinite(Number(value))) {
             warnings.push({
                 code: 'invalid-number',
-                message: 'Option "' + option.title + '" expects a number.'
+                message: I18n.t('warn.optionNotNumber', { title: option.title })
             });
             continue;
         }
@@ -287,6 +1226,7 @@ __def("parse", function (module, exports, __require) {
 
 const Model = __require("model");
 const Render = __require("render");
+const I18n = __require("i18n");
 
 const TYPES = Model.TYPES;
 const PATH_TOKENS = ['PATH', 'FILE', 'DIR', 'FOLDER'];
@@ -891,8 +1831,11 @@ function pushOption(options, warnings, seen, option, origin) {
         return;
     }
     if (seen.has(option.flag)) {
-        warnings.push(warning('duplicate-flag', 'Option "' + option.flag + '" from ' + origin
-            + ' duplicates the earlier one on ' + seen.get(option.flag) + '; the first one wins.'));
+        warnings.push(warning('duplicate-flag', I18n.t('warn.duplicateFlagOption', {
+            flag: option.flag,
+            origin: origin,
+            first: seen.get(option.flag)
+        })));
         return;
     }
     seen.set(option.flag, origin);
@@ -941,7 +1884,7 @@ function parseHelpText(text) {
         const read = readHelpLine(trimmed);
         if (!read || read.loose) {
             warnings.push(warning('unparsed-option-line',
-                'Could not parse the option line "' + trimmed + '".', { line: index + 1, text: trimmed }));
+                I18n.t('warn.unparsedOptionLine', { text: trimmed }), { line: index + 1, text: trimmed }));
             current = null;
             continue;
         }
@@ -955,7 +1898,7 @@ function parseHelpText(text) {
         });
         if (!option) {
             warnings.push(warning('unparsed-option-line',
-                'Could not parse the option line "' + trimmed + '".', { line: index + 1, text: trimmed }));
+                I18n.t('warn.unparsedOptionLine', { text: trimmed }), { line: index + 1, text: trimmed }));
             current = null;
             continue;
         }
@@ -976,13 +1919,13 @@ function parseJsonOptions(text) {
     const warnings = [];
     const source = String(text == null ? '' : text);
     if (source.trim() === '') {
-        return { options: [], warnings: [warning('invalid-json', 'The JSON import is empty.')] };
+        return { options: [], warnings: [warning('invalid-json', I18n.t('warn.jsonEmpty'))] };
     }
     let data;
     try {
         data = JSON.parse(source);
     } catch (err) {
-        return { options: [], warnings: [warning('invalid-json', 'Not valid JSON: ' + String(err && err.message || err))] };
+        return { options: [], warnings: [warning('invalid-json', I18n.t('warn.notValidJson', { error: String(err && err.message || err) }))] };
     }
 
     let list = null;
@@ -996,7 +1939,7 @@ function parseJsonOptions(text) {
         }
     }
     if (list === null) {
-        return { options: [], warnings: [warning('invalid-json', 'No options array found in the JSON.')] };
+        return { options: [], warnings: [warning('invalid-json', I18n.t('warn.noOptionsArray'))] };
     }
 
     const options = [];
@@ -1005,11 +1948,11 @@ function parseJsonOptions(text) {
         const entry = list[index];
         const origin = 'entry ' + (index + 1);
         if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-            warnings.push(warning('invalid-entry', origin + ' is not an object.', { line: index + 1 }));
+            warnings.push(warning('invalid-entry', I18n.t('warn.entryNotObject', { origin: origin }), { line: index + 1 }));
             continue;
         }
         if (entry.flag === undefined || entry.flag === null || String(entry.flag).trim() === '') {
-            warnings.push(warning('invalid-entry', origin + ' has no flag.', { line: index + 1 }));
+            warnings.push(warning('invalid-entry', I18n.t('warn.entryNoFlag', { origin: origin }), { line: index + 1 }));
             continue;
         }
         const aliases = Array.isArray(entry.aliases)
@@ -1033,7 +1976,7 @@ function parseJsonOptions(text) {
             index: options.length
         });
         if (!option) {
-            warnings.push(warning('invalid-entry', origin + ' has an unusable flag.', { line: index + 1 }));
+            warnings.push(warning('invalid-entry', I18n.t('warn.entryUnusableFlag', { origin: origin }), { line: index + 1 }));
             continue;
         }
         pushOption(options, warnings, seen, option, origin);
@@ -1078,7 +2021,7 @@ function parseMarkdownTable(text) {
     const warnings = [];
     const source = String(text == null ? '' : text);
     if (/^\s*<(?:table|tr|thead|tbody)\b/i.test(source)) {
-        warnings.push(warning('no-table', 'HTML tables are not supported; use a markdown table.'));
+        warnings.push(warning('no-table', I18n.t('warn.htmlTable')));
         return { options: [], warnings: warnings };
     }
     const rows = [];
@@ -1095,7 +2038,7 @@ function parseMarkdownTable(text) {
         }
     }
     if (rows.length === 0) {
-        warnings.push(warning('no-table', 'No markdown table rows were found.'));
+        warnings.push(warning('no-table', I18n.t('warn.noTableRows')));
         return { options: [], warnings: warnings };
     }
 
@@ -1113,7 +2056,7 @@ function parseMarkdownTable(text) {
         }
     }
     if (flagColumn === -1) {
-        warnings.push(warning('no-flag-column', 'The table header has no flag column.'));
+        warnings.push(warning('no-flag-column', I18n.t('warn.noFlagColumn')));
         return { options: [], warnings: warnings };
     }
     const named = function (pattern) {
@@ -1137,7 +2080,7 @@ function parseMarkdownTable(text) {
         const rawFlag = cell(columns, flagColumn);
         const origin = 'table row ' + (index + 1);
         if (rawFlag === '') {
-            warnings.push(warning('invalid-entry', origin + ' has no flag.', { line: index + 1 }));
+            warnings.push(warning('invalid-entry', I18n.t('warn.entryNoFlag', { origin: origin }), { line: index + 1 }));
             continue;
         }
         const help = helpColumn === -1 ? cell(columns, flagColumn + 1) : cell(columns, helpColumn);
@@ -1154,7 +2097,7 @@ function parseMarkdownTable(text) {
             index: options.length
         });
         if (!option) {
-            warnings.push(warning('invalid-entry', origin + ' has an unusable flag "' + rawFlag + '".', { line: index + 1 }));
+            warnings.push(warning('invalid-entry', I18n.t('warn.entryUnusableFlagValue', { origin: origin, flag: rawFlag }), { line: index + 1 }));
             continue;
         }
         if (typeColumn === -1 && type === '') {
@@ -1225,9 +2168,9 @@ const SAFE_URL_RE = /^(?:https?|mailto):/i;
 /** `<pre>`, `<p>` and `<li>` blocks, in source order. */
 const BLOCK_RE = /<(pre|p|li)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi;
 
-const WHAT_IS = 'what is';
-const OFFICIAL = 'official links';
-const USEFUL = 'useful links';
+const WHAT_IS = ['what is', 'qué es', 'que es'];
+const OFFICIAL = ['official links', 'enlaces oficiales'];
+const USEFUL = ['useful links', 'enlaces útiles', 'enlaces utiles'];
 
 const MAX_EXAMPLES = 50;
 
@@ -1256,7 +2199,7 @@ function normalizeHeading(value) {
     return trim(value)
         .toLowerCase()
         .replace(/\s+/g, ' ')
-        .replace(/[?？:;.,!\u2026]+/g, '')
+        .replace(/[?？:;.,!\u2026\u00bf\u00a1]+/g, '')
         .trim();
 }
 
@@ -1298,9 +2241,9 @@ function linksInSection(html, section) {
 }
 
 function findSectionKey(sections, wanted) {
-    const needle = normalizeHeading(wanted);
+    const needles = (Array.isArray(wanted) ? wanted : [wanted]).map(normalizeHeading);
     for (const heading of Object.keys(sections)) {
-        if (normalizeHeading(heading) === needle) {
+        if (needles.indexOf(normalizeHeading(heading)) !== -1) {
             return heading;
         }
     }
@@ -1516,6 +2459,7 @@ __def("toolfile", function (module, exports, __require) {
  */
 
 const Model = __require("model");
+const I18n = __require("i18n");
 
 const TOOL_KIND = 'command-maker-tool';
 const FILE_VERSION = 2;
@@ -1595,7 +2539,7 @@ function normaliseType(raw, warnings) {
     }
     warnings.push({
         code: 'invalid-type',
-        message: 'Unknown option type "' + value + '"; using string.'
+        message: I18n.t('warn.unknownType', { value: value })
     });
     return 'string';
 }
@@ -1615,7 +2559,7 @@ function normaliseOption(entry, index, warnings) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
         warnings.push({
             code: 'invalid-option',
-            message: 'Option entry ' + (index + 1) + ' is not an object.'
+            message: I18n.t('warn.optionEntryNotObject', { index: index + 1 })
         });
         return null;
     }
@@ -1628,7 +2572,7 @@ function normaliseOption(entry, index, warnings) {
     if (label === '' && flag === '') {
         warnings.push({
             code: 'invalid-option',
-            message: 'Option entry ' + (index + 1) + ' has no label and no flag.'
+            message: I18n.t('warn.optionEntryNoName', { index: index + 1 })
         });
         return null;
     }
@@ -1678,7 +2622,7 @@ function normaliseTool(spec, warnings) {
     } else if (source.options !== undefined && source.options !== null) {
         warnings.push({
             code: 'invalid-options',
-            message: 'The tool "options" field is not an array; no options were read.'
+            message: I18n.t('warn.optionsNotArray')
         });
     }
 
@@ -1720,7 +2664,7 @@ function parseToolFile(source) {
     const warnings = [];
     const raw = text(source).trim();
     if (raw === '') {
-        warnings.push({ code: 'invalid-json', message: 'The tool file is empty.' });
+        warnings.push({ code: 'invalid-json', message: I18n.t('warn.fileEmpty') });
         return { tool: null, warnings: warnings };
     }
 
@@ -1730,13 +2674,13 @@ function parseToolFile(source) {
     } catch (error) {
         warnings.push({
             code: 'invalid-json',
-            message: 'Not valid JSON: ' + (error && error.message ? error.message : error)
+            message: I18n.t('warn.notValidJson', { error: error && error.message ? error.message : error })
         });
         return { tool: null, warnings: warnings };
     }
 
     if (!data || typeof data !== 'object' || Array.isArray(data)) {
-        warnings.push({ code: 'invalid-json', message: 'The tool file must be a JSON object.' });
+        warnings.push({ code: 'invalid-json', message: I18n.t('warn.fileNotObject') });
         return { tool: null, warnings: warnings };
     }
 
@@ -1745,15 +2689,14 @@ function parseToolFile(source) {
     if (data.version !== undefined && trimmed(data.version) !== String(FILE_VERSION)) {
         warnings.push({
             code: 'unsupported-version',
-            message: 'This plugin reads tool files version ' + FILE_VERSION +
-                '; the file declares version "' + trimmed(data.version) + '".'
+            message: I18n.t('warn.unsupportedVersion', { supported: FILE_VERSION, version: trimmed(data.version) })
         });
         return { tool: null, warnings: warnings };
     }
     if (data.kind !== undefined && trimmed(data.kind) !== '' && trimmed(data.kind) !== TOOL_KIND) {
         warnings.push({
             code: 'unexpected-kind',
-            message: 'Unexpected file kind "' + trimmed(data.kind) + '"; expected "' + TOOL_KIND + '".'
+            message: I18n.t('warn.unexpectedKind', { kind: trimmed(data.kind), expected: TOOL_KIND })
         });
     }
 
@@ -1762,14 +2705,13 @@ function parseToolFile(source) {
         : data;
     const tool = normaliseTool(spec, warnings);
     if (!nonEmpty(tool.title)) {
-        warnings.push({ code: 'missing-title', message: 'The tool file has no "title".' });
+        warnings.push({ code: 'missing-title', message: I18n.t('warn.missingTitle') });
         return { tool: null, warnings: warnings };
     }
     if (tool.options.length > MAX_OPTIONS) {
         warnings.push({
             code: 'too-many-options',
-            message: 'The tool file lists ' + tool.options.length +
-                ' options; only the first ' + MAX_OPTIONS + ' are imported.'
+            message: I18n.t('warn.tooManyOptions', { count: tool.options.length, max: MAX_OPTIONS })
         });
         tool.options = tool.options.slice(0, MAX_OPTIONS);
     }
@@ -1793,70 +2735,84 @@ __def("prompt", function (module, exports, __require) {
  * The prompt a user copies into any AI model together with the output of a
  * tool's `--help` command. The model answers with the JSON tool file that the
  * palette's "Import tool" action understands (see src/toolfile.js).
+ *
+ * Field names and file values stay English: they are the file format, not
+ * prose. Only the instructions and the example text follow the active locale.
  */
 
-const SCHEMA = [
-    '{',
-    '  "kind": "command-maker-tool",',
-    '  "version": 2,',
-    '  "tool": {',
-    '    "title": "<command name, e.g. git commit>",',
-    '    "category": "<short group, e.g. Version control>",',
-    '    "base": "<command the user types, e.g. git commit>",',
-    '    "description": "<one sentence>",',
-    '    "content": "<h2>What is?</h2><p>...</p><h2>Official links</h2><ul><li><a href=\\"https://...\\">...</a></li></ul><h2>Useful links</h2><ul><li><a href=\\"https://...\\">...</a></li></ul>",',
-    '    "install": "<p>Install on Windows:</p><pre><code>winget install tool</code></pre>",',
-    '    "usage": "<p>Example:</p><pre><code>...</code></pre>",',
-    '    "help": "<the exact --help output, unchanged>",',
-    '    "options": [',
-    '      {',
-    '        "label": "Input file",',
-    '        "flag": "-i",',
-    '        "help": "Input file to read.",',
-    '        "type": "path",',
-    '        "values": [],',
-    '        "default": "",',
-    '        "required": true,',
-    '        "mode": "flag",',
-    '        "placeholder": "input",',
-    '        "order": 10,',
-    '        "quote": "none",',
-    '        "sep": " "',
-    '      }',
-    '    ]',
-    '  }',
-    '}'
-].join('\n');
+const I18n = __require("i18n");
 
-const RULES = [
-    '- title: the command name. base: the exact command the user types (keep subcommands, e.g. "git commit").',
-    '- tags, presets and per-option "content" exist for full backups; leave them out unless a backup was asked for.',
-    '- category: a short group such as "Network", "Media" or "Version control".',
-    '- description: one sentence that explains what the tool does.',
-    '- content: HTML with exactly three <h2> sections in this order: "What is?", "Official links", "Useful links".',
-    '  Put a <p> summary under "What is?" and one <ul><li><a href="...">...</a></li></ul> list under each links section.',
-    '  If no URL is known, leave an empty <ul></ul>; never invent links.',
-    '- install: HTML install steps (Windows, macOS, Linux) when known; otherwise a short placeholder paragraph.',
-    '  Put every install command in its own <pre><code>command</code></pre> block. Never use inline <code> for install commands;',
-    '  inline code is only for short words, file names or values mentioned in prose.',
-    '- usage: HTML with two or three realistic <pre><code>command</code></pre> examples.',
-    '- help: the raw --help text, unchanged.',
-    '- options: one entry per documented option or positional argument.',
-    '  - flag: the primary flag ("-i", "--ignore-case"), or "" for a positional argument.',
-    '  - label: a short human name ("Ignore case"); required when flag is "".',
-    '  - help: what the option does, taken from the help output.',
-    '  - type: "boolean" when it takes no value, "path" for files or directories, "number" for counts or sizes,',
-    '    "enum" when there is a fixed set of values, "string" otherwise.',
-    '  - values: the enum choices only, otherwise [].',
-    '  - default: the default stated in the help output, otherwise "".',
-    '  - required: true only for positional arguments or options the tool requires.',
-    '  - placeholder: a short unique identifier ("input", "url").',
-    '  - order: 10, 20, 30... in the order the options appear.',
-    '  - quote: "double" for free text or URLs that may contain spaces, otherwise "none".',
-    '  - sep: " " normally, "=" only for --flag=value style options.',
-    '  - mode: "flag" unless the base command itself must contain {{placeholder}}.',
-    'Do not invent options that are not in the help output.'
-].join('\n');
+function schema() {
+    const whatIs = I18n.t('model.headingWhatIs');
+    const official = I18n.t('model.headingOfficial');
+    const useful = I18n.t('model.headingUseful');
+    return [
+        '{',
+        '  "kind": "command-maker-tool",',
+        '  "version": 2,',
+        '  "tool": {',
+        '    "title": "' + I18n.t('prompt.schemaTitle') + '",',
+        '    "category": "' + I18n.t('prompt.schemaCategory') + '",',
+        '    "base": "' + I18n.t('prompt.schemaBase') + '",',
+        '    "description": "' + I18n.t('prompt.schemaDescription') + '",',
+        '    "content": "<h2>' + whatIs + '</h2><p>...</p><h2>' + official
+            + '</h2><ul><li><a href=\\"https://...\\">...</a></li></ul><h2>' + useful
+            + '</h2><ul><li><a href=\\"https://...\\">...</a></li></ul>",',
+        '    "install": "' + I18n.t('prompt.schemaInstall') + '",',
+        '    "usage": "' + I18n.t('prompt.schemaUsage') + '",',
+        '    "help": "' + I18n.t('prompt.schemaHelp') + '",',
+        '    "options": [',
+        '      {',
+        '        "label": "' + I18n.t('prompt.schemaOptionLabel') + '",',
+        '        "flag": "-i",',
+        '        "help": "' + I18n.t('prompt.schemaOptionHelp') + '",',
+        '        "type": "path",',
+        '        "values": [],',
+        '        "default": "",',
+        '        "required": true,',
+        '        "mode": "flag",',
+        '        "placeholder": "input",',
+        '        "order": 10,',
+        '        "quote": "none",',
+        '        "sep": " "',
+        '      }',
+        '    ]',
+        '  }',
+        '}'
+    ].join('\n');
+}
+
+function rules() {
+    return [
+        I18n.t('prompt.ruleTitleBase'),
+        I18n.t('prompt.ruleTags'),
+        I18n.t('prompt.ruleCategory'),
+        I18n.t('prompt.ruleDescription'),
+        I18n.t('prompt.ruleContent'),
+        I18n.t('prompt.ruleContentBody'),
+        I18n.t('prompt.ruleContentNoLinks'),
+        I18n.t('prompt.ruleInstall'),
+        I18n.t('prompt.ruleInstallBlocks'),
+        I18n.t('prompt.ruleInstallInline'),
+        I18n.t('prompt.ruleUsage'),
+        I18n.t('prompt.ruleHelp'),
+        I18n.t('prompt.ruleOptions'),
+        I18n.t('prompt.ruleFlag'),
+        I18n.t('prompt.ruleLabel'),
+        I18n.t('prompt.ruleOptionHelp'),
+        I18n.t('prompt.ruleType'),
+        I18n.t('prompt.ruleTypeMore'),
+        I18n.t('prompt.ruleValues'),
+        I18n.t('prompt.ruleDefault'),
+        I18n.t('prompt.ruleRequired'),
+        I18n.t('prompt.rulePlaceholder'),
+        I18n.t('prompt.ruleOrder'),
+        I18n.t('prompt.ruleQuote'),
+        I18n.t('prompt.ruleSep'),
+        I18n.t('prompt.ruleMode'),
+        I18n.t('prompt.ruleNoInvention')
+    ].join('\n');
+}
 
 function clean(value) {
     return String(value == null ? '' : value).trim();
@@ -1872,22 +2828,22 @@ function buildToolPrompt(options) {
     const helpText = clean(safe.helpText);
 
     const lines = [
-        'You convert command-line tool documentation into a Command Maker tool file.',
+        I18n.t('prompt.intro'),
         '',
-        'Return only the JSON object. Do not wrap it in a markdown code fence, do not add commentary,',
-        'and do not omit fields. Use this exact shape:',
+        I18n.t('prompt.returnOnly'),
+        I18n.t('prompt.noOmit'),
         '',
-        SCHEMA,
+        schema(),
         '',
-        'Rules:',
-        RULES,
+        I18n.t('prompt.rulesHeading'),
+        rules(),
         '',
-        'Input:',
-        title === '' ? 'Tool name: <tool name>' : 'Tool name: ' + title,
-        '--help output:',
-        helpText === '' ? "<paste the output of the tool's --help command here>" : helpText,
+        I18n.t('prompt.inputHeading'),
+        title === '' ? I18n.t('prompt.toolNamePlaceholder') : I18n.t('prompt.toolName', { title: title }),
+        I18n.t('prompt.helpLabel'),
+        helpText === '' ? I18n.t('prompt.helpPlaceholder') : helpText,
         '',
-        'Convert the input above now. Return only the JSON object.'
+        I18n.t('prompt.convert')
     ];
     return lines.join('\n');
 }
@@ -1913,6 +2869,7 @@ __def("model", function (module, exports, __require) {
  */
 
 const Render = __require("render");
+const I18n = __require("i18n");
 
 const LABELS = {
     // structure
@@ -1950,6 +2907,8 @@ const LABELS = {
     version: 'cmVersion',
     // note presentation
     icon: 'iconClass',
+    // settings
+    lang: 'cmLang',
 };
 
 const LABEL_NAMES = Object.keys(LABELS).map(function (key) {
@@ -2084,14 +3043,14 @@ function buildTool(note) {
         if (!option.placeholder) {
             warnings.push({
                 code: 'missing-placeholder-name',
-                message: 'Option "' + option.title + '" has an empty placeholder name.'
+                message: I18n.t('warn.missingPlaceholderName', { title: option.title })
             });
             continue;
         }
         if (byPlaceholder.has(option.placeholder)) {
             warnings.push({
                 code: 'duplicate-placeholder',
-                message: 'Two options share the placeholder "' + option.placeholder + '"; the first one wins.'
+                message: I18n.t('warn.duplicatePlaceholder', { name: option.placeholder })
             });
             continue;
         }
@@ -2106,7 +3065,7 @@ function buildTool(note) {
         if (byFlag.has(option.flag)) {
             warnings.push({
                 code: 'duplicate-flag',
-                message: 'Two options use the flag "' + option.flag + '"; the command will repeat it.'
+                message: I18n.t('warn.duplicateFlag', { flag: option.flag })
             });
             continue;
         }
@@ -2358,48 +3317,46 @@ function matchesText(haystack, query) {
 
 /** Content template for a new tool note: exactly the three H2 sections. */
 function toolTemplate() {
-    return [
-        '<h2>What is?</h2>',
-        '<p>Describe what this tool does and when to use it.</p>',
-        '<h2>Official links</h2>',
-        '<p>Add the official documentation, repository or website links here.</p>',
-        '<h2>Useful links</h2>',
-        '<p>Add useful guides, cheat sheets or articles here.</p>'
-    ].join('\n');
+    return I18n.t('model.toolTemplate');
 }
 
 /** Starting content for the three standard child notes plus the tool body. */
 function newToolNotes() {
     return {
         content: toolTemplate(),
-        install: '<p>Add the installation steps or commands for this tool.</p>',
-        usage: '<p>Add examples of commands with this tool. Put each example in a code block.</p>',
+        install: I18n.t('model.installTemplate'),
+        usage: I18n.t('model.usageTemplate'),
         help: ''
     };
 }
 
 function seedTools() {
+    const heading = {
+        whatIs: I18n.t('model.headingWhatIs'),
+        official: I18n.t('model.headingOfficial'),
+        useful: I18n.t('model.headingUseful')
+    };
     return [
         {
-            category: 'Version control',
+            category: I18n.t('model.categoryVersionControl'),
             title: 'git commit',
             base: 'git commit',
-            description: 'Record staged changes in the current Git repository.',
+            description: I18n.t('model.gitDescription'),
             content: [
-                '<h2>What is?</h2>',
-                '<p><code>git commit</code> records the staged changes of the repository as a new commit.</p>',
-                '<h2>Official links</h2>',
-                '<ul><li><a href="https://git-scm.com/docs/git-commit">Official git-commit documentation</a></li></ul>',
-                '<h2>Useful links</h2>',
-                '<ul><li><a href="https://www.conventionalcommits.org/">Conventional Commits</a></li></ul>'
+                '<h2>' + heading.whatIs + '</h2>',
+                '<p>' + I18n.t('model.gitWhatIs') + '</p>',
+                '<h2>' + heading.official + '</h2>',
+                '<ul><li><a href="https://git-scm.com/docs/git-commit">' + I18n.t('model.gitOfficial') + '</a></li></ul>',
+                '<h2>' + heading.useful + '</h2>',
+                '<ul><li><a href="https://www.conventionalcommits.org/">' + I18n.t('model.gitUseful') + '</a></li></ul>'
             ].join('\n'),
             install: '<p><strong>Windows:</strong> <code>winget install Git.Git</code></p><p><strong>macOS:</strong> <code>brew install git</code></p><p><strong>Debian/Ubuntu:</strong> <code>sudo apt install git</code></p>',
             usage: [
-                '<p>Commit with a message:</p>',
+                '<p>' + I18n.t('model.gitCommitExample') + '</p>',
                 '<pre><code>git commit -m "fix: handle empty input"</code></pre>',
-                '<p>Add all tracked changes and commit:</p>',
+                '<p>' + I18n.t('model.gitAddAllExample') + '</p>',
                 '<pre><code>git commit -am "chore: update dependencies"</code></pre>',
-                '<p>Amend the last commit without changing its message:</p>',
+                '<p>' + I18n.t('model.gitAmendExample') + '</p>',
                 '<pre><code>git commit --amend --no-edit</code></pre>'
             ].join('\n'),
             help: [
@@ -2415,35 +3372,35 @@ function seedTools() {
                 '    --author <author>        override the author'
             ].join('\n'),
             options: [
-                { label: 'Message', flag: '-m', type: 'string', doc: 'Commit message. Repeat the flag to add paragraphs.', order: 10, required: true },
-                { label: 'All changes', flag: '-a', type: 'boolean', doc: 'Stage all tracked changes before committing.', order: 20 },
-                { label: 'Amend last commit', flag: '--amend', type: 'boolean', doc: 'Replace the previous commit instead of creating a new one.', order: 30 },
-                { label: 'Allow empty', flag: '--allow-empty', type: 'boolean', doc: 'Record a commit with no changes.', order: 40 },
-                { label: 'Skip hooks', flag: '--no-verify', type: 'boolean', doc: 'Bypass pre-commit and commit-msg hooks.', order: 50 },
-                { label: 'Author', flag: '--author', type: 'string', doc: 'Override the commit author, for example "Name <mail@example.com>".', order: 60 },
-                { label: 'Date', flag: '--date', type: 'string', doc: 'Override the author date.', order: 70 }
+                { label: I18n.t('model.gitOptionMessageLabel'), flag: '-m', type: 'string', doc: I18n.t('model.gitOptionMessage'), order: 10, required: true },
+                { label: I18n.t('model.gitOptionAllLabel'), flag: '-a', type: 'boolean', doc: I18n.t('model.gitOptionAll'), order: 20 },
+                { label: I18n.t('model.gitOptionAmendLabel'), flag: '--amend', type: 'boolean', doc: I18n.t('model.gitOptionAmend'), order: 30 },
+                { label: I18n.t('model.gitOptionEmptyLabel'), flag: '--allow-empty', type: 'boolean', doc: I18n.t('model.gitOptionEmpty'), order: 40 },
+                { label: I18n.t('model.gitOptionHooksLabel'), flag: '--no-verify', type: 'boolean', doc: I18n.t('model.gitOptionHooks'), order: 50 },
+                { label: I18n.t('model.gitOptionAuthorLabel'), flag: '--author', type: 'string', doc: I18n.t('model.gitOptionAuthor'), order: 60 },
+                { label: I18n.t('model.gitOptionDateLabel'), flag: '--date', type: 'string', doc: I18n.t('model.gitOptionDate'), order: 70 }
             ]
         },
         {
-            category: 'Network',
+            category: I18n.t('model.categoryNetwork'),
             title: 'curl',
             base: 'curl',
-            description: 'Transfer data from or to a server with the curl command-line client.',
+            description: I18n.t('model.curlDescription'),
             content: [
-                '<h2>What is?</h2>',
-                '<p>curl is a command-line tool for transferring data with URLs. It supports HTTP, HTTPS, FTP and many other protocols.</p>',
-                '<h2>Official links</h2>',
-                '<ul><li><a href="https://curl.se/docs/">Official curl documentation</a></li></ul>',
-                '<h2>Useful links</h2>',
-                '<ul><li><a href="https://curl.se/docs/manpage.html">curl man page</a></li></ul>'
+                '<h2>' + heading.whatIs + '</h2>',
+                '<p>' + I18n.t('model.curlWhatIs') + '</p>',
+                '<h2>' + heading.official + '</h2>',
+                '<ul><li><a href="https://curl.se/docs/">' + I18n.t('model.curlOfficial') + '</a></li></ul>',
+                '<h2>' + heading.useful + '</h2>',
+                '<ul><li><a href="https://curl.se/docs/manpage.html">' + I18n.t('model.curlUseful') + '</a></li></ul>'
             ].join('\n'),
             install: '<p><strong>Windows:</strong> <code>winget install curl.curl</code></p><p><strong>macOS:</strong> <code>brew install curl</code></p><p><strong>Debian/Ubuntu:</strong> <code>sudo apt install curl</code></p>',
             usage: [
-                '<p>POST JSON:</p>',
+                '<p>' + I18n.t('model.curlPostExample') + '</p>',
                 '<pre><code>curl -X POST -H "Content-Type: application/json" -d "{\\"name\\":\\"value\\"}" https://api.example.com/items</code></pre>',
-                '<p>Download a file, following redirects:</p>',
+                '<p>' + I18n.t('model.curlDownloadExample') + '</p>',
                 '<pre><code>curl -L -o file.zip https://example.com/file.zip</code></pre>',
-                '<p>Show only the response headers:</p>',
+                '<p>' + I18n.t('model.curlHeadersExample') + '</p>',
                 '<pre><code>curl -sSI https://example.com</code></pre>'
             ].join('\n'),
             help: [
@@ -2460,16 +3417,16 @@ function seedTools() {
                 ' -k, --insecure              allow insecure server connections'
             ].join('\n'),
             options: [
-                { label: 'Request method', flag: '-X', type: 'enum', values: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'], doc: 'HTTP request method.', order: 10 },
-                { label: 'Header', flag: '-H', type: 'string', doc: 'Add a request header, for example "Content-Type: application/json".', order: 20 },
-                { label: 'Data', flag: '-d', type: 'string', doc: 'Request body sent to the server.', order: 30 },
-                { label: 'Output file', flag: '-o', type: 'path', doc: 'Write the response body to this file instead of stdout.', order: 40 },
-                { label: 'Follow redirects', flag: '-L', type: 'boolean', doc: 'Follow HTTP redirects.', order: 50 },
-                { label: 'Silent', flag: '-s', type: 'boolean', doc: 'Do not show progress or error messages.', order: 60 },
-                { label: 'Compressed', flag: '--compressed', type: 'boolean', doc: 'Ask the server for a compressed response and decompress it.', order: 70 },
-                { label: 'User', flag: '-u', type: 'string', doc: 'Server credentials as user:password.', order: 80 },
-                { label: 'Insecure', flag: '-k', type: 'boolean', doc: 'Allow insecure TLS connections (skip certificate checks).', order: 90 },
-                { label: 'URL', flag: '', type: 'string', placeholder: 'url', quote: 'double', doc: 'URL to request. Positional; appended last.', order: 100, required: true }
+                { label: I18n.t('model.curlOptionRequestLabel'), flag: '-X', type: 'enum', values: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'], doc: I18n.t('model.curlOptionRequest'), order: 10 },
+                { label: I18n.t('model.curlOptionHeaderLabel'), flag: '-H', type: 'string', doc: I18n.t('model.curlOptionHeader'), order: 20 },
+                { label: I18n.t('model.curlOptionDataLabel'), flag: '-d', type: 'string', doc: I18n.t('model.curlOptionData'), order: 30 },
+                { label: I18n.t('model.curlOptionOutputLabel'), flag: '-o', type: 'path', doc: I18n.t('model.curlOptionOutput'), order: 40 },
+                { label: I18n.t('model.curlOptionFollowLabel'), flag: '-L', type: 'boolean', doc: I18n.t('model.curlOptionFollow'), order: 50 },
+                { label: I18n.t('model.curlOptionSilentLabel'), flag: '-s', type: 'boolean', doc: I18n.t('model.curlOptionSilent'), order: 60 },
+                { label: I18n.t('model.curlOptionCompressedLabel'), flag: '--compressed', type: 'boolean', doc: I18n.t('model.curlOptionCompressed'), order: 70 },
+                { label: I18n.t('model.curlOptionUserLabel'), flag: '-u', type: 'string', doc: I18n.t('model.curlOptionUser'), order: 80 },
+                { label: I18n.t('model.curlOptionInsecureLabel'), flag: '-k', type: 'boolean', doc: I18n.t('model.curlOptionInsecure'), order: 90 },
+                { label: I18n.t('model.curlOptionUrlLabel'), flag: '', type: 'string', placeholder: 'url', quote: 'double', doc: I18n.t('model.curlOptionUrl'), order: 100, required: true }
             ]
         }
     ];
@@ -2608,6 +3565,7 @@ const CSS = [
     '.cm-version{font-size:12px;opacity:.7;border:0;background:transparent;color:inherit;cursor:pointer;padding:2px 6px;font:inherit;}',
     '.cm-version:hover{opacity:1;text-decoration:underline;}',
     '.cm-version-link{font-size:11px;opacity:.6;color:inherit;text-decoration:none;padding:2px 4px;}',
+    '.cm-lang{font-size:12px;padding:2px 6px;max-width:8.5em;}',
     '.cm-version-link:hover{opacity:1;text-decoration:underline;}',
     '.cm-badge{font-size:11px;padding:1px 6px;border-radius:999px;background:var(--accented-background-color,#eef2ff);opacity:.8;}',
     '.cm-example{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:6px;}',
@@ -2658,6 +3616,8 @@ module.exports = { STYLE_ID, CSS };
 });
 __def("dom", function (module, exports, __require) {
 'use strict';
+
+const I18n = __require("i18n");
 
 /**
  * Small DOM helpers shared by the palette. Nothing here knows about Trilium:
@@ -2788,7 +3748,7 @@ async function copyText(text) {
 /** Save text as a local file. Throws when the runtime has no Blob/URL support. */
 function downloadText(filename, value, mime) {
     if (typeof Blob === 'undefined' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
-        throw new Error('This environment cannot download files. Copy the text instead.');
+        throw new Error(I18n.t('error.downloadUnsupported'));
     }
     const blob = new Blob([value], { type: mime || 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -2811,7 +3771,7 @@ function readFileText(file) {
     }
     return new Promise(function (resolve, reject) {
         if (typeof FileReader === 'undefined') {
-            reject(new Error('This browser cannot read local files.'));
+            reject(new Error(I18n.t('error.filesUnsupported')));
             return;
         }
         const reader = new FileReader();
@@ -2819,7 +3779,7 @@ function readFileText(file) {
             resolve(String(reader.result || ''));
         };
         reader.onerror = function () {
-            reject(new Error('Could not read the selected file.'));
+            reject(new Error(I18n.t('error.fileRead')));
         };
         reader.readAsText(file);
     });
@@ -2845,11 +3805,12 @@ __def("sourcePicker", function (module, exports, __require) {
  */
 
 const Dom = __require("dom");
+const I18n = __require("i18n");
 
 const SOURCES = [
-    { id: 'paste', label: 'Paste text' },
-    { id: 'note', label: 'Active note' },
-    { id: 'file', label: 'File' }
+    { id: 'paste', key: 'source.paste' },
+    { id: 'note', key: 'source.note' },
+    { id: 'file', key: 'source.file' }
 ];
 
 /**
@@ -2872,7 +3833,7 @@ function createSourcePicker(config) {
     const tabs = Dom.el('div', 'cm-tabs');
     const tabNodes = {};
     for (const source of SOURCES) {
-        const tab = Dom.el('button', 'cm-tab' + (source.id === 'paste' ? ' is-active' : ''), source.label);
+        const tab = Dom.el('button', 'cm-tab' + (source.id === 'paste' ? ' is-active' : ''), I18n.t(source.key));
         tab.type = 'button';
         tabNodes[source.id] = tab;
         tabs.appendChild(tab);
@@ -2886,7 +3847,7 @@ function createSourcePicker(config) {
     textArea.placeholder = settings.placeholder || '';
 
     const notePreview = Dom.el('div', 'cm-note', '');
-    const readNoteButton = Dom.el('button', 'cm-button', 'Read active note');
+    const readNoteButton = Dom.el('button', 'cm-button', I18n.t('source.readNote'));
     readNoteButton.type = 'button';
     readNoteButton.style.display = 'none';
 
@@ -2912,7 +3873,7 @@ function createSourcePicker(config) {
 
     function showRead(label, text) {
         sourceText = text;
-        notePreview.textContent = 'Read "' + label + '" (' + text.length + ' characters).';
+        notePreview.textContent = I18n.t('source.read', { label: label, count: text.length });
         notePreview.style.display = '';
     }
 
@@ -2926,7 +3887,7 @@ function createSourcePicker(config) {
         try {
             const note = await controller.activeNoteText();
             showRead(note.title, note.text);
-            onStatus('Note read.');
+            onStatus(I18n.t('status.noteRead'));
         } catch (error) {
             onError(error);
         }
@@ -2938,8 +3899,8 @@ function createSourcePicker(config) {
             return;
         }
         try {
-            showRead(file.name || 'file', await Dom.readFileText(file));
-            onStatus('File read.');
+            showRead(file.name || I18n.t('source.fileName'), await Dom.readFileText(file));
+            onStatus(I18n.t('status.fileRead'));
         } catch (error) {
             onError(error);
         }
@@ -2975,7 +3936,7 @@ __def("backend", function (module, exports, __require) {
  * being duplicated here. Consequently `beRun` must never reference a
  * module-scope binding and dispatches on literal action strings only.
  *
- * Actions: bootstrap | createTool | importTool | addOption |
+ * Actions: bootstrap | setLanguage | createTool | importTool | addOption |
  * importOptions | deleteOption | setToolBase | setToolsRoot | savePreset |
  * deletePreset | ensureTab
  */
@@ -2989,6 +3950,14 @@ function beRun(params) {
         help: 'bx bx-help-circle',
         options: 'bx bx-cog'
     };
+    // Localized titles and messages travel in the action options: this
+    // function is serialized to the backend and cannot require src/i18n.js.
+    const strings = options.strings || {};
+
+    function text(key, fallback) {
+        const value = strings[key];
+        return value === undefined || value === null ? fallback : String(value);
+    }
 
     function nonEmpty(value) {
         return value !== undefined && value !== null && String(value).trim() !== '';
@@ -3080,7 +4049,7 @@ function beRun(params) {
         }
         const note = track(api.createNewNote({
             parentNoteId: toolNote.noteId,
-            title: 'Options',
+            title: text('back.noteOptions', 'Options'),
             type: 'text',
             content: ''
         }).note);
@@ -3096,7 +4065,7 @@ function beRun(params) {
         }
         const note = track(api.createNewNote({
             parentNoteId: optionsFolder.noteId,
-            title: 'Presets',
+            title: text('back.notePresets', 'Presets'),
             type: 'code',
             mime: 'application/json',
             content: '{"v":1,"presets":[]}'
@@ -3139,7 +4108,7 @@ function beRun(params) {
 
     /** Validate the tool and make sure its Options folder and Presets note exist. */
     function presetsLocation(toolId) {
-        const tool = requireNote(toolId, 'Tool note not found');
+        const tool = requireNote(toolId, text('back.errorToolNote', 'Tool note not found'));
         const folder = ensureOptionsFolder(tool);
         return { tool: tool, folder: folder, presets: ensurePresetsNote(folder) };
     }
@@ -3165,6 +4134,10 @@ function beRun(params) {
     function defaultToolContent(fallbacks) {
         if (fallbacks && nonEmpty(fallbacks.content)) {
             return String(fallbacks.content);
+        }
+        const localized = text('back.toolContent', '');
+        if (nonEmpty(localized)) {
+            return localized;
         }
         return [
             '<h2>What is?</h2>',
@@ -3207,8 +4180,8 @@ function beRun(params) {
     function createToolNoteNotes(toolsRoot, spec, fallbacks) {
         const safeSpec = spec || {};
         const safeFallbacks = fallbacks || {};
-        const categoryName = nonEmpty(safeSpec.category) ? String(safeSpec.category) : 'Uncategorized';
-        const title = nonEmpty(safeSpec.title) ? String(safeSpec.title) : 'New tool';
+        const categoryName = nonEmpty(safeSpec.category) ? String(safeSpec.category) : text('back.noteUncategorized', 'Uncategorized');
+        const title = nonEmpty(safeSpec.title) ? String(safeSpec.title) : text('back.noteNewTool', 'New tool');
         const category = ensureCategory(toolsRoot, categoryName);
         const note = track(api.createNewNote({
             parentNoteId: category.noteId,
@@ -3229,7 +4202,7 @@ function beRun(params) {
 
         const install = track(api.createNewNote({
             parentNoteId: note.noteId,
-            title: 'Install',
+            title: text('back.noteInstall', 'Install'),
             type: 'text',
             content: childContent(safeSpec.install, safeFallbacks.install)
         }).note);
@@ -3237,7 +4210,7 @@ function beRun(params) {
 
         const usage = track(api.createNewNote({
             parentNoteId: note.noteId,
-            title: 'Usage',
+            title: text('back.noteUsage', 'Usage'),
             type: 'text',
             content: childContent(safeSpec.usage, safeFallbacks.usage)
         }).note);
@@ -3245,7 +4218,7 @@ function beRun(params) {
 
         const help = track(api.createNewNote({
             parentNoteId: note.noteId,
-            title: 'Help',
+            title: text('back.noteHelp', 'Help'),
             type: 'code',
             mime: 'text/x-sh',
             content: childContent(safeSpec.help, safeFallbacks.help)
@@ -3272,7 +4245,7 @@ function beRun(params) {
     /** Create one option note under a tool's Options folder. */
     function createOptionNote(folder, spec) {
         const safe = spec || {};
-        const title = nonEmpty(safe.label) ? String(safe.label) : 'Option';
+        const title = nonEmpty(safe.label) ? String(safe.label) : text('back.noteOption', 'Option');
         const note = track(api.createNewNote({
             parentNoteId: folder.noteId,
             title: title,
@@ -3363,11 +4336,20 @@ function beRun(params) {
         if (!root) {
             root = api.createNewNote({
                 parentNoteId: parentForRoot(),
-                title: 'Command Maker',
+                title: text('back.noteSettings', 'Command Maker'),
                 type: 'text',
-                content: 'Command Maker settings. The plugin finds this note through its label.'
+                content: text('back.noteSettingsContent', 'Command Maker settings. The plugin finds this note through its label.')
             }).note;
             root.setLabel(labels.root, '');
+        }
+
+        // Record the active language once, so the setting is discoverable and
+        // later switches have a label to update.
+        if (nonEmpty(options.lang) && labels.lang) {
+            const configured = root.getLabelValue(labels.lang);
+            if (configured === null || configured === undefined || String(configured).trim() === '') {
+                root.setLabel(labels.lang, String(options.lang));
+            }
         }
 
         if (nonEmpty(options.version) && root.getLabelValue(labels.version) !== String(options.version)) {
@@ -3378,9 +4360,9 @@ function beRun(params) {
         if (!toolsRoot) {
             toolsRoot = api.createNewNote({
                 parentNoteId: root.noteId,
-                title: 'Tools',
+                title: text('back.noteTools', 'Tools'),
                 type: 'text',
-                content: 'Tool notes live in this folder, grouped by category. Move it anywhere; the label is what matters.'
+                content: text('back.noteToolsContent', 'Tool notes live in this folder, grouped by category. Move it anywhere; the label is what matters.')
             }).note;
             toolsRoot.setLabel(labels.tools, '');
             toolsRoot.setLabel(labels.managed, '');
@@ -3404,7 +4386,7 @@ function beRun(params) {
     }
 
     function createTool() {
-        const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
+        const toolsRoot = requireNote(options.toolsRootId, text('back.errorToolsRoot', 'Tools root not found'));
         const note = createToolNote(
             toolsRoot,
             {
@@ -3431,7 +4413,7 @@ function beRun(params) {
 
     /** Recreate a tool from a portable tool file (see src/toolfile.js). */
     function importTool() {
-        const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
+        const toolsRoot = requireNote(options.toolsRootId, text('back.errorToolsRoot', 'Tools root not found'));
         const note = createToolNote(toolsRoot, options.tool || {}, options.newToolNotes || {});
         const folder = findChildWithLabel(note, labels.options);
         const presets = folder ? findChildWithLabel(folder, labels.presets) : null;
@@ -3488,9 +4470,9 @@ function beRun(params) {
      * or hostile note id can never remove an unrelated note.
      */
     function deleteOption() {
-        const note = requireNote(options.noteId, 'Option note not found');
+        const note = requireNote(options.noteId, text('back.errorOptionNote', 'Option note not found'));
         if (!hasLabel(note, labels.option)) {
-            throw new Error('Note is not an option of a tool: ' + note.noteId);
+            throw new Error(text('back.errorNotAnOptionPrefix', 'Note is not an option of a tool: ') + note.noteId);
         }
         note.deleteNote();
         return { ok: true };
@@ -3509,7 +4491,7 @@ function beRun(params) {
     }
 
     function setToolsRoot() {
-        const target = requireNote(options.noteId, 'Note not found');
+        const target = requireNote(options.noteId, text('back.errorNoteNotFound', 'Note not found'));
         // Set the new pointer first: if removing the label from a previous root
         // fails afterwards, the tools stay visible instead of losing the
         // pointer and making the next bootstrap seed an empty folder.
@@ -3545,7 +4527,7 @@ function beRun(params) {
         const location = presetsLocation(options.toolId);
         const read = readPresets(location.presets);
         if (!read.valid) {
-            throw new Error('The Presets note is not valid JSON. Fix or delete it before saving a preset.');
+            throw new Error(text('back.errorPresetsSave', 'The Presets note is not valid JSON. Fix or delete it before saving a preset.'));
         }
         const data = read.data;
         const name = nonEmpty(options.name) ? String(options.name) : 'Preset';
@@ -3573,7 +4555,7 @@ function beRun(params) {
         const location = presetsLocation(options.toolId);
         const read = readPresets(location.presets);
         if (!read.valid) {
-            throw new Error('The Presets note is not valid JSON. Fix or delete it before deleting a preset.');
+            throw new Error(text('back.errorPresetsDelete', 'The Presets note is not valid JSON. Fix or delete it before deleting a preset.'));
         }
         const data = read.data;
         const name = String(options.name == null ? '' : options.name);
@@ -3596,12 +4578,12 @@ function beRun(params) {
      * user can move them freely and re-clicking never duplicates anything.
      */
     function ensureTab() {
-        const root = requireNote(options.rootId, 'Command Maker settings note not found');
+        const root = requireNote(options.rootId, text('back.errorSettingsNote', 'Command Maker settings note not found'));
         let html = api.getNoteWithLabel(labels.tabHtml);
         if (!html) {
             html = api.createNewNote({
                 parentNoteId: root.noteId,
-                title: 'Command Maker tab',
+                title: text('back.noteTabTitle', 'Command Maker tab'),
                 type: 'code',
                 mime: 'text/html',
                 content: '<div class="cm-tab-root"></div>'
@@ -3612,7 +4594,7 @@ function beRun(params) {
         if (!tab) {
             tab = api.createNewNote({
                 parentNoteId: root.noteId,
-                title: 'Command Maker',
+                title: text('back.noteTabRenderTitle', 'Command Maker'),
                 type: 'render',
                 content: ''
             }).note;
@@ -3629,9 +4611,20 @@ function beRun(params) {
         return { tabNoteId: tab.noteId, htmlNoteId: html.noteId };
     }
 
+    function setLanguage() {
+        const root = requireNote(options.rootId, text('back.errorSettingsNote', 'Command Maker settings note not found'));
+        if (!labels.lang) {
+            throw new Error(text('back.errorUnknownActionPrefix', 'Unknown action: ') + 'setLanguage');
+        }
+        root.setLabel(labels.lang, String(options.lang == null ? '' : options.lang));
+        return { ok: true, lang: String(options.lang == null ? '' : options.lang) };
+    }
+
     switch (options.action) {
         case 'bootstrap':
             return bootstrap();
+        case 'setLanguage':
+            return setLanguage();
         case 'createTool':
             return createTool();
         case 'importTool':
@@ -3653,7 +4646,7 @@ function beRun(params) {
         case 'ensureTab':
             return ensureTab();
         default:
-            throw new Error('Unknown action: ' + options.action);
+            throw new Error(text('back.errorUnknownActionPrefix', 'Unknown action: ') + options.action);
     }
 }
 
@@ -3708,10 +4701,15 @@ const Prompt = __require("prompt");
 const Dom = __require("dom");
 const Styles = __require("styles");
 const SourcePicker = __require("sourcePicker");
+const I18n = __require("i18n");
 
 /** Copy icon and control injected into every code block of the Install note. */
 const CODE_COPY_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 2H10c-1.103 0-2 .897-2 2v4H4c-1.103 0-2 .897-2 2v10c0 1.103.897 2 2 2h10c1.103 0 2-.897 2-2v-4h4c1.103 0 2-.897 2-2V4c0-1.103-.897-2-2-2zM4 20V10h10l.002 10H4zm16-6h-4v-4c0-1.103-.897-2-2-2h-4V4h10v10z"></path></svg>';
-const CODE_COPY_BUTTON = '<button type="button" class="cm-code-copy" title="Copy to clipboard" aria-label="Copy to clipboard">' + CODE_COPY_ICON + '</button>';
+
+function codeCopyButton() {
+    const label = I18n.t('ui.copy');
+    return '<button type="button" class="cm-code-copy" title="' + label + '" aria-label="' + label + '">' + CODE_COPY_ICON + '</button>';
+}
 
 const NEW_CATEGORY = '__new__';
 
@@ -3812,17 +4810,17 @@ function openPalette(controller, options) {
     const searchInput = document.createElement('input');
     searchInput.type = 'search';
     searchInput.className = 'cm-search';
-    searchInput.placeholder = 'Search tools…';
-    searchInput.setAttribute('aria-label', 'Search tools');
-    const openTabButton = embedded ? null : Dom.el('button', 'cm-open-tab', 'Open in tab');
+    searchInput.placeholder = I18n.t('ui.searchPlaceholder');
+    searchInput.setAttribute('aria-label', I18n.t('ui.searchLabel'));
+    const openTabButton = embedded ? null : Dom.el('button', 'cm-open-tab', I18n.t('ui.openInTab'));
     if (openTabButton) {
         openTabButton.type = 'button';
-        openTabButton.title = 'Open Command Maker in a new Trilium tab';
+        openTabButton.title = I18n.t('ui.openInTabTitle');
     }
     const closeButton = Dom.el('button', 'cm-close', '✕');
     closeButton.type = 'button';
-    closeButton.title = 'Close (Esc)';
-    closeButton.setAttribute('aria-label', 'Close palette');
+    closeButton.title = I18n.t('ui.closeTitle');
+    closeButton.setAttribute('aria-label', I18n.t('ui.closeLabel'));
     head.appendChild(searchInput);
     if (openTabButton) {
         head.appendChild(openTabButton);
@@ -3838,26 +4836,26 @@ function openPalette(controller, options) {
     body.appendChild(detail);
 
     const footer = Dom.el('div', 'cm-foot');
-    const newToolButton = Dom.el('button', 'cm-button', 'New tool');
+    const newToolButton = Dom.el('button', 'cm-button', I18n.t('ui.newTool'));
     newToolButton.type = 'button';
-    const importToolButton = Dom.el('button', 'cm-button', 'Import tool');
+    const importToolButton = Dom.el('button', 'cm-button', I18n.t('ui.importTool'));
     importToolButton.type = 'button';
-    const exportToolButton = Dom.el('button', 'cm-button', 'Export tool');
+    const exportToolButton = Dom.el('button', 'cm-button', I18n.t('ui.exportTool'));
     exportToolButton.type = 'button';
-    const importButton = Dom.el('button', 'cm-button', 'Import options');
+    const importButton = Dom.el('button', 'cm-button', I18n.t('ui.importOptions'));
     importButton.type = 'button';
-    const addOptionButton = Dom.el('button', 'cm-button', 'Add option');
+    const addOptionButton = Dom.el('button', 'cm-button', I18n.t('ui.addOption'));
     addOptionButton.type = 'button';
-    const toolsButton = Dom.el('button', 'cm-button', 'Tools folder');
+    const toolsButton = Dom.el('button', 'cm-button', I18n.t('ui.toolsFolder'));
     toolsButton.type = 'button';
     const statusEl = Dom.el('span', 'cm-status', '');
     statusEl.setAttribute('role', 'status');
     const versionButton = Dom.el('button', 'cm-version', 'v' + controller.version());
     versionButton.type = 'button';
-    versionButton.title = 'Check for updates';
+    versionButton.title = I18n.t('ui.checkUpdates');
     const repoLink = document.createElement('a');
     repoLink.className = 'cm-version-link';
-    repoLink.textContent = 'Repository';
+    repoLink.textContent = I18n.t('ui.repository');
     repoLink.href = controller.repository();
     repoLink.target = '_blank';
     repoLink.rel = 'noreferrer';
@@ -3867,6 +4865,18 @@ function openPalette(controller, options) {
     footer.appendChild(addOptionButton);
     footer.appendChild(exportToolButton);
     footer.appendChild(toolsButton);
+    const languageSelect = document.createElement('select');
+    languageSelect.className = 'cm-control cm-select cm-lang';
+    languageSelect.setAttribute('aria-label', I18n.t('ui.language'));
+    languageSelect.title = I18n.t('ui.language');
+    [['en', 'English'], ['es', 'Español']].forEach(function (pair) {
+        const entry = document.createElement('option');
+        entry.value = pair[0];
+        entry.textContent = pair[1];
+        languageSelect.appendChild(entry);
+    });
+    languageSelect.value = typeof controller.language === 'function' ? controller.language() : I18n.getLocale();
+    footer.appendChild(languageSelect);
     footer.appendChild(statusEl);
     footer.appendChild(versionButton);
     footer.appendChild(repoLink);
@@ -3914,28 +4924,28 @@ function openPalette(controller, options) {
 
     async function checkForUpdates() {
         if (typeof controller.checkLatestVersion !== 'function') {
-            setStatus('Update check is unavailable.', true);
+            setStatus(I18n.t('status.updateUnavailable'), true);
             return;
         }
-        setStatus('Checking for updates…');
+        setStatus(I18n.t('status.checkingUpdates'));
         const info = await controller.checkLatestVersion();
         if (info.error) {
-            setStatus('v' + info.current + ': ' + info.error + ' See the Repository link.', true);
+            setStatus(I18n.t('status.updateError', { version: info.current, error: info.error }), true);
             return;
         }
         if (info.latest && info.latest !== info.current) {
             versionButton.textContent = 'v' + info.current + ' → v' + info.latest;
-            versionButton.title = 'Installed v' + info.current + '; latest v' + info.latest + '. Click to check again.';
+            versionButton.title = I18n.t('status.installedLatest', { current: info.current, latest: info.latest });
         }
 
         if (info.latest && info.latest === info.current) {
-            setStatus('v' + info.current + ' is the latest version.');
+            setStatus(I18n.t('status.latest', { version: info.current }));
         } else if (info.outdated) {
-            setStatus('v' + info.current + ' installed · latest is v' + info.latest + '.');
+            setStatus(I18n.t('status.outdated', { current: info.current, latest: info.latest }));
         } else if (info.latest) {
-            setStatus('v' + info.current + ' is newer than the latest published tag (v' + info.latest + ').');
+            setStatus(I18n.t('status.ahead', { current: info.current, latest: info.latest }));
         } else {
-            setStatus('v' + info.current + ': no published version found.');
+            setStatus(I18n.t('status.noPublished', { version: info.current }));
         }
     }
 
@@ -3985,6 +4995,16 @@ function openPalette(controller, options) {
         instance = null;
     }
 
+    /**
+     * Rebuild the palette in place after a language change. Closing first
+     * releases the overlay singleton; a tab view re-mounts into its container.
+     */
+    function remount() {
+        const container = options && options.container ? options.container : null;
+        close();
+        openPalette(controller, container ? { container: container } : undefined);
+    }
+
     function onKeyDown(event) {
         if (event.key === 'Escape') {
             event.preventDefault();
@@ -4018,7 +5038,7 @@ function openPalette(controller, options) {
     function renderList() {
         list.textContent = '';
         if (!state.items.length) {
-            list.appendChild(Dom.el('div', 'cm-empty', 'No tools match.'));
+            list.appendChild(Dom.el('div', 'cm-empty', I18n.t('ui.noToolsMatch')));
             return;
         }
         state.items.forEach(function (item, index) {
@@ -4203,7 +5223,7 @@ function openPalette(controller, options) {
             headRow.appendChild(Dom.el('code', 'cm-opt-flag', option.flag));
         }
         if (inferred) {
-            headRow.appendChild(Dom.el('span', 'cm-badge', 'inferred'));
+            headRow.appendChild(Dom.el('span', 'cm-badge', I18n.t('ui.inferred')));
         }
         main.appendChild(headRow);
         if (option.help) {
@@ -4265,14 +5285,14 @@ function openPalette(controller, options) {
         if (state.loaded && state.loaded.presetsInvalid) {
             const broken = document.createElement('option');
             broken.value = '';
-            broken.textContent = 'Presets note needs fixing';
+            broken.textContent = I18n.t('ui.presetsBroken');
             state.presetSelect.appendChild(broken);
             return;
         }
         if (!state.presets.length) {
             const empty = document.createElement('option');
             empty.value = '';
-            empty.textContent = 'No presets yet';
+            empty.textContent = I18n.t('ui.noPresets');
             state.presetSelect.appendChild(empty);
         }
         state.presets.forEach(function (preset) {
@@ -4285,14 +5305,14 @@ function openPalette(controller, options) {
 
     async function copyTextToClipboard(text, message) {
         if (!String(text || '').trim()) {
-            notify(new Error('Nothing to copy.'));
+            notify(new Error(I18n.t('status.nothingToCopy')));
             return;
         }
         const ok = await controller.copy(text);
         if (ok) {
-            setStatus(message || 'Copied to the clipboard.');
+            setStatus(message || I18n.t('status.copied'));
         } else {
-            notify(new Error('Could not write to the clipboard.'));
+            notify(new Error(I18n.t('status.clipboardFailed')));
         }
     }
 
@@ -4309,7 +5329,7 @@ function openPalette(controller, options) {
         }
         try {
             controller.insert(state.previewEl.value);
-            setStatus('Inserted into the active note.');
+            setStatus(I18n.t('status.inserted'));
         } catch (error) {
             notify(error);
         }
@@ -4321,14 +5341,14 @@ function openPalette(controller, options) {
             return entry.name === name;
         })[0];
         if (!preset) {
-            notify(new Error('Pick a preset first.'));
+            notify(new Error(I18n.t('status.pickPreset')));
             return;
         }
         state.values = Object.assign(Model.defaultValueMap(state.definition), preset.values || {});
         state.edited = false;
         state.exampleLoaded = false;
         renderDetail();
-        setStatus('Preset loaded.');
+        setStatus(I18n.t('status.presetLoaded'));
     }
 
     async function savePreset() {
@@ -4338,7 +5358,7 @@ function openPalette(controller, options) {
         }
         const name = (state.presetName ? state.presetName.value : '').trim();
         if (!name) {
-            notify(new Error('Preset name is required.'));
+            notify(new Error(I18n.t('status.presetNameRequired')));
             return;
         }
         await controller.savePreset(definition.noteId, name, state.values);
@@ -4356,14 +5376,14 @@ function openPalette(controller, options) {
         state.loaded = loaded;
         state.presets = loaded.presets || [];
         renderDetail();
-        setStatus('Preset saved.');
+        setStatus(I18n.t('status.presetSaved'));
     }
 
     async function deletePreset() {
         const definition = state.definition;
         const name = state.presetSelect ? state.presetSelect.value : '';
         if (!definition || !name) {
-            notify(new Error('Pick a preset first.'));
+            notify(new Error(I18n.t('status.pickPreset')));
             return;
         }
         await controller.deletePreset(definition.noteId, name);
@@ -4377,32 +5397,32 @@ function openPalette(controller, options) {
         state.loaded = loaded;
         state.presets = loaded.presets || [];
         renderDetail();
-        setStatus('Preset deleted.');
+        setStatus(I18n.t('status.presetDeleted'));
     }
 
     function presetBlock() {
         const block = Dom.el('div', 'cm-presets');
-        block.appendChild(Dom.el('div', 'cm-section', 'Presets'));
+        block.appendChild(Dom.el('div', 'cm-section', I18n.t('ui.presets')));
         if (state.loaded && state.loaded.presetsInvalid) {
-            block.appendChild(Dom.el('div', 'cm-warning', 'The Presets note is not valid JSON. Fix or delete it before saving a preset.'));
+            block.appendChild(Dom.el('div', 'cm-warning', I18n.t('warn.presetsInvalid')));
         }
 
         const row = Dom.el('div', 'cm-row');
         const select = document.createElement('select');
         select.className = 'cm-control cm-select';
-        select.setAttribute('aria-label', 'Preset');
+        select.setAttribute('aria-label', I18n.t('ui.preset'));
         state.presetSelect = select;
         row.appendChild(select);
-        row.appendChild(button('Load', loadPreset));
+        row.appendChild(button(I18n.t('ui.load'), loadPreset));
 
-        const deleteButton = Dom.el('button', 'cm-button cm-danger', 'Delete');
+        const deleteButton = Dom.el('button', 'cm-button cm-danger', I18n.t('ui.delete'));
         deleteButton.type = 'button';
         let deleteArmed = false;
         let deleteTimer = null;
         let deleteRunning = false;
         function disarmDelete() {
             deleteArmed = false;
-            deleteButton.textContent = 'Delete';
+            deleteButton.textContent = I18n.t('ui.delete');
             deleteButton.classList.remove('cm-danger-armed');
             if (deleteTimer) {
                 clearTimeout(deleteTimer);
@@ -4416,14 +5436,14 @@ function openPalette(controller, options) {
             }
             const name = state.presetSelect ? state.presetSelect.value : '';
             if (!name) {
-                notify(new Error('Pick a preset first.'));
+                notify(new Error(I18n.t('status.pickPreset')));
                 return;
             }
             if (!deleteArmed) {
                 deleteArmed = true;
-                deleteButton.textContent = 'Confirm delete';
+                deleteButton.textContent = I18n.t('ui.confirmDelete');
                 deleteButton.classList.add('cm-danger-armed');
-                setStatus('Press Delete again to remove "' + name + '".');
+                setStatus(I18n.t('status.confirmDelete', { name: name }));
                 deleteTimer = setTimeout(disarmDelete, 5000);
                 return;
             }
@@ -4447,11 +5467,11 @@ function openPalette(controller, options) {
         const nameInput = document.createElement('input');
         nameInput.type = 'text';
         nameInput.className = 'cm-control';
-        nameInput.placeholder = 'Preset name';
-        nameInput.setAttribute('aria-label', 'Preset name');
+        nameInput.placeholder = I18n.t('ui.presetName');
+        nameInput.setAttribute('aria-label', I18n.t('ui.presetName'));
         state.presetName = nameInput;
         saveRow.appendChild(nameInput);
-        saveRow.appendChild(button('Save preset', savePreset));
+        saveRow.appendChild(button(I18n.t('ui.savePreset'), savePreset));
         block.appendChild(saveRow);
 
         renderPresets();
@@ -4463,11 +5483,11 @@ function openPalette(controller, options) {
             return null;
         }
         const block = Dom.el('div', 'cm-examples');
-        block.appendChild(Dom.el('div', 'cm-section', 'Examples'));
+        block.appendChild(Dom.el('div', 'cm-section', I18n.t('ui.examples')));
         state.loaded.usageExamples.forEach(function (example) {
             const row = Dom.el('div', 'cm-example');
             row.appendChild(Dom.el('code', 'cm-example-text', example));
-            row.appendChild(button('Use', function () {
+            row.appendChild(button(I18n.t('ui.use'), function () {
                 state.values = Model.valuesFromExample(state.definition, example);
                 state.edited = false;
                 state.exampleLoaded = false;
@@ -4477,9 +5497,9 @@ function openPalette(controller, options) {
                     state.edited = true;
                     state.exampleLoaded = true;
                 }
-                setStatus('Example loaded into the form.');
+                setStatus(I18n.t('status.exampleLoaded'));
             }));
-            row.appendChild(button('Copy', function () {
+            row.appendChild(button(I18n.t('ui.copy'), function () {
                 return copyTextToClipboard(example);
             }));
             block.appendChild(row);
@@ -4531,7 +5551,7 @@ function openPalette(controller, options) {
         const box = Dom.el('div', 'cm-install');
         // Only allowlisted tags and attributes reach the DOM; the copy control is
         // our own trusted markup.
-        box.innerHTML = Sections.wrapCodeBlocks(Sections.sanitizeNoteHtml(html), CODE_COPY_BUTTON);
+        box.innerHTML = Sections.wrapCodeBlocks(Sections.sanitizeNoteHtml(html), codeCopyButton());
         box.addEventListener('click', function (event) {
             const target = event.target;
             if (!target || typeof target.closest !== 'function') {
@@ -4547,7 +5567,7 @@ function openPalette(controller, options) {
             const pre = wrapper && typeof wrapper.querySelector === 'function'
                 ? wrapper.querySelector('pre')
                 : null;
-            copyTextToClipboard(pre ? pre.textContent : '', 'Code copied to the clipboard.').catch(notify);
+            copyTextToClipboard(pre ? pre.textContent : '', I18n.t('status.codeCopied')).catch(notify);
         });
         details.appendChild(box);
         return details;
@@ -4555,12 +5575,12 @@ function openPalette(controller, options) {
 
     function baseRow() {
         const row = Dom.el('div', 'cm-base-row');
-        row.appendChild(Dom.el('span', 'cm-base-label', 'Base command'));
+        row.appendChild(Dom.el('span', 'cm-base-label', I18n.t('ui.baseCommand')));
         const input = document.createElement('input');
         input.type = 'text';
         input.className = 'cm-control';
         input.value = state.definition.base;
-        input.setAttribute('aria-label', 'Base command');
+        input.setAttribute('aria-label', I18n.t('ui.baseCommand'));
         input.addEventListener('change', function () {
             if (input.disabled || !state.definition) {
                 return;
@@ -4590,7 +5610,7 @@ function openPalette(controller, options) {
                 state.values = Object.assign(Model.defaultValueMap(definition), state.values);
                 state.exampleLoaded = false;
                 renderDetail();
-                setStatus('Base command updated.');
+                setStatus(I18n.t('status.baseUpdated'));
             })();
         });
         row.appendChild(input);
@@ -4607,7 +5627,7 @@ function openPalette(controller, options) {
         state.optionGroups = [];
 
         if (!state.definition) {
-            detail.appendChild(Dom.el('div', 'cm-empty', 'Pick a tool from the list.'));
+            detail.appendChild(Dom.el('div', 'cm-empty', I18n.t('ui.pickTool')));
             return;
         }
 
@@ -4625,7 +5645,7 @@ function openPalette(controller, options) {
         detail.appendChild(header);
 
         if (state.loaded && state.loaded.whatIs) {
-            detail.appendChild(Dom.el('div', 'cm-section', 'What is?'));
+            detail.appendChild(Dom.el('div', 'cm-section', I18n.t('ui.whatIs')));
             detail.appendChild(Dom.el('p', 'cm-what', state.loaded.whatIs));
         }
 
@@ -4637,12 +5657,12 @@ function openPalette(controller, options) {
         detail.appendChild(baseRow());
         detail.appendChild(presetBlock());
 
-        detail.appendChild(Dom.el('div', 'cm-section', 'Options (' + definition.options.length + ')'));
+        detail.appendChild(Dom.el('div', 'cm-section', I18n.t('ui.optionsCount', { count: definition.options.length })));
         const filter = document.createElement('input');
         filter.type = 'search';
         filter.className = 'cm-control cm-filter';
-        filter.placeholder = 'Filter options…';
-        filter.setAttribute('aria-label', 'Filter options');
+        filter.placeholder = I18n.t('ui.filterPlaceholder');
+        filter.setAttribute('aria-label', I18n.t('ui.filterLabel'));
         filter.addEventListener('input', function () {
             const needle = String(filter.value || '').trim().toLowerCase();
             state.optionRows.forEach(function (entry) {
@@ -4685,30 +5705,30 @@ function openPalette(controller, options) {
         }
 
         if (!requiredOptions.length && !optionalOptions.length) {
-            form.appendChild(Dom.el('div', 'cm-empty', 'This tool has no options yet. Use "Import options" or add option notes under Options.'));
+            form.appendChild(Dom.el('div', 'cm-empty', I18n.t('ui.noOptions')));
         }
-        optionGroup('Required', requiredOptions);
-        optionGroup('Optional', optionalOptions);
+        optionGroup(I18n.t('ui.required'), requiredOptions);
+        optionGroup(I18n.t('ui.optional'), optionalOptions);
         detail.appendChild(form);
 
-        detail.appendChild(Dom.el('div', 'cm-section', 'Extra arguments'));
+        detail.appendChild(Dom.el('div', 'cm-section', I18n.t('ui.extraArgs')));
         const extra = document.createElement('input');
         extra.type = 'text';
         extra.className = 'cm-control';
-        extra.placeholder = 'Positional arguments or subcommands, inserted after the base';
-        extra.setAttribute('aria-label', 'Extra arguments');
+        extra.placeholder = I18n.t('ui.extraPlaceholder');
+        extra.setAttribute('aria-label', I18n.t('ui.extraArgs'));
         extra.value = state.values[Render.EXTRA_KEY] === undefined ? '' : String(state.values[Render.EXTRA_KEY]);
         extra.addEventListener('input', function () {
             setValue(Render.EXTRA_KEY, extra.value);
         });
         detail.appendChild(extra);
 
-        detail.appendChild(Dom.el('div', 'cm-section', 'Command'));
+        detail.appendChild(Dom.el('div', 'cm-section', I18n.t('ui.command')));
         const preview = document.createElement('textarea');
         preview.className = 'cm-preview';
         preview.spellcheck = false;
         preview.rows = 3;
-        preview.setAttribute('aria-label', 'Command preview');
+        preview.setAttribute('aria-label', I18n.t('ui.commandPreview'));
         const codeTheme = Dom.codeBlockTheme();
         if (codeTheme) {
             preview.style.background = codeTheme.background;
@@ -4727,14 +5747,14 @@ function openPalette(controller, options) {
         detail.appendChild(state.warningsEl);
 
         const actions = Dom.el('div', 'cm-actions');
-        actions.appendChild(button('Copy', copy));
-        actions.appendChild(button('Insert', insert));
-        actions.appendChild(button('Regenerate', function () {
+        actions.appendChild(button(I18n.t('ui.copy'), copy));
+        actions.appendChild(button(I18n.t('ui.insert'), insert));
+        actions.appendChild(button(I18n.t('ui.regenerate'), function () {
             state.edited = false;
             state.exampleLoaded = false;
             updatePreview(true);
         }));
-        actions.appendChild(button('Open note', function () {
+        actions.appendChild(button(I18n.t('ui.openNote'), function () {
             return controller.openNote(definition.noteId);
         }));
         detail.appendChild(actions);
@@ -4744,17 +5764,17 @@ function openPalette(controller, options) {
             detail.appendChild(examples);
         }
 
-        const help = foldBlock('Help output', state.loaded ? state.loaded.helpText : '');
+        const help = foldBlock(I18n.t('ui.helpOutput'), state.loaded ? state.loaded.helpText : '');
         if (help) {
             detail.appendChild(help);
         }
         let install = null;
         if (state.loaded && state.loaded.installHtml) {
             install = state.loaded.installIsCode
-                ? foldHtmlBlock('Install', '<pre><code>' + Sections.escapeHtml(state.loaded.installHtml) + '</code></pre>')
-                : foldHtmlBlock('Install', state.loaded.installHtml);
+                ? foldHtmlBlock(I18n.t('ui.install'), '<pre><code>' + Sections.escapeHtml(state.loaded.installHtml) + '</code></pre>')
+                : foldHtmlBlock(I18n.t('ui.install'), state.loaded.installHtml);
         } else if (state.loaded) {
-            install = foldBlock('Install', state.loaded.installText);
+            install = foldBlock(I18n.t('ui.install'), state.loaded.installText);
         }
         if (install) {
             detail.appendChild(install);
@@ -4779,12 +5799,12 @@ function openPalette(controller, options) {
         const titleInput = document.createElement('input');
         titleInput.type = 'text';
         titleInput.className = 'cm-control';
-        titleInput.placeholder = 'Tool name (e.g. docker)';
-        titleInput.setAttribute('aria-label', 'Tool name');
+        titleInput.placeholder = I18n.t('ui.toolNamePlaceholder');
+        titleInput.setAttribute('aria-label', I18n.t('ui.toolName'));
 
         const categorySelect = document.createElement('select');
         categorySelect.className = 'cm-control cm-select';
-        categorySelect.setAttribute('aria-label', 'Category');
+        categorySelect.setAttribute('aria-label', I18n.t('ui.category'));
         const categories = controller.categories();
         categories.forEach(function (name) {
             const option = document.createElement('option');
@@ -4794,7 +5814,7 @@ function openPalette(controller, options) {
         });
         const newCategoryOption = document.createElement('option');
         newCategoryOption.value = NEW_CATEGORY;
-        newCategoryOption.textContent = 'New category…';
+        newCategoryOption.textContent = I18n.t('ui.newCategory');
         categorySelect.appendChild(newCategoryOption);
         if (!categories.length) {
             categorySelect.value = NEW_CATEGORY;
@@ -4803,8 +5823,8 @@ function openPalette(controller, options) {
         const newCategoryInput = document.createElement('input');
         newCategoryInput.type = 'text';
         newCategoryInput.className = 'cm-control';
-        newCategoryInput.placeholder = 'New category name';
-        newCategoryInput.setAttribute('aria-label', 'New category name');
+        newCategoryInput.placeholder = I18n.t('ui.newCategoryPlaceholder');
+        newCategoryInput.setAttribute('aria-label', I18n.t('ui.newCategoryPlaceholder'));
         newCategoryInput.style.display = categorySelect.value === NEW_CATEGORY ? '' : 'none';
         categorySelect.addEventListener('change', function () {
             newCategoryInput.style.display = categorySelect.value === NEW_CATEGORY ? '' : 'none';
@@ -4813,19 +5833,19 @@ function openPalette(controller, options) {
         const baseInput = document.createElement('input');
         baseInput.type = 'text';
         baseInput.className = 'cm-control';
-        baseInput.placeholder = 'Base command (optional, defaults to the name)';
-        baseInput.setAttribute('aria-label', 'Base command');
+        baseInput.placeholder = I18n.t('ui.baseOptional');
+        baseInput.setAttribute('aria-label', I18n.t('ui.baseCommand'));
 
-        const create = button('Create', async function () {
+        const create = button(I18n.t('ui.create'), async function () {
             const title = titleInput.value.trim();
             if (!title) {
-                notify(new Error('Tool name is required.'));
+                notify(new Error(I18n.t('status.toolNameRequired')));
                 return;
             }
             const isNewCategory = categorySelect.value === NEW_CATEGORY;
             const category = isNewCategory ? newCategoryInput.value.trim() : categorySelect.value;
             if (isNewCategory && !category) {
-                notify(new Error('Category name is required.'));
+                notify(new Error(I18n.t('status.categoryRequired')));
                 return;
             }
             const created = await controller.createTool({
@@ -4842,7 +5862,7 @@ function openPalette(controller, options) {
             if (item) {
                 await selectItem(item);
             }
-            setStatus('Tool created.');
+            setStatus(I18n.t('status.toolCreated'));
         });
 
         row.appendChild(titleInput);
@@ -4866,7 +5886,7 @@ function openPalette(controller, options) {
         modalHead.appendChild(Dom.el('span', 'cm-modal-title', title));
         const closeModalButton = Dom.el('button', 'cm-close', '✕');
         closeModalButton.type = 'button';
-        closeModalButton.setAttribute('aria-label', 'Close dialog');
+        closeModalButton.setAttribute('aria-label', I18n.t('ui.closeDialog'));
         closeModalButton.addEventListener('click', closeModal);
         modalHead.appendChild(closeModalButton);
         const modalBody = Dom.el('div', 'cm-modal-body');
@@ -4889,7 +5909,7 @@ function openPalette(controller, options) {
 
     /** The Close action shared by every palette modal. */
     function modalCloseButton() {
-        const node = Dom.el('button', 'cm-button', 'Close');
+        const node = Dom.el('button', 'cm-button', I18n.t('ui.close'));
         node.type = 'button';
         node.addEventListener('click', closeModal);
         return node;
@@ -4897,22 +5917,22 @@ function openPalette(controller, options) {
 
     function openImport() {
         if (!state.current) {
-            notify(new Error('Select a tool first.'));
+            notify(new Error(I18n.t('status.selectToolFirst')));
             return;
         }
         const tool = state.current;
         const picker = SourcePicker.createSourcePicker({
             controller: controller,
-            hint: 'Paste "--help" output, a JSON options file, or a markdown table. Nothing is written until you import.',
-            placeholder: '--help output, JSON or a markdown table…',
+            hint: I18n.t('import.hint'),
+            placeholder: I18n.t('import.placeholder'),
             accept: '.txt,.json,.md,.markdown,.log,.help,.text',
             onStatus: setStatus,
             onError: notify
         });
 
-        const parseButton = Dom.el('button', 'cm-button', 'Parse');
+        const parseButton = Dom.el('button', 'cm-button', I18n.t('ui.parse'));
         parseButton.type = 'button';
-        const importSelected = Dom.el('button', 'cm-button', 'Import selected');
+        const importSelected = Dom.el('button', 'cm-button', I18n.t('ui.importSelected'));
         importSelected.type = 'button';
         importSelected.disabled = true;
         const closeButton2 = modalCloseButton();
@@ -4934,7 +5954,7 @@ function openPalette(controller, options) {
             });
             const options = state.importParsed.options || [];
             if (!options.length) {
-                previewList.appendChild(Dom.el('div', 'cm-empty', 'No options found. Check the format and try again.'));
+                previewList.appendChild(Dom.el('div', 'cm-empty', I18n.t('import.noOptions')));
                 return;
             }
             options.forEach(function (option, index) {
@@ -4943,7 +5963,7 @@ function openPalette(controller, options) {
                 const checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
                 checkbox.checked = true;
-                checkbox.setAttribute('aria-label', 'Select ' + (option.flag || option.label));
+                checkbox.setAttribute('aria-label', I18n.t('import.selectOption', { name: option.flag || option.label }));
                 checkbox.addEventListener('change', function () {
                     state.importRows[index].checked = checkbox.checked;
                     importSelected.disabled = !state.importRows.some(function (entry) {
@@ -4962,12 +5982,12 @@ function openPalette(controller, options) {
                 const requiredBox = document.createElement('input');
                 requiredBox.type = 'checkbox';
                 requiredBox.checked = Boolean(option.required);
-                requiredBox.setAttribute('aria-label', 'Required');
+                requiredBox.setAttribute('aria-label', I18n.t('import.required'));
                 requiredBox.addEventListener('change', function () {
                     state.importRows[index].required = requiredBox.checked;
                 });
                 requiredLabel.appendChild(requiredBox);
-                requiredLabel.appendChild(Dom.el('span', '', 'Required'));
+                requiredLabel.appendChild(Dom.el('span', '', I18n.t('import.required')));
                 row.appendChild(requiredLabel);
                 previewList.appendChild(row);
                 state.importRows.push({ option: option, checked: true, required: Boolean(option.required) });
@@ -4978,12 +5998,12 @@ function openPalette(controller, options) {
         parseButton.addEventListener('click', guarded(function () {
             const text = picker.getText();
             if (!String(text || '').trim()) {
-                notify(new Error('Nothing to parse. Paste help output, read the active note or choose a file.'));
+                notify(new Error(I18n.t('import.nothingToParse')));
                 return;
             }
             state.importParsed = Parse.parseImport(text);
             renderImportPreview();
-            setStatus('Parsed ' + (state.importParsed.options || []).length + ' option(s).');
+            setStatus(I18n.t('import.parsed', { count: (state.importParsed.options || []).length }));
         }, notify));
 
         importSelected.addEventListener('click', guarded(async function () {
@@ -4995,14 +6015,16 @@ function openPalette(controller, options) {
                     return Object.assign({}, entry.option, { required: entry.required });
                 });
             if (!selected.length) {
-                throw new Error('Select at least one option.');
+                throw new Error(I18n.t('import.selectOne'));
             }
             const result = await controller.importOptions(tool.noteId, selected);
             closeModal();
-            const created = result && typeof result.created === 'number' ? result.created : 'the selected';
-            const skipped = result && result.skipped ? ' Skipped ' + result.skipped + ' duplicate(s).' : '';
-            const capped = result && result.capped ? ' Ignored ' + result.capped + ' options over the per-import limit.' : '';
-            statusMessage = 'Imported ' + created + ' option(s).' + skipped + capped;
+            const created = result && typeof result.created === 'number' ? result.created : 0;
+            statusMessage = I18n.t('import.imported', {
+                created: created,
+                skipped: result && result.skipped ? result.skipped : 0,
+                capped: result && result.capped ? result.capped : 0
+            });
             await controller.refresh();
             await runSearch();
             await selectItem(tool, { preserveValues: true });
@@ -5019,25 +6041,25 @@ function openPalette(controller, options) {
         actionsNode.appendChild(importSelected);
         actionsNode.appendChild(closeButton2);
 
-        modalShell('Import options into "' + tool.title + '"', bodyNode, actionsNode);
+        modalShell(I18n.t('import.title', { title: tool.title }), bodyNode, actionsNode);
     }
 
     function openImportTool() {
         const picker = SourcePicker.createSourcePicker({
             controller: controller,
-            hint: 'Paste a tool file (JSON) exported from another tool, or one generated with "Copy AI prompt". Nothing is written until you import.',
-            placeholder: 'Tool file JSON, or the output of the tool\'s --help command…',
+            hint: I18n.t('importTool.hint'),
+            placeholder: I18n.t('importTool.placeholder'),
             accept: '.json,.txt,.text',
             onStatus: setStatus,
             onError: notify
         });
 
-        const promptButton = Dom.el('button', 'cm-button', 'Copy AI prompt');
+        const promptButton = Dom.el('button', 'cm-button', I18n.t('importTool.copyPrompt'));
         promptButton.type = 'button';
-        promptButton.title = 'Copy a prompt for any AI model, including the pasted --help output';
-        const parseButton = Dom.el('button', 'cm-button', 'Parse');
+        promptButton.title = I18n.t('importTool.copyPromptTitle');
+        const parseButton = Dom.el('button', 'cm-button', I18n.t('ui.parse'));
         parseButton.type = 'button';
-        const importSelected = Dom.el('button', 'cm-button', 'Import tool');
+        const importSelected = Dom.el('button', 'cm-button', I18n.t('ui.importTool'));
         importSelected.type = 'button';
         importSelected.disabled = true;
         const closeButton2 = modalCloseButton();
@@ -5062,9 +6084,9 @@ function openPalette(controller, options) {
                 return;
             }
             [
-                ['Title', tool.title],
-                ['Category', tool.category || 'Uncategorized'],
-                ['Base command', tool.base || Model.deriveBase(tool.title)]
+                [I18n.t('importTool.fieldTitle'), tool.title],
+                [I18n.t('importTool.fieldCategory'), tool.category || I18n.t('importTool.uncategorized')],
+                [I18n.t('importTool.fieldBase'), tool.base || Model.deriveBase(tool.title)]
             ].forEach(function (line) {
                 previewList.appendChild(Dom.el('div', 'cm-import-flag', line[0] + ': ' + line[1]));
             });
@@ -5072,12 +6094,12 @@ function openPalette(controller, options) {
                 previewList.appendChild(Dom.el('div', 'cm-note', tool.description));
             }
             if (!tool.options.length) {
-                previewList.appendChild(Dom.el('div', 'cm-empty', 'This tool file has no options.'));
+                previewList.appendChild(Dom.el('div', 'cm-empty', I18n.t('importTool.noOptions')));
             }
             tool.options.forEach(function (option) {
                 const row = Dom.el('div', 'cm-import-row');
                 const main = Dom.el('div', 'cm-import-main');
-                const flag = option.flag || '(positional)';
+                const flag = option.flag || I18n.t('importTool.positional');
                 main.appendChild(Dom.el('div', 'cm-import-flag', flag + '  (' + option.type + ')  ' + option.label));
                 if (option.help) {
                     main.appendChild(Dom.el('div', 'cm-import-help', option.help));
@@ -5093,30 +6115,32 @@ function openPalette(controller, options) {
             const looksJson = /^\s*[{[]/.test(String(pasted || ''));
             copyTextToClipboard(Prompt.buildToolPrompt({
                 helpText: looksJson ? '' : pasted
-            }), 'AI prompt copied to the clipboard.').catch(notify);
+            }), I18n.t('status.promptCopied')).catch(notify);
         });
 
         parseButton.addEventListener('click', guarded(function () {
             const text = picker.getText();
             if (!String(text || '').trim()) {
-                notify(new Error('Nothing to parse. Paste a tool file, read the active note or choose a file.'));
+                notify(new Error(I18n.t('importTool.nothingToParse')));
                 return;
             }
             state.importToolParsed = ToolFile.parseToolFile(text);
             renderToolPreview();
             const tool = state.importToolParsed.tool;
-            setStatus(tool ? 'Parsed tool "' + tool.title + '".' : 'The tool file could not be parsed.');
+            setStatus(tool
+                ? I18n.t('importTool.parsed', { title: tool.title })
+                : I18n.t('importTool.parseFailed'));
         }, notify));
 
         importSelected.addEventListener('click', guarded(async function () {
             const parsed = state.importToolParsed;
             if (!parsed || !parsed.tool) {
-                notify(new Error('Parse a tool file first.'));
+                notify(new Error(I18n.t('importTool.parseFirst')));
                 return;
             }
             const created = await controller.importTool(parsed.tool);
             closeModal();
-            statusMessage = 'Imported tool "' + parsed.tool.title + '".';
+            statusMessage = I18n.t('importTool.imported', { title: parsed.tool.title });
             await controller.refresh();
             await runSearch();
             const item = created
@@ -5141,12 +6165,12 @@ function openPalette(controller, options) {
         actionsNode.appendChild(importSelected);
         actionsNode.appendChild(closeButton2);
 
-        modalShell('Import a tool', bodyNode, actionsNode);
+        modalShell(I18n.t('importTool.title'), bodyNode, actionsNode);
     }
 
     async function openExportTool() {
         if (!state.current) {
-            notify(new Error('Select a tool first.'));
+            notify(new Error(I18n.t('status.selectToolFirst')));
             return;
         }
         const file = await controller.exportTool(state.current.noteId);
@@ -5154,26 +6178,26 @@ function openPalette(controller, options) {
         const filename = (Render.slugify(file.tool.title) || 'tool') + '.tool.json';
 
         const bodyNode = Dom.el('div', '');
-        bodyNode.appendChild(Dom.el('div', 'cm-note', 'This plain-JSON file carries the tags, options and presets, so it can be imported here, kept as a backup, or shared.'));
+        bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('export.note')));
         const area = document.createElement('textarea');
         area.className = 'cm-control cm-preview';
         area.rows = 18;
         area.readOnly = true;
         area.value = json;
         bodyNode.appendChild(area);
-        bodyNode.appendChild(Dom.el('div', 'cm-note', 'Suggested file name: ' + filename));
+        bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('export.filename', { name: filename })));
 
-        const copyButton = Dom.el('button', 'cm-button', 'Copy JSON');
+        const copyButton = Dom.el('button', 'cm-button', I18n.t('export.copyJson'));
         copyButton.type = 'button';
         copyButton.addEventListener('click', function () {
-            copyTextToClipboard(json, 'Tool file copied to the clipboard.').catch(notify);
+            copyTextToClipboard(json, I18n.t('status.toolFileCopied')).catch(notify);
         });
 
-        const downloadButton = Dom.el('button', 'cm-button', 'Download .json');
+        const downloadButton = Dom.el('button', 'cm-button', I18n.t('export.download'));
         downloadButton.type = 'button';
         downloadButton.addEventListener('click', guarded(function () {
             Dom.downloadText(filename, json);
-            setStatus('Downloaded ' + filename + '.');
+            setStatus(I18n.t('status.downloaded', { name: filename }));
         }, notify));
 
         const closeButton2 = modalCloseButton();
@@ -5183,12 +6207,12 @@ function openPalette(controller, options) {
         actionsNode.appendChild(downloadButton);
         actionsNode.appendChild(closeButton2);
 
-        modalShell('Export "' + file.tool.title + '"', bodyNode, actionsNode);
+        modalShell(I18n.t('export.title', { title: file.tool.title }), bodyNode, actionsNode);
     }
 
     function openAddOption() {
         if (!state.current) {
-            notify(new Error('Select a tool first.'));
+            notify(new Error(I18n.t('status.selectToolFirst')));
             return;
         }
         const tool = state.current;
@@ -5203,31 +6227,31 @@ function openPalette(controller, options) {
 
         const labelInput = document.createElement('input');
         labelInput.type = 'text';
-        labelInput.placeholder = 'Option label, e.g. Output file';
+        labelInput.placeholder = I18n.t('addOption.labelPlaceholder');
 
         const flagInput = document.createElement('input');
         flagInput.type = 'text';
-        flagInput.placeholder = 'Flag, e.g. --output (empty = positional)';
+        flagInput.placeholder = I18n.t('addOption.flagPlaceholder');
 
         const helpInput = document.createElement('input');
         helpInput.type = 'text';
-        helpInput.placeholder = 'What is this option for?';
+        helpInput.placeholder = I18n.t('addOption.helpPlaceholder');
 
         const typeSelect = document.createElement('select');
         Model.TYPES.forEach(function (type) {
             const entry = document.createElement('option');
             entry.value = type;
-            entry.textContent = type;
+            entry.textContent = I18n.t('type.' + type);
             typeSelect.appendChild(entry);
         });
 
         const defaultInput = document.createElement('input');
         defaultInput.type = 'text';
-        defaultInput.placeholder = 'Default value (optional)';
+        defaultInput.placeholder = I18n.t('addOption.defaultPlaceholder');
 
         const valuesInput = document.createElement('input');
         valuesInput.type = 'text';
-        valuesInput.placeholder = 'Enum values, comma separated (optional)';
+        valuesInput.placeholder = I18n.t('addOption.valuesPlaceholder');
 
         const orderInput = document.createElement('input');
         orderInput.type = 'number';
@@ -5237,15 +6261,15 @@ function openPalette(controller, options) {
         const requiredInput = document.createElement('input');
         requiredInput.type = 'checkbox';
         const requiredRow = Dom.el('label', 'cm-row');
-        requiredRow.appendChild(Dom.el('span', 'cm-base-label', 'Required'));
+        requiredRow.appendChild(Dom.el('span', 'cm-base-label', I18n.t('ui.required')));
         requiredRow.appendChild(requiredInput);
 
-        const add = Dom.el('button', 'cm-button', 'Add');
+        const add = Dom.el('button', 'cm-button', I18n.t('ui.add'));
         add.type = 'button';
         add.addEventListener('click', guarded(async function () {
             const label = labelInput.value.trim();
             if (!label) {
-                throw new Error('Option label is required.');
+                throw new Error(I18n.t('status.optionLabelRequired'));
             }
             const values = valuesInput.value.split(',')
                 .map(function (entry) {
@@ -5269,39 +6293,39 @@ function openPalette(controller, options) {
             await controller.refresh();
             await runSearch();
             await selectItem(tool, { preserveValues: true });
-            setStatus('Option added.');
+            setStatus(I18n.t('status.optionAdded'));
         }, notify));
 
         const closeButton2 = modalCloseButton();
 
         const bodyNode = Dom.el('div', '');
-        bodyNode.appendChild(Dom.el('div', 'cm-note', 'The option is stored as a note under the tool\'s Options folder.'));
-        bodyNode.appendChild(field('Label', labelInput));
-        bodyNode.appendChild(field('Flag', flagInput));
-        bodyNode.appendChild(field('Help', helpInput));
-        bodyNode.appendChild(field('Type', typeSelect));
-        bodyNode.appendChild(field('Default', defaultInput));
-        bodyNode.appendChild(field('Values', valuesInput));
-        bodyNode.appendChild(field('Order', orderInput));
+        bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('addOption.note')));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldLabel'), labelInput));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldFlag'), flagInput));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldHelp'), helpInput));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldType'), typeSelect));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldDefault'), defaultInput));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldValues'), valuesInput));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldOrder'), orderInput));
         bodyNode.appendChild(requiredRow);
-        bodyNode.appendChild(Dom.el('div', 'cm-note', 'Required options are grouped first under Required in the palette.'));
+        bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('addOption.requiredNote')));
 
         const actionsNode = Dom.el('div', 'cm-inline');
         actionsNode.appendChild(add);
         actionsNode.appendChild(closeButton2);
 
-        modalShell('Add an option to "' + tool.title + '"', bodyNode, actionsNode);
+        modalShell(I18n.t('addOption.title', { title: tool.title }), bodyNode, actionsNode);
         labelInput.focus();
     }
 
     function openToolsFolder() {
         const bodyNode = Dom.el('div', '');
-        const info = Dom.el('div', 'cm-note', 'Loading…');
+        const info = Dom.el('div', 'cm-note', I18n.t('ui.loading'));
         bodyNode.appendChild(info);
 
-        const active = Dom.el('button', 'cm-button', 'Use the active note');
+        const active = Dom.el('button', 'cm-button', I18n.t('toolsFolder.useActive'));
         active.type = 'button';
-        const openFolder = Dom.el('button', 'cm-button', 'Open Tools folder');
+        const openFolder = Dom.el('button', 'cm-button', I18n.t('toolsFolder.open'));
         openFolder.type = 'button';
         openFolder.disabled = true;
 
@@ -5309,9 +6333,9 @@ function openPalette(controller, options) {
         const idInput = document.createElement('input');
         idInput.type = 'text';
         idInput.className = 'cm-control';
-        idInput.placeholder = 'Note ID of an existing folder';
-        idInput.setAttribute('aria-label', 'Note ID of an existing folder');
-        const useId = Dom.el('button', 'cm-button', 'Use this note ID');
+        idInput.placeholder = I18n.t('toolsFolder.idPlaceholder');
+        idInput.setAttribute('aria-label', I18n.t('toolsFolder.idPlaceholder'));
+        const useId = Dom.el('button', 'cm-button', I18n.t('toolsFolder.useId'));
         useId.type = 'button';
         idRow.appendChild(idInput);
         idRow.appendChild(useId);
@@ -5321,15 +6345,15 @@ function openPalette(controller, options) {
         guarded(async function () {
             root = await controller.currentToolsRoot();
             info.textContent = root
-                ? 'Current Tools folder: "' + root.title + '" (' + root.noteId + ').'
-                : 'No Tools folder yet.';
+                ? I18n.t('toolsFolder.current', { title: root.title, id: root.noteId })
+                : I18n.t('toolsFolder.none');
             openFolder.disabled = !root;
         }, notify)();
 
         active.addEventListener('click', guarded(async function () {
             await controller.useActiveNoteAsToolsRoot();
             closeModal();
-            setStatus('Tools folder updated to the active note.');
+            setStatus(I18n.t('status.toolsRootActive'));
             await runSearch();
         }, notify));
 
@@ -5343,11 +6367,11 @@ function openPalette(controller, options) {
         useId.addEventListener('click', guarded(async function () {
             const noteId = idInput.value.trim();
             if (!noteId) {
-                throw new Error('Enter a note ID.');
+                throw new Error(I18n.t('status.enterNoteId'));
             }
             await controller.setToolsRoot(noteId);
             closeModal();
-            setStatus('Tools folder updated.');
+            setStatus(I18n.t('status.toolsRootUpdated'));
             await runSearch();
         }, notify));
 
@@ -5357,7 +6381,7 @@ function openPalette(controller, options) {
         const closeButton2 = modalCloseButton();
         actionsNode.appendChild(closeButton2);
 
-        modalShell('Tools folder', bodyNode, actionsNode);
+        modalShell(I18n.t('ui.toolsFolder'), bodyNode, actionsNode);
     }
 
     searchInput.addEventListener('input', onSearchInput);
@@ -5386,6 +6410,20 @@ function openPalette(controller, options) {
     importButton.addEventListener('click', openImport);
     addOptionButton.addEventListener('click', openAddOption);
     toolsButton.addEventListener('click', openToolsFolder);
+    languageSelect.addEventListener('change', guarded(async function () {
+        if (typeof controller.setLanguage !== 'function') {
+            languageSelect.value = I18n.getLocale();
+            return;
+        }
+        try {
+            await controller.setLanguage(languageSelect.value);
+        } catch (error) {
+            // The write failed: show the language that is actually active.
+            languageSelect.value = I18n.getLocale();
+            throw error;
+        }
+        remount();
+    }, notify));
     if (embedded) {
         shell.addEventListener('keydown', onKeyDown);
     } else {
@@ -5451,6 +6489,7 @@ const ToolFile = __require("toolfile");
 const Version = __require("version");
 const Dom = __require("dom");
 const UI = __require("ui");
+const I18n = __require("i18n");
 
 let index = [];
 let entriesById = new Map();
@@ -5532,26 +6571,64 @@ function standardChild(note, label, title) {
     });
 }
 
+function navigatorLanguages() {
+    try {
+        if (typeof navigator === 'undefined' || !navigator) {
+            return [];
+        }
+        if (Array.isArray(navigator.languages) && navigator.languages.length) {
+            return navigator.languages;
+        }
+        return navigator.language ? [navigator.language] : [];
+    } catch (error) {
+        return [];
+    }
+}
+
+/**
+ * The `cmLang` label on the settings note wins; otherwise follow the browser
+ * language and fall back to English. Runs before bootstrap, so seeded notes
+ * are written in the active language.
+ */
+async function resolveLocale() {
+    let configured = '';
+    const apiRef = getApi();
+    if (apiRef) {
+        try {
+            const root = await apiRef.searchForNote('#' + Model.LABELS.root);
+            if (root) {
+                const value = root.getLabelValue(Model.LABELS.lang);
+                configured = value === null || value === undefined ? '' : String(value);
+            }
+        } catch (error) {
+            configured = '';
+        }
+    }
+    return I18n.setLocale(I18n.normalizeLocale(configured) || I18n.detectLocale(navigatorLanguages()));
+}
+
 function ensureBootstrap() {
     const apiRef = getApi();
     if (bootstrapPromise && bootstrapApi === apiRef) {
         return bootstrapPromise;
     }
     if (!apiRef) {
-        return Promise.reject(new Error('Trilium api is not available.'));
+        return Promise.reject(new Error(I18n.t('error.apiUnavailable')));
     }
     bootstrapApi = apiRef;
-    bootstrapPromise = Promise.resolve(
-        apiRef.runOnBackend(Backend.beRun, [{
+    bootstrapPromise = resolveLocale().then(function (locale) {
+        return apiRef.runOnBackend(Backend.beRun, [{
             action: 'bootstrap',
             labels: Model.LABELS,
             icons: Model.ICONS,
             version: Version.VERSION,
+            lang: locale,
+            strings: I18n.backendStrings(),
             seed: true,
             seedTools: Model.seedTools(),
             newToolNotes: Model.newToolNotes()
-        }])
-    ).then(function (result) {
+        }]);
+    }).then(function (result) {
         bootstrapInfo = result || null;
         return result;
     }).catch(function (error) {
@@ -5714,7 +6791,7 @@ async function readNoteText(note) {
 async function load(noteId) {
     const entry = entriesById.get(noteId);
     if (!entry) {
-        throw new Error('Tool not found. Reopen the palette.');
+        throw new Error(I18n.t('error.toolNotFound'));
     }
     const note = entry.note;
     const labels = entry.labels;
@@ -5725,7 +6802,7 @@ async function load(noteId) {
     } catch (error) {
         // The indexed note vanished (deleted from another tab or session).
         // Surface it instead of rendering a silently empty tool.
-        throw new Error('Tool "' + note.title + '" could not be read; it may have been deleted. Reopen the palette to refresh.');
+        throw new Error(I18n.t('error.toolReadFailed', { title: note.title }));
     }
     const parsed = Sections.parseToolNote(toolContent);
 
@@ -5815,7 +6892,7 @@ async function readRawContent(note) {
 async function exportTool(noteId) {
     const entry = entriesById.get(noteId);
     if (!entry) {
-        throw new Error('Tool not found. Reopen the palette.');
+        throw new Error(I18n.t('error.toolNotFound'));
     }
     const note = entry.note;
     const labels = entry.labels;
@@ -5874,20 +6951,25 @@ async function copyText(text) {
 function insertText(text) {
     const apiRef = getApi();
     if (!apiRef || typeof apiRef.addTextToActiveContextEditor !== 'function') {
-        throw new Error('This Trilium version cannot insert into the editor. Copy the command instead.');
+        throw new Error(I18n.t('error.insertUnsupported'));
     }
     apiRef.addTextToActiveContextEditor(text);
 }
 
 function backendAction(action, extra) {
     const apiRef = getApi();
-    const params = Object.assign({ action: action, labels: Model.LABELS, icons: Model.ICONS }, extra || {});
+    const params = Object.assign({
+        action: action,
+        labels: Model.LABELS,
+        icons: Model.ICONS,
+        strings: I18n.backendStrings()
+    }, extra || {});
     return apiRef.runOnBackend(Backend.beRun, [params]);
 }
 
 function toolsRootId() {
     if (!bootstrapInfo || !bootstrapInfo.toolsRootId) {
-        throw new Error('Tools folder is not available yet. Reopen the palette.');
+        throw new Error(I18n.t('error.toolsRootUnavailable'));
     }
     return bootstrapInfo.toolsRootId;
 }
@@ -5935,7 +7017,7 @@ function compareVersions(left, right) {
 async function checkLatestVersion() {
     const result = { current: Version.VERSION, latest: '', outdated: false, error: '' };
     if (typeof fetch !== 'function') {
-        result.error = 'This environment cannot check for updates.';
+        result.error = I18n.t('error.updateCheckUnavailable');
         return result;
     }
 
@@ -6003,9 +7085,11 @@ async function checkLatestVersion() {
             result.outdated = compareVersions(result.latest, result.current) > 0;
             return result;
         }
-        result.error = 'No published version found.';
+        result.error = I18n.t('error.noPublishedVersion');
     } catch (error) {
-        result.error = 'Could not check for updates: ' + (error && error.message ? error.message : error);
+        result.error = I18n.t('error.updateCheckFailed', {
+            error: error && error.message ? error.message : error
+        });
     }
     return result;
 }
@@ -6036,22 +7120,22 @@ function embeddedHost(apiRef) {
 async function openInTab() {
     const apiRef = getApi();
     if (!apiRef) {
-        throw new Error('Trilium api is not available.');
+        throw new Error(I18n.t('error.apiUnavailable'));
     }
     const info = await ensureBootstrap();
     if (!info || !info.rootId) {
-        throw new Error('Command Maker is not ready yet. Reopen the palette.');
+        throw new Error(I18n.t('error.notReady'));
     }
     const scriptNote = apiRef.startNote;
     if (!scriptNote || !scriptNote.noteId) {
-        throw new Error('Cannot locate the Command Maker plugin note.');
+        throw new Error(I18n.t('error.pluginNoteMissing'));
     }
     const result = await backendAction('ensureTab', {
         rootId: info.rootId,
         scriptNoteId: scriptNote.noteId
     });
     if (typeof apiRef.openTabWithNote !== 'function') {
-        throw new Error('This Trilium version cannot open notes in a new tab.');
+        throw new Error(I18n.t('error.tabUnsupported'));
     }
     if (typeof apiRef.waitUntilSynced === 'function') {
         await apiRef.waitUntilSynced();
@@ -6172,11 +7256,35 @@ function controller() {
             return setToolsRootAction(noteId);
         },
 
+        /**
+         * Persist the language on the settings note and activate it. The UI
+         * remounts after this resolves, so every new string is localized.
+         */
+        async setLanguage(locale) {
+            const normalized = I18n.normalizeLocale(locale) || I18n.DEFAULT_LOCALE;
+            const previous = I18n.getLocale();
+            // Switch first: the backend action carries the strings it needs and
+            // the UI remounts only after the write succeeds.
+            I18n.setLocale(normalized);
+            try {
+                const info = await ensureBootstrap();
+                await backendAction('setLanguage', { rootId: info.rootId, lang: normalized });
+            } catch (error) {
+                I18n.setLocale(previous);
+                throw error;
+            }
+            return normalized;
+        },
+
+        language() {
+            return I18n.getLocale();
+        },
+
         async useActiveNoteAsToolsRoot() {
             const apiRef = getApi();
             const active = apiRef.getActiveContextNote();
             if (!active) {
-                throw new Error('No active note to use as the Tools folder.');
+                throw new Error(I18n.t('error.noActiveNoteForTools'));
             }
             return setToolsRootAction(active.noteId);
         },
@@ -6185,7 +7293,7 @@ function controller() {
             const apiRef = getApi();
             const active = apiRef.getActiveContextNote();
             if (!active) {
-                throw new Error('No active note.');
+                throw new Error(I18n.t('error.noActiveNote'));
             }
             const text = await readNoteText(active);
             return { noteId: active.noteId, title: active.title, text: text };
@@ -6195,7 +7303,7 @@ function controller() {
             const apiRef = getApi();
             const note = await apiRef.getNote(noteId);
             if (!note) {
-                throw new Error('Note not found: ' + noteId);
+                throw new Error(I18n.t('error.noteNotFound', { id: noteId }));
             }
             return apiRef.activateNote(note.getBestNotePathString());
         },
@@ -6210,23 +7318,30 @@ function start() {
         console.error('[command-maker] Trilium api is not available.');
         return;
     }
-    try {
-        const host = embeddedHost(apiRef);
-        if (host) {
-            UI.openPalette(controller(), { container: host });
-        } else {
-            UI.openPalette(controller());
-        }
-    } catch (error) {
-        console.error('[command-maker]', error);
+    const host = embeddedHost(apiRef);
+    const paletteOptions = host ? { container: host } : undefined;
+
+    function mount() {
         try {
-            if (typeof apiRef.showError === 'function') {
-                apiRef.showError('Command Maker: ' + (error && error.message ? error.message : error));
+            UI.openPalette(controller(), paletteOptions);
+        } catch (error) {
+            console.error('[command-maker]', error);
+            try {
+                if (typeof apiRef.showError === 'function') {
+                    apiRef.showError('Command Maker: ' + (error && error.message ? error.message : error));
+                }
+            } catch (ignored) {
+                // nothing else to do
             }
-        } catch (ignored) {
-            // nothing else to do
         }
     }
+
+    // The locale comes from a note label, so it is resolved before the first
+    // mount: every label the palette builds is already in the right language.
+    // A failed lookup still opens the palette with the detected language.
+    resolveLocale().catch(function () {
+        return I18n.getLocale();
+    }).then(mount);
 }
 
 module.exports = { start, controller, refresh, search, load };

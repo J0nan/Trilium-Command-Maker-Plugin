@@ -1175,7 +1175,7 @@ test('double-clicking Create, Add option and Import selected issues one backend 
     importSelected.click();
     importSelected.click();
     await waitFor(() => {
-        return env.calls.messages.some((message) => /Imported 1 option\(s\)\./.test(message));
+        return env.calls.messages.some((message) => /Imported 1 option\./.test(message));
     }, 'import options completion');
     assert.equal(
         env.calls.backend.filter((entry) => entry.action === 'importOptions').length,
@@ -1576,4 +1576,61 @@ test('the import status line names the capped options', async () => {
     await waitFor(() => {
         return env.calls.messages.some((message) => /Ignored 37 options over the per-import limit/.test(message));
     }, 'capped import status');
+});
+
+test('the footer language selector persists the setting and remounts in Spanish', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    const selector = await waitFor(
+        () => find(dom.body, (node) => node.tagName === 'SELECT' && classed(node, 'cm-lang')),
+        'language selector'
+    );
+    assert.equal(selector.value, 'en');
+    assert.ok(buttonWithText(dom.body, 'New tool'), 'English palette');
+
+    selector.value = 'es';
+    selector.dispatch('change');
+
+    const spanish = await waitFor(() => buttonWithText(dom.body, 'Nueva herramienta'), 'Spanish palette');
+    assert.ok(spanish, 'the palette remounts in Spanish');
+    const call = env.calls.backend.filter((entry) => entry.action === 'setLanguage')[0];
+    assert.ok(call, 'the choice is written to the settings note');
+    assert.equal(call.rootId, 'root');
+    assert.equal(call.lang, 'es');
+    assert.equal(typeof call.strings, 'object', 'backend strings travel with the action');
+    assert.equal(call.strings['back.noteInstall'], 'Instalación');
+    assert.ok(find(dom.body, (node) => node.placeholder === 'Buscar herramientas…'), 'search box is Spanish');
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('an existing cmLang setting starts the palette in that language', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    const searchForNote = env.api.searchForNote.bind(env.api);
+    env.api.searchForNote = async (query) => {
+        if (query === '#cmRoot') {
+            return {
+                noteId: 'root',
+                title: 'Command Maker',
+                getLabelValue(name) {
+                    return name === 'cmLang' ? 'es' : null;
+                }
+            };
+        }
+        return searchForNote(query);
+    };
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => buttonWithText(dom.body, 'Nueva herramienta'), 'Spanish palette on first open');
+    const bootstrap = env.calls.backend.filter((entry) => entry.action === 'bootstrap')[0];
+    assert.equal(bootstrap.lang, 'es');
+    assert.equal(bootstrap.strings['back.noteInstall'], 'Instalación');
+    assert.equal(bootstrap.seedTools[0].category, 'Control de versiones');
+    assert.match(bootstrap.newToolNotes.content, /Enlaces oficiales/);
+    assert.deepEqual(env.calls.errors, []);
 });

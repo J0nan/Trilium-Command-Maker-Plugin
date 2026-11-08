@@ -24,6 +24,7 @@ const ToolFile = require('./toolfile');
 const Version = require('./version');
 const Dom = require('./dom');
 const UI = require('./ui');
+const I18n = require('./i18n');
 
 let index = [];
 let entriesById = new Map();
@@ -105,26 +106,64 @@ function standardChild(note, label, title) {
     });
 }
 
+function navigatorLanguages() {
+    try {
+        if (typeof navigator === 'undefined' || !navigator) {
+            return [];
+        }
+        if (Array.isArray(navigator.languages) && navigator.languages.length) {
+            return navigator.languages;
+        }
+        return navigator.language ? [navigator.language] : [];
+    } catch (error) {
+        return [];
+    }
+}
+
+/**
+ * The `cmLang` label on the settings note wins; otherwise follow the browser
+ * language and fall back to English. Runs before bootstrap, so seeded notes
+ * are written in the active language.
+ */
+async function resolveLocale() {
+    let configured = '';
+    const apiRef = getApi();
+    if (apiRef) {
+        try {
+            const root = await apiRef.searchForNote('#' + Model.LABELS.root);
+            if (root) {
+                const value = root.getLabelValue(Model.LABELS.lang);
+                configured = value === null || value === undefined ? '' : String(value);
+            }
+        } catch (error) {
+            configured = '';
+        }
+    }
+    return I18n.setLocale(I18n.normalizeLocale(configured) || I18n.detectLocale(navigatorLanguages()));
+}
+
 function ensureBootstrap() {
     const apiRef = getApi();
     if (bootstrapPromise && bootstrapApi === apiRef) {
         return bootstrapPromise;
     }
     if (!apiRef) {
-        return Promise.reject(new Error('Trilium api is not available.'));
+        return Promise.reject(new Error(I18n.t('error.apiUnavailable')));
     }
     bootstrapApi = apiRef;
-    bootstrapPromise = Promise.resolve(
-        apiRef.runOnBackend(Backend.beRun, [{
+    bootstrapPromise = resolveLocale().then(function (locale) {
+        return apiRef.runOnBackend(Backend.beRun, [{
             action: 'bootstrap',
             labels: Model.LABELS,
             icons: Model.ICONS,
             version: Version.VERSION,
+            lang: locale,
+            strings: I18n.backendStrings(),
             seed: true,
             seedTools: Model.seedTools(),
             newToolNotes: Model.newToolNotes()
-        }])
-    ).then(function (result) {
+        }]);
+    }).then(function (result) {
         bootstrapInfo = result || null;
         return result;
     }).catch(function (error) {
@@ -287,7 +326,7 @@ async function readNoteText(note) {
 async function load(noteId) {
     const entry = entriesById.get(noteId);
     if (!entry) {
-        throw new Error('Tool not found. Reopen the palette.');
+        throw new Error(I18n.t('error.toolNotFound'));
     }
     const note = entry.note;
     const labels = entry.labels;
@@ -298,7 +337,7 @@ async function load(noteId) {
     } catch (error) {
         // The indexed note vanished (deleted from another tab or session).
         // Surface it instead of rendering a silently empty tool.
-        throw new Error('Tool "' + note.title + '" could not be read; it may have been deleted. Reopen the palette to refresh.');
+        throw new Error(I18n.t('error.toolReadFailed', { title: note.title }));
     }
     const parsed = Sections.parseToolNote(toolContent);
 
@@ -388,7 +427,7 @@ async function readRawContent(note) {
 async function exportTool(noteId) {
     const entry = entriesById.get(noteId);
     if (!entry) {
-        throw new Error('Tool not found. Reopen the palette.');
+        throw new Error(I18n.t('error.toolNotFound'));
     }
     const note = entry.note;
     const labels = entry.labels;
@@ -447,20 +486,25 @@ async function copyText(text) {
 function insertText(text) {
     const apiRef = getApi();
     if (!apiRef || typeof apiRef.addTextToActiveContextEditor !== 'function') {
-        throw new Error('This Trilium version cannot insert into the editor. Copy the command instead.');
+        throw new Error(I18n.t('error.insertUnsupported'));
     }
     apiRef.addTextToActiveContextEditor(text);
 }
 
 function backendAction(action, extra) {
     const apiRef = getApi();
-    const params = Object.assign({ action: action, labels: Model.LABELS, icons: Model.ICONS }, extra || {});
+    const params = Object.assign({
+        action: action,
+        labels: Model.LABELS,
+        icons: Model.ICONS,
+        strings: I18n.backendStrings()
+    }, extra || {});
     return apiRef.runOnBackend(Backend.beRun, [params]);
 }
 
 function toolsRootId() {
     if (!bootstrapInfo || !bootstrapInfo.toolsRootId) {
-        throw new Error('Tools folder is not available yet. Reopen the palette.');
+        throw new Error(I18n.t('error.toolsRootUnavailable'));
     }
     return bootstrapInfo.toolsRootId;
 }
@@ -508,7 +552,7 @@ function compareVersions(left, right) {
 async function checkLatestVersion() {
     const result = { current: Version.VERSION, latest: '', outdated: false, error: '' };
     if (typeof fetch !== 'function') {
-        result.error = 'This environment cannot check for updates.';
+        result.error = I18n.t('error.updateCheckUnavailable');
         return result;
     }
 
@@ -576,9 +620,11 @@ async function checkLatestVersion() {
             result.outdated = compareVersions(result.latest, result.current) > 0;
             return result;
         }
-        result.error = 'No published version found.';
+        result.error = I18n.t('error.noPublishedVersion');
     } catch (error) {
-        result.error = 'Could not check for updates: ' + (error && error.message ? error.message : error);
+        result.error = I18n.t('error.updateCheckFailed', {
+            error: error && error.message ? error.message : error
+        });
     }
     return result;
 }
@@ -609,22 +655,22 @@ function embeddedHost(apiRef) {
 async function openInTab() {
     const apiRef = getApi();
     if (!apiRef) {
-        throw new Error('Trilium api is not available.');
+        throw new Error(I18n.t('error.apiUnavailable'));
     }
     const info = await ensureBootstrap();
     if (!info || !info.rootId) {
-        throw new Error('Command Maker is not ready yet. Reopen the palette.');
+        throw new Error(I18n.t('error.notReady'));
     }
     const scriptNote = apiRef.startNote;
     if (!scriptNote || !scriptNote.noteId) {
-        throw new Error('Cannot locate the Command Maker plugin note.');
+        throw new Error(I18n.t('error.pluginNoteMissing'));
     }
     const result = await backendAction('ensureTab', {
         rootId: info.rootId,
         scriptNoteId: scriptNote.noteId
     });
     if (typeof apiRef.openTabWithNote !== 'function') {
-        throw new Error('This Trilium version cannot open notes in a new tab.');
+        throw new Error(I18n.t('error.tabUnsupported'));
     }
     if (typeof apiRef.waitUntilSynced === 'function') {
         await apiRef.waitUntilSynced();
@@ -745,11 +791,35 @@ function controller() {
             return setToolsRootAction(noteId);
         },
 
+        /**
+         * Persist the language on the settings note and activate it. The UI
+         * remounts after this resolves, so every new string is localized.
+         */
+        async setLanguage(locale) {
+            const normalized = I18n.normalizeLocale(locale) || I18n.DEFAULT_LOCALE;
+            const previous = I18n.getLocale();
+            // Switch first: the backend action carries the strings it needs and
+            // the UI remounts only after the write succeeds.
+            I18n.setLocale(normalized);
+            try {
+                const info = await ensureBootstrap();
+                await backendAction('setLanguage', { rootId: info.rootId, lang: normalized });
+            } catch (error) {
+                I18n.setLocale(previous);
+                throw error;
+            }
+            return normalized;
+        },
+
+        language() {
+            return I18n.getLocale();
+        },
+
         async useActiveNoteAsToolsRoot() {
             const apiRef = getApi();
             const active = apiRef.getActiveContextNote();
             if (!active) {
-                throw new Error('No active note to use as the Tools folder.');
+                throw new Error(I18n.t('error.noActiveNoteForTools'));
             }
             return setToolsRootAction(active.noteId);
         },
@@ -758,7 +828,7 @@ function controller() {
             const apiRef = getApi();
             const active = apiRef.getActiveContextNote();
             if (!active) {
-                throw new Error('No active note.');
+                throw new Error(I18n.t('error.noActiveNote'));
             }
             const text = await readNoteText(active);
             return { noteId: active.noteId, title: active.title, text: text };
@@ -768,7 +838,7 @@ function controller() {
             const apiRef = getApi();
             const note = await apiRef.getNote(noteId);
             if (!note) {
-                throw new Error('Note not found: ' + noteId);
+                throw new Error(I18n.t('error.noteNotFound', { id: noteId }));
             }
             return apiRef.activateNote(note.getBestNotePathString());
         },
@@ -783,23 +853,30 @@ function start() {
         console.error('[command-maker] Trilium api is not available.');
         return;
     }
-    try {
-        const host = embeddedHost(apiRef);
-        if (host) {
-            UI.openPalette(controller(), { container: host });
-        } else {
-            UI.openPalette(controller());
-        }
-    } catch (error) {
-        console.error('[command-maker]', error);
+    const host = embeddedHost(apiRef);
+    const paletteOptions = host ? { container: host } : undefined;
+
+    function mount() {
         try {
-            if (typeof apiRef.showError === 'function') {
-                apiRef.showError('Command Maker: ' + (error && error.message ? error.message : error));
+            UI.openPalette(controller(), paletteOptions);
+        } catch (error) {
+            console.error('[command-maker]', error);
+            try {
+                if (typeof apiRef.showError === 'function') {
+                    apiRef.showError('Command Maker: ' + (error && error.message ? error.message : error));
+                }
+            } catch (ignored) {
+                // nothing else to do
             }
-        } catch (ignored) {
-            // nothing else to do
         }
     }
+
+    // The locale comes from a note label, so it is resolved before the first
+    // mount: every label the palette builds is already in the right language.
+    // A failed lookup still opens the palette with the detected language.
+    resolveLocale().catch(function () {
+        return I18n.getLocale();
+    }).then(mount);
 }
 
 module.exports = { start, controller, refresh, search, load };
