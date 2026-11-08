@@ -55,13 +55,40 @@ const NEW_CATEGORY = '__new__';
 
 let instance = null;
 
-/** Resolve after the handler, so a rejected promise becomes a status message. */
+/**
+ * Resolve after the handler, so a rejected promise becomes a status message.
+ * While an async handler is in flight the originating button is disabled and
+ * further clicks are ignored, so one double click cannot issue the backend
+ * write twice (the palette's only idempotency guard for note-creating calls).
+ */
 function guarded(handler, onError) {
     return function (event) {
+        const target = event && (event.currentTarget || event.target);
+        const origin = this && typeof this.disabled === 'boolean'
+            ? this
+            : target && typeof target.disabled === 'boolean' ? target : null;
+        if (origin && origin.disabled) {
+            return;
+        }
         try {
             const result = handler(event);
             if (result && typeof result.then === 'function') {
-                result.catch(onError);
+                if (origin) {
+                    origin.disabled = true;
+                }
+                result.then(
+                    function () {
+                        if (origin) {
+                            origin.disabled = false;
+                        }
+                    },
+                    function (error) {
+                        if (origin) {
+                            origin.disabled = false;
+                        }
+                        onError(error);
+                    }
+                );
             }
         } catch (error) {
             onError(error);
@@ -251,7 +278,7 @@ function openPalette(controller, options) {
         node.type = 'button';
         node.addEventListener('click', function (event) {
             event.preventDefault();
-            guarded(handler, notify)();
+            guarded(handler, notify).call(node, event);
         });
         return node;
     }
@@ -400,17 +427,25 @@ function openPalette(controller, options) {
         }
     }
 
+    // Every selection bumps this; load results from older selections are
+    // discarded so a slow backend cannot render (or keep alive) a stale tool.
+    let selectionGeneration = 0;
+
     async function selectItem(item, selectOptions) {
         const preserve = Boolean(selectOptions && selectOptions.preserveValues);
         const previousValues = preserve ? state.values : null;
         const previousEdited = preserve ? state.edited : false;
         const previousPreview = preserve && state.previewEl ? state.previewEl.value : '';
+        const generation = ++selectionGeneration;
         state.current = item;
         state.edited = false;
         state.exampleLoaded = false;
         markActive(item);
         try {
             const loaded = await controller.load(item.noteId);
+            if (generation !== selectionGeneration) {
+                return;
+            }
             state.loaded = loaded;
             state.definition = loaded.definition;
             state.presets = loaded.presets || [];
@@ -425,6 +460,9 @@ function openPalette(controller, options) {
             }
             setStatus('');
         } catch (error) {
+            if (generation !== selectionGeneration) {
+                return;
+            }
             state.loaded = null;
             state.definition = null;
             renderDetail();
