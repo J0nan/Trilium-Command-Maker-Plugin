@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { assertInstallerLabels } from '../tools/build.mjs';
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 test('build produces a valid bundle and installer', () => {
@@ -29,9 +31,19 @@ test('build produces a valid bundle and installer', () => {
     assert.doesNotThrow(() => new Function(installer), 'installer parses');
 });
 
+test('the installer only hard-codes labels the model defines', () => {
+    assert.doesNotThrow(() => assertInstallerLabels("var ROOT_LABEL = 'cmRoot';\nvar PLUGIN_LABEL = 'cmPlugin';"));
+    assert.throws(
+        () => assertInstallerLabels("var ROOT_LABEL = 'cmR00t';"),
+        /which src\/model\.js does not define/,
+        'a drifted label fails the build instead of creating a second root'
+    );
+});
+
 test('every src module is reachable from the entry point', () => {
     const bundle = fs.readFileSync(path.join(root, 'dist', 'command-maker.js'), 'utf8');
-    for (const name of ['render', 'parse', 'sections', 'toolfile', 'prompt', 'model', 'version', 'backend', 'ui', 'runtime']) {
+    for (const name of ['render', 'parse', 'sections', 'toolfile', 'prompt', 'model', 'version',
+        'styles', 'dom', 'sourcePicker', 'backend', 'ui', 'runtime']) {
         assert.ok(bundle.includes('__def("' + name + '"'), name + ' is bundled');
     }
 });

@@ -4,6 +4,9 @@
   "private": true,
   "description": "Trilium plugin: turn CLI tool notes into a command palette with documented options, examples and help output.",
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/J0nan/Trilium-Command-Maker-Plugin.git"

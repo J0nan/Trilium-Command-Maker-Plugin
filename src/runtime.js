@@ -22,6 +22,7 @@ const Sections = require('./sections');
 const Parse = require('./parse');
 const ToolFile = require('./toolfile');
 const Version = require('./version');
+const Dom = require('./dom');
 const UI = require('./ui');
 
 let index = [];
@@ -89,6 +90,19 @@ async function childByTitle(note, title) {
         }
     }
     return null;
+}
+
+/**
+ * The standard child of a tool note: found by label first (survives a rename)
+ * and by its default title second (survives a missing label).
+ */
+function standardChild(note, label, title) {
+    if (!note) {
+        return Promise.resolve(null);
+    }
+    return childWithLabel(note, label).then(function (found) {
+        return found || childByTitle(note, title);
+    });
 }
 
 function ensureBootstrap() {
@@ -160,22 +174,9 @@ async function readOptionSnapshots(toolNote) {
     return snapshots;
 }
 
-function optionSearchText(snapshots) {
-    return snapshots.map(function (snapshot) {
-        const labels = snapshot.labels || {};
-        return [
-            snapshot.title,
-            labels[Model.LABELS.flag],
-            labels[Model.LABELS.doc],
-            labels[Model.LABELS.enumValues]
-        ].join(' ');
-    }).join(' ');
-}
-
 async function refresh() {
     await ensureBootstrap();
     const apiRef = getApi();
-    const toolsRoot = await resolveToolsRoot();
     const notes = await apiRef.searchForNotes('#' + Model.LABELS.tool);
 
     const nextIndex = [];
@@ -208,14 +209,15 @@ async function refresh() {
             whatIs = '';
         }
 
+        const description = labels[Model.LABELS.description] || '';
+        const base = labels[Model.LABELS.base] || Model.deriveBase(note.title);
         const entry = {
             noteId: note.noteId,
             title: note.title,
             category: category,
             labels: labels,
             note: note,
-            optionSnapshots: optionSnapshots,
-            searchText: [labels[Model.LABELS.description], whatIs].join(' ')
+            optionSnapshots: optionSnapshots
         };
 
         nextById.set(note.noteId, entry);
@@ -223,11 +225,18 @@ async function refresh() {
             noteId: note.noteId,
             title: note.title,
             category: category,
-            description: labels[Model.LABELS.description] || '',
-            base: labels[Model.LABELS.base] || Model.deriveBase(note.title),
-            optionCount: optionSnapshots.length,
-            optionTitles: optionSnapshots.map(function (snapshot) {
-                return snapshot.title;
+            description: description,
+            base: base,
+            // Built once per refresh: search runs on every keystroke, and the
+            // haystack comes from the same definition `Model.matches` uses.
+            searchable: Model.searchableText({
+                title: note.title,
+                category: category,
+                description: description,
+                tags: labels[Model.LABELS.tags],
+                base: base,
+                whatIs: whatIs,
+                optionText: Model.optionNotesText(optionSnapshots)
             })
         });
     }
@@ -239,43 +248,44 @@ async function refresh() {
 
 function search(query) {
     return index.filter(function (item) {
-        const entry = entriesById.get(item.noteId);
-        return Model.matches({
-            title: item.title,
-            category: item.category,
-            description: item.description,
-            base: item.base,
-            options: [],
-            optionTitles: item.optionTitles,
-            searchText: entry ? entry.searchText + ' ' + optionSearchText(entry.optionSnapshots) : ''
-        }, query);
+        return Model.matchesText(item.searchable, query);
     });
 }
 
 function readPresetsContent(content) {
     let data = null;
-    let invalid = false;
     try {
         data = JSON.parse(String(content || ''));
     } catch (error) {
-        invalid = true;
+        return { presets: [], invalid: true };
     }
     if (!data || typeof data !== 'object' || !Array.isArray(data.presets)) {
         return { presets: [], invalid: true };
     }
-    return {
-        presets: data.presets
-            .filter(function (entry) {
-                return entry && typeof entry.name === 'string';
-            })
-            .map(function (entry) {
-                return {
-                    name: entry.name,
-                    values: entry.values && typeof entry.values === 'object' ? entry.values : {}
-                };
-            }),
-        invalid: invalid
-    };
+    const presets = [];
+    for (const entry of data.presets) {
+        if (!entry || typeof entry.name !== 'string') {
+            continue;
+        }
+        // Values are JSON, so copy only own primitive string keys: a hand-edited
+        // or generated preset must never add an own `__proto__` to the map that
+        // the palette later passes to Object.assign.
+        const values = {};
+        if (entry.values && typeof entry.values === 'object' && !Array.isArray(entry.values)) {
+            for (const key of Object.keys(entry.values)) {
+                if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+                    continue;
+                }
+                const value = entry.values[key];
+                if (value === null || typeof value === 'object' || typeof value === 'function') {
+                    continue;
+                }
+                values[key] = value;
+            }
+        }
+        presets.push({ name: entry.name, values: values });
+    }
+    return { presets: presets, invalid: false };
 }
 
 async function readNoteText(note) {
@@ -310,16 +320,16 @@ async function load(noteId) {
     }
     const parsed = Sections.parseToolNote(toolContent);
 
-    const installNote = await childWithLabel(note, Model.LABELS.install) || await childByTitle(note, 'Install');
-    const usageNote = await childWithLabel(note, Model.LABELS.usage) || await childByTitle(note, 'Usage');
-    const helpNote = await childWithLabel(note, Model.LABELS.helpNote) || await childByTitle(note, 'Help');
+    const installNote = await standardChild(note, Model.LABELS.install, 'Install');
+    const usageNote = await standardChild(note, Model.LABELS.usage, 'Usage');
+    const helpNote = await standardChild(note, Model.LABELS.helpNote, 'Help');
     const optionsNote = await childWithLabel(note, Model.LABELS.options);
     const presetsNote = optionsNote ? await childWithLabel(optionsNote, Model.LABELS.presets) : null;
 
     const installHtml = await readRawContent(installNote);
     const installIsCode = Boolean(installNote && installNote.type === 'code');
     const installText = installIsCode ? installHtml : Parse.stripHtml(installHtml);
-    const usageHtml = usageNote ? await usageNote.getContent() : '';
+    const usageHtml = await readRawContent(usageNote);
     const helpText = await readNoteText(helpNote);
     const usageExamples = usageNote && usageNote.type === 'code'
         ? Sections.parseExampleLines(usageHtml)
@@ -398,9 +408,9 @@ async function exportTool(noteId) {
     const note = entry.note;
     const labels = entry.labels;
 
-    const installNote = await childWithLabel(note, Model.LABELS.install) || await childByTitle(note, 'Install');
-    const usageNote = await childWithLabel(note, Model.LABELS.usage) || await childByTitle(note, 'Usage');
-    const helpNote = await childWithLabel(note, Model.LABELS.helpNote) || await childByTitle(note, 'Help');
+    const installNote = await standardChild(note, Model.LABELS.install, 'Install');
+    const usageNote = await standardChild(note, Model.LABELS.usage, 'Usage');
+    const helpNote = await standardChild(note, Model.LABELS.helpNote, 'Help');
 
     const definition = Model.buildTool({
         noteId: note.noteId,
@@ -424,28 +434,7 @@ async function exportTool(noteId) {
 }
 
 async function copyText(text) {
-    try {
-        if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
-            await navigator.clipboard.writeText(text);
-            return true;
-        }
-    } catch (error) {
-        // fall through to the execCommand fallback
-    }
-    try {
-        const area = document.createElement('textarea');
-        area.value = text;
-        area.setAttribute('readonly', '');
-        area.style.position = 'fixed';
-        area.style.opacity = '0';
-        document.body.appendChild(area);
-        area.select();
-        const ok = document.execCommand('copy');
-        document.body.removeChild(area);
-        return Boolean(ok);
-    } catch (error) {
-        return false;
-    }
+    return Dom.copyText(text);
 }
 
 function insertText(text) {
@@ -517,13 +506,26 @@ async function checkLatestVersion() {
     }
 
     async function read(url, kind) {
-        const response = await fetch(url, {
-            headers: { Accept: kind === 'json' ? 'application/json' : 'text/plain' }
-        });
-        if (!response || !response.ok) {
-            throw new Error('HTTP ' + (response ? response.status : 'unknown'));
+        const options = { headers: { Accept: kind === 'json' ? 'application/json' : 'text/plain' } };
+        let timer = null;
+        if (typeof AbortController === 'function') {
+            const controller = new AbortController();
+            options.signal = controller.signal;
+            timer = setTimeout(function () {
+                controller.abort();
+            }, 10000);
         }
-        return kind === 'json' ? response.json() : response.text();
+        try {
+            const response = await fetch(url, options);
+            if (!response || !response.ok) {
+                throw new Error('HTTP ' + (response ? response.status : 'unknown'));
+            }
+            return kind === 'json' ? response.json() : response.text();
+        } finally {
+            if (timer) {
+                clearTimeout(timer);
+            }
+        }
     }
 
     try {
@@ -639,15 +641,37 @@ function controller() {
         },
         checkLatestVersion: checkLatestVersion,
 
+        /** Surface a message in the Trilium UI; the footer keeps its own copy. */
+        message(text) {
+            try {
+                const apiRef = getApi();
+                if (apiRef && typeof apiRef.showMessage === 'function') {
+                    apiRef.showMessage(String(text));
+                }
+            } catch (error) {
+                // the footer status is the fallback
+            }
+        },
+
+        error(text) {
+            try {
+                const apiRef = getApi();
+                if (apiRef && typeof apiRef.showError === 'function') {
+                    apiRef.showError('Command Maker: ' + String(text));
+                }
+            } catch (error) {
+                // the footer status is the fallback
+            }
+        },
+
         categories() {
-            const seen = [];
+            const seen = new Set();
             for (const item of index) {
-                if (item.category && seen.indexOf(item.category) === -1) {
-                    seen.push(item.category);
+                if (item.category) {
+                    seen.add(item.category);
                 }
             }
-            seen.sort();
-            return seen;
+            return Array.from(seen).sort();
         },
 
         async createTool(spec) {
@@ -658,7 +682,7 @@ function controller() {
                 title: spec.title,
                 base: spec.base,
                 description: spec.description,
-                content: Model.toolTemplate(),
+                content: notes.content,
                 install: notes.install,
                 usage: notes.usage,
                 help: notes.help
@@ -733,15 +757,13 @@ function controller() {
             return { noteId: active.noteId, title: active.title, text: text };
         },
 
-        openNote(noteId) {
+        async openNote(noteId) {
             const apiRef = getApi();
-            return Promise.resolve(apiRef.getNote(noteId)).then(function (note) {
-                if (!note) {
-                    throw new Error('Note not found: ' + noteId);
-                }
-                const path = note.getBestNotePathString();
-                return apiRef.activateNote(path);
-            });
+            const note = await apiRef.getNote(noteId);
+            if (!note) {
+                throw new Error('Note not found: ' + noteId);
+            }
+            return apiRef.activateNote(note.getBestNotePathString());
         },
 
         openInTab: openInTab

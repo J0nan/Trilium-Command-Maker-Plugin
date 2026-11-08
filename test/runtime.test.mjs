@@ -167,6 +167,35 @@ test('load returns options with help, examples, links, help output, install and 
     globalThis.api = undefined;
 });
 
+test('a preset value map cannot smuggle keys into Object.prototype', async () => {
+    const built = makeTool();
+    const hostileContent = JSON.stringify({
+        v: 1,
+        presets: [{
+            name: 'hostile',
+            values: {
+                '__proto__': { polluted: true },
+                'constructor': 'x',
+                'note:o1': 'web.mp4',
+                'note:o2': { nested: true }
+            }
+        }]
+    });
+    built.presets.getContent = function () {
+        return Promise.resolve(hostileContent);
+    };
+    installApi(built.tool, {});
+    await Runtime.refresh();
+
+    const loaded = await Runtime.load('t1');
+    const preset = loaded.presets.filter((entry) => entry.name === 'hostile')[0];
+    assert.ok(preset, 'the preset is still listed');
+    assert.deepEqual(Object.keys(preset.values), ['note:o1'], 'only plain string values survive');
+    assert.equal({}.polluted, undefined, 'Object.prototype is untouched');
+    assert.equal(Object.getPrototypeOf(preset.values), Object.prototype, 'the value map keeps its prototype');
+    globalThis.api = undefined;
+});
+
 test('refresh falls back to #cmBase when present and to the title otherwise', async () => {
     const built = makeTool();
     installApi(built.tool, {});

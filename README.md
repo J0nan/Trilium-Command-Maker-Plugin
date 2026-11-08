@@ -305,11 +305,16 @@ be removed if one slips through.
 ## Design notes
 
 - `src/model.js`, `src/render.js`, `src/parse.js`, `src/sections.js`,
-  `src/toolfile.js` and `src/prompt.js` are pure and unit tested. `src/ui.js` is
-  plain DOM — no JSX compile step, no Preact coupling.
+  `src/toolfile.js`, `src/prompt.js`, `src/styles.js` and `src/dom.js` are pure
+  and unit tested. `src/ui.js` is plain DOM — no JSX compile step, no Preact
+  coupling — and reads everything it needs from the runtime controller, so it
+  never touches the Trilium `api` global itself.
+- `src/sourcePicker.js` is the paste / active note / file panel shared by both
+  import dialogs, so the two of them cannot drift apart.
 - `src/backend.js` exposes a single serialisable entry point (`beRun(params)`)
   because `api.runOnBackend` sends the function source, and inner helpers travel
-  with it while outer helpers would not.
+  with it while outer helpers would not. Destructive actions validate their
+  target (an option note is only deleted when it carries `#cmOption`).
 - The frontend note MIME is `application/javascript;env=frontend`.
 - `dist/` is committed so release builds are reproducible; users should download
   the assets from the Releases page instead of copying files from the repository.

@@ -9,7 +9,10 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 
 // Dependency order does not matter: modules are registered first and executed
 // lazily on first require.
-const MODULES = ['render', 'parse', 'sections', 'toolfile', 'prompt', 'model', 'version', 'backend', 'ui', 'runtime'];
+const MODULES = [
+    'render', 'parse', 'sections', 'toolfile', 'prompt', 'model', 'version',
+    'styles', 'dom', 'sourcePicker', 'backend', 'ui', 'runtime'
+];
 const REQUIRE_RE = /require\(\s*['"]\.\/([\w-]+)(?:\.js)?['"]\s*\)/g;
 
 function inlineRequires(code) {
@@ -84,11 +87,34 @@ function buildInstaller(bundle, version) {
     if (template.indexOf('__VERSION__') === -1) {
         throw new Error('install-template.js is missing the __VERSION__ placeholder');
     }
+    assertInstallerLabels(template);
     return template
         .replace('__BUNDLE__', function () {
             return JSON.stringify(bundle);
         })
         .replace('__VERSION__', version || pkg.version);
+}
+
+/**
+ * The installer runs on the backend before the bundle exists, so it hard-codes
+ * the label names it needs. Fail the build when one of them drifts away from
+ * Model.LABELS: a typo would otherwise create a second, unfindable root note.
+ * `cmPlugin` and `cmShortcut` are installer-only attributes the plugin never
+ * reads, so they are not part of Model.LABELS.
+ */
+const INSTALLER_ONLY_LABELS = ['cmPlugin', 'cmShortcut'];
+
+function assertInstallerLabels(template) {
+    const model = fs.readFileSync(path.join(sourceDir, 'model.js'), 'utf8');
+    const installerLabel = /var\s+[A-Z_]+\s*=\s*'(cm[A-Za-z0-9]+)'/g;
+    let match = installerLabel.exec(template);
+    while (match !== null) {
+        const label = match[1];
+        if (INSTALLER_ONLY_LABELS.indexOf(label) === -1 && model.indexOf("'" + label + "'") === -1) {
+            throw new Error('install-template.js uses label "' + label + '", which src/model.js does not define');
+        }
+        match = installerLabel.exec(template);
+    }
 }
 
 function main() {
@@ -112,4 +138,4 @@ if (invokedPath === fileURLToPath(import.meta.url)) {
     main();
 }
 
-export { buildBundle, buildInstaller, main };
+export { buildBundle, buildInstaller, assertInstallerLabels, main };
