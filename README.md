@@ -274,7 +274,9 @@ a local file. It understands:
 3. **Markdown table** — `| Flag | Help | Type |` rows.
 
 Nothing is written until you parse and confirm: a preview lists every detected
-option with a checkbox. For a single option, use **Add option** in the palette
+option with a checkbox. One import creates at most 200 option notes; when the
+source contains more, the status names how many were ignored (the same bound
+tool-file imports enforce). For a single option, use **Add option** in the palette
 footer; it writes the same option note with the label, flag and help string you
 type.
 
@@ -325,13 +327,17 @@ Both work on one portable JSON file per tool:
   option with its note body, the `#cmTags` value and the presets, and shows the
   JSON. **Copy JSON** copies it; **Download .json** saves it as `<tool>.tool.json`.
   A version-2 file is therefore a real backup: importing it recreates the tool
-  with nothing dropped. Version-1 files still import, but they never carried
-  tags, option bodies or presets. (Preset values are keyed by option note IDs,
-  so after importing into a *different* instance the stored preset values may
-  not line up with the recreated option notes.)
+  with nothing the file holds dropped. (Preset values are keyed by option note
+  IDs, so after importing into a *different* instance the stored preset values
+  may not line up with the recreated option notes.) The file must carry
+  `"version": 2` — or no version at all, for hand-written objects, which are
+  read in the current shape; a file declaring any other version is rejected by
+  **Parse** and nothing is written.
 - **Import tool** accepts the same JSON from a paste, the active note or a file.
   It previews the title, category, base and options, then creates a new tool note
-  under that category. Existing tools are never modified or overwritten.
+  under that category. A file listing more than 200 options imports only the
+  first 200, with a warning in the preview. Existing tools are never modified or
+  overwritten.
 
 ### Generating the file with an AI model
 
@@ -355,10 +361,11 @@ written in either case.
 
 - `src/model.js`, `src/render.js`, `src/parse.js`, `src/sections.js`,
   `src/toolfile.js`, `src/prompt.js` and `src/styles.js` are pure
-  and unit tested. `src/dom.js` is the thin wrapper that owns every touch of
-  the global `document`; it has no Trilium API dependency and is exercised
-  through the palette tests. `src/ui.js` is plain DOM — no JSX compile step, no Preact
-  coupling — and reads everything it needs from the runtime controller, so it
+  and unit tested. `src/dom.js` holds the shared DOM helpers (elements, styles,
+  clipboard, download, file reads); it has no Trilium API dependency and is
+  exercised through the palette tests. `src/ui.js` and `src/sourcePicker.js`
+  build their own elements directly on the `document`. UI code reads everything
+  it needs from the runtime controller, so it
   never touches the Trilium `api` global itself.
 - `src/sourcePicker.js` is the paste / active note / file panel shared by both
   import dialogs, so the two of them cannot drift apart.
@@ -408,3 +415,8 @@ in the palette to check for updates.
   JSON or a markdown table is the deterministic option.
 - Help output is stored as text. Very long outputs are kept in the note but only
   the palette's collapsible section renders them.
+
+## License
+
+Released under the GNU General Public License v3.0 (or any later version).
+The full text ships in [LICENSE](LICENSE).

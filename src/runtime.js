@@ -228,7 +228,8 @@ async function refresh() {
             description: description,
             base: base,
             // Built once per refresh: search runs on every keystroke, and the
-            // haystack comes from the same definition `Model.matches` uses.
+            // haystack comes from the same definition Model.searchableText feeds
+            // to Model.matchesText.
             searchable: Model.searchableText({
                 title: note.title,
                 category: category,
@@ -262,30 +263,9 @@ function readPresetsContent(content) {
     if (!data || typeof data !== 'object' || !Array.isArray(data.presets)) {
         return { presets: [], invalid: true };
     }
-    const presets = [];
-    for (const entry of data.presets) {
-        if (!entry || typeof entry.name !== 'string') {
-            continue;
-        }
-        // Values are JSON, so copy only own primitive string keys: a hand-edited
-        // or generated preset must never add an own `__proto__` to the map that
-        // the palette later passes to Object.assign.
-        const values = {};
-        if (entry.values && typeof entry.values === 'object' && !Array.isArray(entry.values)) {
-            for (const key of Object.keys(entry.values)) {
-                if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
-                    continue;
-                }
-                const value = entry.values[key];
-                if (value === null || typeof value === 'object' || typeof value === 'function') {
-                    continue;
-                }
-                values[key] = value;
-            }
-        }
-        presets.push({ name: entry.name, values: values });
-    }
-    return { presets: presets, invalid: false };
+    // One filter for every preset reader and writer: entries need a name,
+    // values keep own primitive keys only (src/toolfile.js normalisePresets).
+    return { presets: ToolFile.normalisePresets(data.presets), invalid: false };
 }
 
 async function readNoteText(note) {
@@ -401,7 +381,9 @@ async function readRawContent(note) {
 /**
  * Read one tool into the portable file the palette writes to disk.
  * Raw note contents, the tool tags, the per-option note bodies and the
- * presets are kept so an export/import round trip loses nothing.
+ * presets are kept, so the file carries everything it claims; preset value
+ * keys bind to the original note IDs (see README: after import into a
+ * different instance the stored values may not line up with recreated options).
  */
 async function exportTool(noteId) {
     const entry = entriesById.get(noteId);
@@ -484,10 +466,10 @@ function toolsRootId() {
 }
 
 async function setToolsRootAction(noteId) {
-    const current = await resolveToolsRoot();
+    // The backend sweeps #cmTools off every other note, so the caller no
+    // longer needs to hand over the previous root.
     await backendAction('setToolsRoot', {
-        noteId: noteId,
-        oldToolsRootId: current ? current.noteId : null
+        noteId: noteId
     });
     bootstrapPromise = null;
     bootstrapInfo = null;

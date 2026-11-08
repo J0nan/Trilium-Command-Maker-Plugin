@@ -10,7 +10,7 @@
  * being duplicated here. Consequently `beRun` must never reference a
  * module-scope binding and dispatches on literal action strings only.
  *
- * Actions: bootstrap | createCategory | createTool | importTool | addOption |
+ * Actions: bootstrap | createTool | importTool | addOption |
  * importOptions | deleteOption | setToolBase | setToolsRoot | savePreset |
  * deletePreset | ensureTab
  */
@@ -438,12 +438,6 @@ function beRun(params) {
         return { rootId: root.noteId, toolsRootId: toolsRoot.noteId, seeded: seeded };
     }
 
-    function createCategory() {
-        const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
-        const name = nonEmpty(options.name) ? String(options.name) : 'Uncategorized';
-        return { noteId: ensureCategory(toolsRoot, name).noteId };
-    }
-
     function createTool() {
         const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
         const note = createToolNote(
@@ -490,8 +484,13 @@ function beRun(params) {
     }
 
     function importOptions() {
+        // Same bound the tool-file reader enforces (src/toolfile.js
+        // MAX_OPTIONS): one action must never create thousands of notes from
+        // one pasted --help dump.
+        const MAX_IMPORT_OPTIONS = 200;
         const location = presetsLocation(options.toolId);
-        const specs = Array.isArray(options.options) ? options.options : [];
+        const all = Array.isArray(options.options) ? options.options : [];
+        const specs = all.slice(0, MAX_IMPORT_OPTIONS);
         // Flag text comes from imported JSON; a plain object would confuse
         // `__proto__` and friends with membership.
         const seenFlags = new Set();
@@ -516,7 +515,7 @@ function beRun(params) {
             }
             noteIds.push(createOptionNote(location.folder, spec).noteId);
         }
-        return { created: noteIds.length, skipped: skipped, noteIds: noteIds };
+        return { created: noteIds.length, skipped: skipped, capped: all.length - specs.length, noteIds: noteIds };
     }
 
     /**
@@ -546,17 +545,33 @@ function beRun(params) {
 
     function setToolsRoot() {
         const target = requireNote(options.noteId, 'Note not found');
-        // Set the new pointer first: if removing the label from the old root
+        // Set the new pointer first: if removing the label from a previous root
         // fails afterwards, the tools stay visible instead of losing the
         // pointer and making the next bootstrap seed an empty folder.
         target.setLabel(labels.tools, '');
         // A folder the user picks is theirs: never seed examples into it.
         target.setLabel(labels.seeded, '');
-        if (options.oldToolsRootId && options.oldToolsRootId !== options.noteId) {
-            const old = api.getNote(options.oldToolsRootId);
-            if (old && typeof old.removeLabel === 'function') {
-                old.removeLabel(labels.tools);
+        // Exactly one root may hold #cmTools: a second one — left by a
+        // half-finished move or labelled by hand — would be picked
+        // arbitrarily by the loader. Sweep the pointer off every other note,
+        // reporting failures only after the sweep so the new pointer stands.
+        let removalFailure = null;
+        const roots = api.getNotesWithLabel(labels.tools);
+        for (let index = 0; index < roots.length; index += 1) {
+            const note = roots[index];
+            if (!note || note.noteId === target.noteId) {
+                continue;
             }
+            try {
+                note.removeLabel(labels.tools);
+            } catch (error) {
+                if (!removalFailure) {
+                    removalFailure = error;
+                }
+            }
+        }
+        if (removalFailure) {
+            throw removalFailure;
         }
         return { ok: true };
     }
@@ -652,8 +667,6 @@ function beRun(params) {
     switch (options.action) {
         case 'bootstrap':
             return bootstrap();
-        case 'createCategory':
-            return createCategory();
         case 'createTool':
             return createTool();
         case 'importTool':

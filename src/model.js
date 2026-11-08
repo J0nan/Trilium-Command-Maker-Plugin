@@ -425,7 +425,7 @@ function optionNotesText(snapshots) {
 
 /**
  * Everything a tool can be found by. One definition on purpose: the index and
- * `matches` must never disagree about what is searchable.
+ * `matchesText` over this haystack must never disagree about what is searchable.
  */
 function searchableText(snapshot) {
     const safe = snapshot || {};
@@ -457,10 +457,6 @@ function matchesText(haystack, query) {
     return needle.split(/\s+/).every(function (term) {
         return text.indexOf(term) !== -1;
     });
-}
-
-function matches(definition, query) {
-    return matchesText(searchableText(definition), query);
 }
 
 /** Content template for a new tool note: exactly the three H2 sections. */
@@ -596,7 +592,6 @@ module.exports = {
     defaultValueMap,
     valuesFromExample,
     tokenizeCommand,
-    matches,
     matchesText,
     searchableText,
     optionNotesText,

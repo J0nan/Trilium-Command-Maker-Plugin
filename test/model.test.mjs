@@ -188,13 +188,15 @@ test('matches searches title, category, flags, help strings and examples', () =>
         ],
         examples: ['git commit --amend --no-edit']
     });
-    assert.equal(Model.matches(definition, 'commit'), true);
-    assert.equal(Model.matches(definition, 'amend'), true);
-    assert.equal(Model.matches(definition, 'version'), true);
-    assert.equal(Model.matches(definition, 'replace previous'), true);
-    assert.equal(Model.matches(definition, 'no-edit'), true);
-    assert.equal(Model.matches(definition, 'push'), false);
-    assert.equal(Model.matches(definition, ''), true);
+    const haystack = Model.searchableText(definition);
+    const matches = (query) => Model.matchesText(haystack, query);
+    assert.equal(matches('commit'), true);
+    assert.equal(matches('amend'), true);
+    assert.equal(matches('version'), true);
+    assert.equal(matches('replace previous'), true);
+    assert.equal(matches('no-edit'), true);
+    assert.equal(matches('push'), false);
+    assert.equal(matches(''), true);
 });
 
 test('sortOptions orders by cmOrder then title', () => {

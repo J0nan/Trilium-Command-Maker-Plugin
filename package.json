@@ -3,7 +3,7 @@
   "version": "0.1",
   "private": true,
   "description": "Trilium plugin: turn CLI tool notes into a command palette with documented options, examples and help output.",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "engines": {
     "node": ">=20"
   },

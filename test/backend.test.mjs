@@ -278,7 +278,7 @@ test('relocating the Tools folder never seeds the chosen note', () => {
         type: 'text',
         content: 'user data'
     }).note;
-    beRun({ action: 'setToolsRoot', labels, noteId: userFolder.noteId, oldToolsRootId: result.toolsRootId });
+    beRun({ action: 'setToolsRoot', labels, noteId: userFolder.noteId });
     const before = api.getNotesWithLabel(labels.tool).length;
     const again = beRun({
         action: 'bootstrap',
@@ -310,8 +310,7 @@ test('setToolsRoot keeps the pointer when removing the old label fails', () => {
     assert.throws(() => beRun({
         action: 'setToolsRoot',
         labels,
-        noteId: userFolder.noteId,
-        oldToolsRootId: result.toolsRootId
+        noteId: userFolder.noteId
     }), 'the failure still surfaces to the caller');
 
     assert.ok(
@@ -393,20 +392,24 @@ test('bootstrap keeps the settings note version current', () => {
     assert.equal(root.getLabelValue(labels.version), Version.VERSION, 'no version param leaves it alone');
 });
 
-test('createCategory is idempotent and validates the Tools root', () => {
+test('tools created in one category reuse it, and an unknown Tools root is refused', () => {
+    // The old createCategory backend action was unreachable production code;
+    // category reuse is what callers actually depend on, so it is pinned here.
     const api = createApi();
     const beRun = serialise(Backend.beRun, api);
     const { toolsRootId } = boot(api, beRun);
 
-    const first = beRun({ action: 'createCategory', labels, toolsRootId, name: 'Shell' });
-    const second = beRun({ action: 'createCategory', labels, toolsRootId, name: 'Shell' });
-    assert.equal(first.noteId, second.noteId, 'the same category is reused');
-    const category = api.getNote(first.noteId);
-    assert.equal(category.title, 'Shell');
-    assert.ok(category.hasLabel(labels.category));
+    const before = api.getNotesWithLabel(labels.category).length;
+    beRun({ action: 'createTool', labels, toolsRootId, category: 'Shell', title: 'ls', base: 'ls' });
+    beRun({ action: 'createTool', labels, toolsRootId, category: 'Shell', title: 'cp', base: 'cp' });
+    assert.equal(
+        api.getNotesWithLabel(labels.category).length,
+        before + 1,
+        'the second tool reused the Shell category'
+    );
 
     assert.throws(
-        () => beRun({ action: 'createCategory', labels, toolsRootId: 'missing', name: 'Shell' }),
+        () => beRun({ action: 'createTool', labels, toolsRootId: 'missing', title: 'x' }),
         /Tools root not found/
     );
 });
@@ -723,8 +726,7 @@ test('setToolsRoot moves the Tools label and clears the old root', () => {
     const moved = beRun({
         action: 'setToolsRoot',
         labels,
-        noteId: elsewhere.noteId,
-        oldToolsRootId: toolsRootId
+        noteId: elsewhere.noteId
     });
     assert.equal(moved.ok, true);
     assert.equal(api.getNoteWithLabel(labels.tools).noteId, elsewhere.noteId);
@@ -732,6 +734,75 @@ test('setToolsRoot moves the Tools label and clears the old root', () => {
     assert.equal(api.getNote(toolsRootId).hasLabel(labels.tools), false, 'the old root is cleared');
 
     assert.throws(() => beRun({ action: 'setToolsRoot', labels, noteId: 'nope' }), /Note not found/);
+});
+
+test('setToolsRoot sweeps extra #cmTools labels, including hand-placed ones', () => {
+    const api = createApi();
+    const beRun = serialise(Backend.beRun, api);
+    const { toolsRootId } = boot(api, beRun);
+    const today = api.getTodayNote().noteId;
+    const handPlaced = api.createNewNote({
+        parentNoteId: today,
+        title: 'Hand-placed root',
+        type: 'text',
+        content: ''
+    }).note;
+    handPlaced.setLabel(labels.tools, '');
+    const target = api.createNewNote({
+        parentNoteId: today,
+        title: 'Target',
+        type: 'text',
+        content: ''
+    }).note;
+
+    beRun({ action: 'setToolsRoot', labels, noteId: target.noteId });
+
+    assert.equal(api.getNoteWithLabel(labels.tools).noteId, target.noteId, 'the target holds the pointer');
+    assert.equal(api.getNote(toolsRootId).hasLabel(labels.tools), false, 'the old root is cleared');
+    assert.equal(handPlaced.hasLabel(labels.tools), false, 'a hand-placed second root loses the pointer');
+});
+
+test('importOptions caps a hostile option list at the per-import limit', () => {
+    const api = createApi();
+    const beRun = serialise(Backend.beRun, api);
+    const { toolsRootId } = boot(api, beRun);
+    const tool = beRun({ action: 'createTool', labels, toolsRootId, title: 'cap', base: 'cap' });
+    const specs = [];
+    for (let index = 0; index < 205; index += 1) {
+        specs.push({ label: 'o' + index, flag: '--o' + index });
+    }
+
+    const result = beRun({ action: 'importOptions', labels, toolId: tool.noteId, options: specs });
+    assert.equal(result.created, 200, 'one action never creates thousands of notes');
+    assert.equal(result.capped, 5, 'the excess is reported, not silently dropped');
+});
+
+test('importOptions cap boundaries: exactly 200, one over, malformed input', () => {
+    const api = createApi();
+    const beRun = serialise(Backend.beRun, api);
+    const { toolsRootId } = boot(api, beRun);
+    const mk = function (prefix, count) {
+        const specs = [];
+        for (let index = 0; index < count; index += 1) {
+            specs.push({ label: prefix + index, flag: '--' + prefix + index });
+        }
+        return specs;
+    };
+
+    const a = beRun({ action: 'createTool', labels, toolsRootId, title: 'capA', base: 'capA' });
+    const at200 = beRun({ action: 'importOptions', labels, toolId: a.noteId, options: mk('a', 200) });
+    assert.equal(at200.created, 200, 'boundary: 200 in, 200 created');
+    assert.equal(at200.capped, 0, 'boundary: nothing reported over the limit');
+
+    const b = beRun({ action: 'createTool', labels, toolsRootId, title: 'capB', base: 'capB' });
+    const at201 = beRun({ action: 'importOptions', labels, toolId: b.noteId, options: mk('b', 201) });
+    assert.equal(at201.created, 200, 'one over the limit still creates 200');
+    assert.equal(at201.capped, 1, 'one over the limit reports exactly one');
+
+    const c = beRun({ action: 'createTool', labels, toolsRootId, title: 'capC', base: 'capC' });
+    const malformed = beRun({ action: 'importOptions', labels, toolId: c.noteId, options: 'nope' });
+    assert.equal(malformed.created, 0, 'non-array options create nothing');
+    assert.equal(malformed.capped, 0, 'non-array options report nothing capped');
 });
 
 test('importTool creates a tool note with its category, children and options', () => {

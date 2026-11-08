@@ -143,13 +143,13 @@ test('inferType follows the metavar and description rules', () => {
     assert.equal(Parse.inferType('<message>', ''), 'string');
 });
 
-test('normalizeOption returns the canonical shape', () => {
+test('buildOption returns the canonical shape', () => {
     assert.deepEqual(
-        Parse.normalizeOption({ flag: '-i, --input', help: 'Input file to read.', type: 'path' }),
+        Parse.buildOption({ flag: '-i, --input', help: 'Input file to read.', type: 'path' }),
         canonical()
     );
     assert.deepEqual(
-        Parse.normalizeOption({ flag: '--video-codec', doc: 'Video encoder to use.' }),
+        Parse.buildOption({ flag: '--video-codec', doc: 'Video encoder to use.' }),
         canonical({
             label: 'Video codec',
             flag: '--video-codec',
@@ -160,7 +160,7 @@ test('normalizeOption returns the canonical shape', () => {
         })
     );
     assert.deepEqual(
-        Parse.normalizeOption({ flag: '--preset', values: ['slow', 'fast'], help: 'Preset.' }),
+        Parse.buildOption({ flag: '--preset', values: ['slow', 'fast'], help: 'Preset.' }),
         canonical({
             label: 'Preset',
             flag: '--preset',
@@ -172,7 +172,7 @@ test('normalizeOption returns the canonical shape', () => {
         })
     );
     assert.deepEqual(
-        Parse.normalizeOption({ flag: '-y', help: 'Overwrite.', type: 'boolean', default: true }),
+        Parse.buildOption({ flag: '-y', help: 'Overwrite.', type: 'boolean', default: true }),
         canonical({
             label: 'Y',
             flag: '-y',
@@ -184,7 +184,7 @@ test('normalizeOption returns the canonical shape', () => {
         })
     );
     assert.deepEqual(
-        Parse.normalizeOption({ flag: '-o', help: 'Inline output.', mode: 'inline', required: 'yes', order: '30' }),
+        Parse.buildOption({ flag: '-o', help: 'Inline output.', mode: 'inline', required: 'yes', order: '30' }),
         canonical({
             label: 'O',
             flag: '-o',
@@ -197,9 +197,9 @@ test('normalizeOption returns the canonical shape', () => {
             order: 30
         })
     );
-    assert.equal(Parse.normalizeOption({}), null);
-    assert.equal(Parse.normalizeOption({ help: 'no flag' }), null);
-    assert.equal(Parse.normalizeOption(null), null);
+    assert.equal(Parse.buildOption({}), null);
+    assert.equal(Parse.buildOption({ help: 'no flag' }), null);
+    assert.equal(Parse.buildOption(null), null);
 });
 
 test('parseHelpText reads an ffmpeg help excerpt', () => {

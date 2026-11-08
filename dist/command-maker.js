@@ -848,14 +848,6 @@ function buildOption(source) {
 }
 
 /**
- * Loose JSON entry (or hand-built object) -> canonical option.
- * @returns {object|null} null when the entry has no usable flag
- */
-function normalizeOption(entry) {
-    return buildOption(entry);
-}
-
-/**
  * One trimmed help line -> { flags, metavar, negated, description, loose }.
  * `loose` marks a line whose flag was followed by prose the parser had to
  * guess at, which is reported as unparsed. Null when not an option line.
@@ -1203,7 +1195,7 @@ module.exports = {
     decodeEntities,
     stripHtml,
     inferType,
-    normalizeOption,
+    buildOption,
     parseHelpText,
     parseJsonOptions,
     parseMarkdownTable,
@@ -1504,8 +1496,9 @@ __def("toolfile", function (module, exports, __require) {
  * The palette exports a tool with buildToolFile() and imports one with
  * parseToolFile(). Both are pure: no Trilium API, no DOM, no file system.
  *
- * Shape (version 2; version 1 files still import — the new fields are
- * simply absent there, so a v1 backup cannot restore tags, bodies or presets):
+ * Shape (version 2 only: a file declaring any other version is rejected at
+ * import — this plugin reads nothing else. A bare or hand-written object
+ * without kind/version is read as the current shape):
  * {
  *   kind: 'command-maker-tool',
  *   version: 2,
@@ -1526,6 +1519,9 @@ const Model = __require("model");
 
 const TOOL_KIND = 'command-maker-tool';
 const FILE_VERSION = 2;
+// One tool file must not be able to create thousands of notes in a single
+// import: the same bound the parser applies to examples (MAX_EXAMPLES).
+const MAX_OPTIONS = 200;
 
 function text(value) {
     return value === undefined || value === null ? '' : String(value);
@@ -1744,6 +1740,23 @@ function parseToolFile(source) {
         return { tool: null, warnings: warnings };
     }
 
+    // Only the current file shape is read: a file that declares a version the
+    // plugin cannot interpret is refused instead of being half-trusted.
+    if (data.version !== undefined && trimmed(data.version) !== String(FILE_VERSION)) {
+        warnings.push({
+            code: 'unsupported-version',
+            message: 'This plugin reads tool files version ' + FILE_VERSION +
+                '; the file declares version "' + trimmed(data.version) + '".'
+        });
+        return { tool: null, warnings: warnings };
+    }
+    if (data.kind !== undefined && trimmed(data.kind) !== '' && trimmed(data.kind) !== TOOL_KIND) {
+        warnings.push({
+            code: 'unexpected-kind',
+            message: 'Unexpected file kind "' + trimmed(data.kind) + '"; expected "' + TOOL_KIND + '".'
+        });
+    }
+
     const spec = data.tool && typeof data.tool === 'object' && !Array.isArray(data.tool)
         ? data.tool
         : data;
@@ -1752,6 +1765,14 @@ function parseToolFile(source) {
         warnings.push({ code: 'missing-title', message: 'The tool file has no "title".' });
         return { tool: null, warnings: warnings };
     }
+    if (tool.options.length > MAX_OPTIONS) {
+        warnings.push({
+            code: 'too-many-options',
+            message: 'The tool file lists ' + tool.options.length +
+                ' options; only the first ' + MAX_OPTIONS + ' are imported.'
+        });
+        tool.options = tool.options.slice(0, MAX_OPTIONS);
+    }
 
     return { tool: tool, warnings: warnings };
 }
@@ -1759,8 +1780,8 @@ function parseToolFile(source) {
 module.exports = {
     TOOL_KIND,
     FILE_VERSION,
-    normaliseOption,
-    normaliseTool,
+    MAX_OPTIONS,
+    normalisePresets,
     buildToolFile,
     parseToolFile
 };
@@ -2301,7 +2322,7 @@ function optionNotesText(snapshots) {
 
 /**
  * Everything a tool can be found by. One definition on purpose: the index and
- * `matches` must never disagree about what is searchable.
+ * `matchesText` over this haystack must never disagree about what is searchable.
  */
 function searchableText(snapshot) {
     const safe = snapshot || {};
@@ -2333,10 +2354,6 @@ function matchesText(haystack, query) {
     return needle.split(/\s+/).every(function (term) {
         return text.indexOf(term) !== -1;
     });
-}
-
-function matches(definition, query) {
-    return matchesText(searchableText(definition), query);
 }
 
 /** Content template for a new tool note: exactly the three H2 sections. */
@@ -2472,7 +2489,6 @@ module.exports = {
     defaultValueMap,
     valuesFromExample,
     tokenizeCommand,
-    matches,
     matchesText,
     searchableText,
     optionNotesText,
@@ -2597,7 +2613,7 @@ const CSS = [
     '.cm-example{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:6px;}',
     '.cm-example:hover{background:var(--hover-item-background-color,#00000010);}',
     '.cm-example-text{flex:1;min-width:0;font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;overflow-wrap:anywhere;}',
-    '.cm-fold summary{cursor:pointer;font-size:12px;text-transform:uppercase;letter-spacing:.06em;opacity:.7;}',
+    '.cm-fold-block summary{cursor:pointer;font-size:12px;text-transform:uppercase;letter-spacing:.06em;opacity:.7;}',
     '.cm-pre{margin:8px 0 0;padding:10px;border-radius:8px;background:var(--input-background-color,#fafafa);border:1px solid var(--main-border-color,#ddd);font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;white-space:pre-wrap;overflow-x:auto;}',
     '.cm-install{font-size:13px;line-height:1.55;user-select:text;}',
     '.cm-install p{margin:0 0 8px;}',
@@ -2959,7 +2975,7 @@ __def("backend", function (module, exports, __require) {
  * being duplicated here. Consequently `beRun` must never reference a
  * module-scope binding and dispatches on literal action strings only.
  *
- * Actions: bootstrap | createCategory | createTool | importTool | addOption |
+ * Actions: bootstrap | createTool | importTool | addOption |
  * importOptions | deleteOption | setToolBase | setToolsRoot | savePreset |
  * deletePreset | ensureTab
  */
@@ -3387,12 +3403,6 @@ function beRun(params) {
         return { rootId: root.noteId, toolsRootId: toolsRoot.noteId, seeded: seeded };
     }
 
-    function createCategory() {
-        const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
-        const name = nonEmpty(options.name) ? String(options.name) : 'Uncategorized';
-        return { noteId: ensureCategory(toolsRoot, name).noteId };
-    }
-
     function createTool() {
         const toolsRoot = requireNote(options.toolsRootId, 'Tools root not found');
         const note = createToolNote(
@@ -3439,8 +3449,13 @@ function beRun(params) {
     }
 
     function importOptions() {
+        // Same bound the tool-file reader enforces (src/toolfile.js
+        // MAX_OPTIONS): one action must never create thousands of notes from
+        // one pasted --help dump.
+        const MAX_IMPORT_OPTIONS = 200;
         const location = presetsLocation(options.toolId);
-        const specs = Array.isArray(options.options) ? options.options : [];
+        const all = Array.isArray(options.options) ? options.options : [];
+        const specs = all.slice(0, MAX_IMPORT_OPTIONS);
         // Flag text comes from imported JSON; a plain object would confuse
         // `__proto__` and friends with membership.
         const seenFlags = new Set();
@@ -3465,7 +3480,7 @@ function beRun(params) {
             }
             noteIds.push(createOptionNote(location.folder, spec).noteId);
         }
-        return { created: noteIds.length, skipped: skipped, noteIds: noteIds };
+        return { created: noteIds.length, skipped: skipped, capped: all.length - specs.length, noteIds: noteIds };
     }
 
     /**
@@ -3495,17 +3510,33 @@ function beRun(params) {
 
     function setToolsRoot() {
         const target = requireNote(options.noteId, 'Note not found');
-        // Set the new pointer first: if removing the label from the old root
+        // Set the new pointer first: if removing the label from a previous root
         // fails afterwards, the tools stay visible instead of losing the
         // pointer and making the next bootstrap seed an empty folder.
         target.setLabel(labels.tools, '');
         // A folder the user picks is theirs: never seed examples into it.
         target.setLabel(labels.seeded, '');
-        if (options.oldToolsRootId && options.oldToolsRootId !== options.noteId) {
-            const old = api.getNote(options.oldToolsRootId);
-            if (old && typeof old.removeLabel === 'function') {
-                old.removeLabel(labels.tools);
+        // Exactly one root may hold #cmTools: a second one — left by a
+        // half-finished move or labelled by hand — would be picked
+        // arbitrarily by the loader. Sweep the pointer off every other note,
+        // reporting failures only after the sweep so the new pointer stands.
+        let removalFailure = null;
+        const roots = api.getNotesWithLabel(labels.tools);
+        for (let index = 0; index < roots.length; index += 1) {
+            const note = roots[index];
+            if (!note || note.noteId === target.noteId) {
+                continue;
             }
+            try {
+                note.removeLabel(labels.tools);
+            } catch (error) {
+                if (!removalFailure) {
+                    removalFailure = error;
+                }
+            }
+        }
+        if (removalFailure) {
+            throw removalFailure;
         }
         return { ok: true };
     }
@@ -3601,8 +3632,6 @@ function beRun(params) {
     switch (options.action) {
         case 'bootstrap':
             return bootstrap();
-        case 'createCategory':
-            return createCategory();
         case 'createTool':
             return createTool();
         case 'importTool':
@@ -3651,7 +3680,7 @@ __def("ui", function (module, exports, __require) {
  *   createTool(spec): Promise<{ noteId }>
  *   importTool(tool): Promise<{ noteId }>
  *   exportTool(noteId): Promise<{ kind, version, tool }>
- *   importOptions(toolId, options): Promise<{ created, skipped }>
+ *   importOptions(toolId, options): Promise<{ created, skipped, capped }>
  *   savePreset(toolId, name, values): Promise<void>
  *   deletePreset(toolId, name): Promise<void>
  *   addOption(toolId, option): Promise<void>
@@ -3735,6 +3764,10 @@ function openPalette(controller, options) {
 
     // Only the overlay is a singleton. The tab renderer is rendered by Trilium
     // next to a possibly open overlay, so it always mounts its own instance.
+    // The module-level `instance` dies with a bundle re-evaluation (Trilium
+    // re-runs this script when the plugin note is saved, in the same window).
+    // The window global is what lets the NEW module instance reuse the
+    // overlay the OLD one mounted, instead of stacking a second one.
     if (!embedded) {
         if (instance) {
             instance.focus();
@@ -4073,6 +4106,13 @@ function openPalette(controller, options) {
         state.current = item;
         state.edited = false;
         state.exampleLoaded = false;
+        // The list highlights the new tool right away; keep showing the old
+        // one until the load finishes and write on click would hit the tool
+        // the user no longer points at. Clear the pane instead: while a load
+        // is in flight it belongs to no tool.
+        state.loaded = null;
+        state.definition = null;
+        renderDetail();
         markActive(item);
         try {
             const loaded = await controller.load(item.noteId);
@@ -4292,7 +4332,8 @@ function openPalette(controller, options) {
     }
 
     async function savePreset() {
-        if (!state.definition) {
+        const definition = state.definition;
+        if (!definition) {
             return;
         }
         const name = (state.presetName ? state.presetName.value : '').trim();
@@ -4300,8 +4341,18 @@ function openPalette(controller, options) {
             notify(new Error('Preset name is required.'));
             return;
         }
-        await controller.savePreset(state.definition.noteId, name, state.values);
-        const loaded = await controller.load(state.definition.noteId);
+        await controller.savePreset(definition.noteId, name, state.values);
+        // The pane may have moved to another tool while the write ran: a
+        // reload issued for the old tool would paint its help block and
+        // preset list onto the newer selection (same race S2 pins for the
+        // selection itself).
+        if (state.definition !== definition) {
+            return;
+        }
+        const loaded = await controller.load(definition.noteId);
+        if (state.definition !== definition) {
+            return;
+        }
         state.loaded = loaded;
         state.presets = loaded.presets || [];
         renderDetail();
@@ -4309,13 +4360,20 @@ function openPalette(controller, options) {
     }
 
     async function deletePreset() {
+        const definition = state.definition;
         const name = state.presetSelect ? state.presetSelect.value : '';
-        if (!name) {
+        if (!definition || !name) {
             notify(new Error('Pick a preset first.'));
             return;
         }
-        await controller.deletePreset(state.definition.noteId, name);
-        const loaded = await controller.load(state.definition.noteId);
+        await controller.deletePreset(definition.noteId, name);
+        if (state.definition !== definition) {
+            return;
+        }
+        const loaded = await controller.load(definition.noteId);
+        if (state.definition !== definition) {
+            return;
+        }
         state.loaded = loaded;
         state.presets = loaded.presets || [];
         renderDetail();
@@ -4341,6 +4399,7 @@ function openPalette(controller, options) {
         deleteButton.type = 'button';
         let deleteArmed = false;
         let deleteTimer = null;
+        let deleteRunning = false;
         function disarmDelete() {
             deleteArmed = false;
             deleteButton.textContent = 'Delete';
@@ -4352,6 +4411,9 @@ function openPalette(controller, options) {
         }
         deleteButton.addEventListener('click', function (event) {
             event.preventDefault();
+            if (deleteRunning) {
+                return;
+            }
             const name = state.presetSelect ? state.presetSelect.value : '';
             if (!name) {
                 notify(new Error('Pick a preset first.'));
@@ -4366,7 +4428,16 @@ function openPalette(controller, options) {
                 return;
             }
             disarmDelete();
-            deletePreset().catch(notify);
+            // Same in-flight rule as the modal actions: one confirmed click
+            // issues exactly one deletePreset write.
+            deleteRunning = true;
+            deleteButton.disabled = true;
+            deletePreset()
+                .catch(notify)
+                .then(function () {
+                    deleteRunning = false;
+                    deleteButton.disabled = false;
+                });
         });
         select.addEventListener('change', disarmDelete);
         row.appendChild(deleteButton);
@@ -4491,15 +4562,36 @@ function openPalette(controller, options) {
         input.value = state.definition.base;
         input.setAttribute('aria-label', 'Base command');
         input.addEventListener('change', function () {
-            const value = input.value.trim();
-            guarded(async function () {
-                await controller.setToolBase(state.definition.noteId, value);
-                state.definition.base = value || Model.deriveBase(state.definition.title);
-                state.values = Object.assign(Model.defaultValueMap(state.definition), state.values);
+            if (input.disabled || !state.definition) {
+                return;
+            }
+            const definition = state.definition;
+            const value = String(input.value || '').trim();
+            input.disabled = true;
+            (async function () {
+                try {
+                    await controller.setToolBase(definition.noteId, value);
+                } catch (error) {
+                    notify(error);
+                    if (state.definition === definition) {
+                        // Success renders a fresh input; only a failed write
+                        // must hand this one back to the user.
+                        input.disabled = false;
+                    }
+                    return;
+                }
+                // A newer selection may own the pane by now; stamping the
+                // finished write onto its definition would corrupt it. On
+                // success the (still current) pane is re-rendered fresh.
+                if (state.definition !== definition) {
+                    return;
+                }
+                definition.base = value || Model.deriveBase(definition.title);
+                state.values = Object.assign(Model.defaultValueMap(definition), state.values);
                 state.exampleLoaded = false;
                 renderDetail();
                 setStatus('Base command updated.');
-            }, notify)();
+            })();
         });
         row.appendChild(input);
         return row;
@@ -4795,6 +4887,14 @@ function openPalette(controller, options) {
         return { modal: modal, body: modalBody, actions: modalActions };
     }
 
+    /** The Close action shared by every palette modal. */
+    function modalCloseButton() {
+        const node = Dom.el('button', 'cm-button', 'Close');
+        node.type = 'button';
+        node.addEventListener('click', closeModal);
+        return node;
+    }
+
     function openImport() {
         if (!state.current) {
             notify(new Error('Select a tool first.'));
@@ -4815,9 +4915,7 @@ function openPalette(controller, options) {
         const importSelected = Dom.el('button', 'cm-button', 'Import selected');
         importSelected.type = 'button';
         importSelected.disabled = true;
-        const closeButton2 = Dom.el('button', 'cm-button', 'Close');
-        closeButton2.type = 'button';
-        closeButton2.addEventListener('click', closeModal);
+        const closeButton2 = modalCloseButton();
 
         const warnings = Dom.el('div', 'cm-warnings', '');
         const previewList = Dom.el('div', 'cm-import-list', '');
@@ -4903,7 +5001,8 @@ function openPalette(controller, options) {
             closeModal();
             const created = result && typeof result.created === 'number' ? result.created : 'the selected';
             const skipped = result && result.skipped ? ' Skipped ' + result.skipped + ' duplicate(s).' : '';
-            statusMessage = 'Imported ' + created + ' option(s).' + skipped;
+            const capped = result && result.capped ? ' Ignored ' + result.capped + ' options over the per-import limit.' : '';
+            statusMessage = 'Imported ' + created + ' option(s).' + skipped + capped;
             await controller.refresh();
             await runSearch();
             await selectItem(tool, { preserveValues: true });
@@ -4941,9 +5040,7 @@ function openPalette(controller, options) {
         const importSelected = Dom.el('button', 'cm-button', 'Import tool');
         importSelected.type = 'button';
         importSelected.disabled = true;
-        const closeButton2 = Dom.el('button', 'cm-button', 'Close');
-        closeButton2.type = 'button';
-        closeButton2.addEventListener('click', closeModal);
+        const closeButton2 = modalCloseButton();
 
         const warnings = Dom.el('div', 'cm-warnings', '');
         const previewList = Dom.el('div', 'cm-import-list', '');
@@ -5079,9 +5176,7 @@ function openPalette(controller, options) {
             setStatus('Downloaded ' + filename + '.');
         }, notify));
 
-        const closeButton2 = Dom.el('button', 'cm-button', 'Close');
-        closeButton2.type = 'button';
-        closeButton2.addEventListener('click', closeModal);
+        const closeButton2 = modalCloseButton();
 
         const actionsNode = Dom.el('div', 'cm-inline');
         actionsNode.appendChild(copyButton);
@@ -5177,9 +5272,7 @@ function openPalette(controller, options) {
             setStatus('Option added.');
         }, notify));
 
-        const closeButton2 = Dom.el('button', 'cm-button', 'Close');
-        closeButton2.type = 'button';
-        closeButton2.addEventListener('click', closeModal);
+        const closeButton2 = modalCloseButton();
 
         const bodyNode = Dom.el('div', '');
         bodyNode.appendChild(Dom.el('div', 'cm-note', 'The option is stored as a note under the tool\'s Options folder.'));
@@ -5261,9 +5354,7 @@ function openPalette(controller, options) {
         const actionsNode = Dom.el('div', 'cm-inline');
         actionsNode.appendChild(active);
         actionsNode.appendChild(openFolder);
-        const closeButton2 = Dom.el('button', 'cm-button', 'Close');
-        closeButton2.type = 'button';
-        closeButton2.addEventListener('click', closeModal);
+        const closeButton2 = modalCloseButton();
         actionsNode.appendChild(closeButton2);
 
         modalShell('Tools folder', bodyNode, actionsNode);
@@ -5564,7 +5655,8 @@ async function refresh() {
             description: description,
             base: base,
             // Built once per refresh: search runs on every keystroke, and the
-            // haystack comes from the same definition `Model.matches` uses.
+            // haystack comes from the same definition Model.searchableText feeds
+            // to Model.matchesText.
             searchable: Model.searchableText({
                 title: note.title,
                 category: category,
@@ -5598,30 +5690,9 @@ function readPresetsContent(content) {
     if (!data || typeof data !== 'object' || !Array.isArray(data.presets)) {
         return { presets: [], invalid: true };
     }
-    const presets = [];
-    for (const entry of data.presets) {
-        if (!entry || typeof entry.name !== 'string') {
-            continue;
-        }
-        // Values are JSON, so copy only own primitive string keys: a hand-edited
-        // or generated preset must never add an own `__proto__` to the map that
-        // the palette later passes to Object.assign.
-        const values = {};
-        if (entry.values && typeof entry.values === 'object' && !Array.isArray(entry.values)) {
-            for (const key of Object.keys(entry.values)) {
-                if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
-                    continue;
-                }
-                const value = entry.values[key];
-                if (value === null || typeof value === 'object' || typeof value === 'function') {
-                    continue;
-                }
-                values[key] = value;
-            }
-        }
-        presets.push({ name: entry.name, values: values });
-    }
-    return { presets: presets, invalid: false };
+    // One filter for every preset reader and writer: entries need a name,
+    // values keep own primitive keys only (src/toolfile.js normalisePresets).
+    return { presets: ToolFile.normalisePresets(data.presets), invalid: false };
 }
 
 async function readNoteText(note) {
@@ -5737,7 +5808,9 @@ async function readRawContent(note) {
 /**
  * Read one tool into the portable file the palette writes to disk.
  * Raw note contents, the tool tags, the per-option note bodies and the
- * presets are kept so an export/import round trip loses nothing.
+ * presets are kept, so the file carries everything it claims; preset value
+ * keys bind to the original note IDs (see README: after import into a
+ * different instance the stored values may not line up with recreated options).
  */
 async function exportTool(noteId) {
     const entry = entriesById.get(noteId);
@@ -5820,10 +5893,10 @@ function toolsRootId() {
 }
 
 async function setToolsRootAction(noteId) {
-    const current = await resolveToolsRoot();
+    // The backend sweeps #cmTools off every other note, so the caller no
+    // longer needs to hand over the previous root.
     await backendAction('setToolsRoot', {
-        noteId: noteId,
-        oldToolsRootId: current ? current.noteId : null
+        noteId: noteId
     });
     bootstrapPromise = null;
     bootstrapInfo = null;
