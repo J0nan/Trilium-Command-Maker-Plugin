@@ -274,7 +274,9 @@ a local file. It understands:
 3. **Markdown table** — `| Flag | Help | Type |` rows.
 
 Nothing is written until you parse and confirm: a preview lists every detected
-option with a checkbox. For a single option, use **Add option** in the palette
+option with a checkbox. One import creates at most 200 option notes; when the
+source contains more, the status names how many were ignored (the same bound
+tool-file imports enforce). For a single option, use **Add option** in the palette
 footer; it writes the same option note with the label, flag and help string you
 type.
 

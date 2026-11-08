@@ -669,7 +669,8 @@ function openPalette(controller, options) {
     }
 
     async function savePreset() {
-        if (!state.definition) {
+        const definition = state.definition;
+        if (!definition) {
             return;
         }
         const name = (state.presetName ? state.presetName.value : '').trim();
@@ -677,8 +678,18 @@ function openPalette(controller, options) {
             notify(new Error('Preset name is required.'));
             return;
         }
-        await controller.savePreset(state.definition.noteId, name, state.values);
-        const loaded = await controller.load(state.definition.noteId);
+        await controller.savePreset(definition.noteId, name, state.values);
+        // The pane may have moved to another tool while the write ran: a
+        // reload issued for the old tool would paint its help block and
+        // preset list onto the newer selection (same race S2 pins for the
+        // selection itself).
+        if (state.definition !== definition) {
+            return;
+        }
+        const loaded = await controller.load(definition.noteId);
+        if (state.definition !== definition) {
+            return;
+        }
         state.loaded = loaded;
         state.presets = loaded.presets || [];
         renderDetail();
@@ -686,13 +697,20 @@ function openPalette(controller, options) {
     }
 
     async function deletePreset() {
+        const definition = state.definition;
         const name = state.presetSelect ? state.presetSelect.value : '';
-        if (!name) {
+        if (!definition || !name) {
             notify(new Error('Pick a preset first.'));
             return;
         }
-        await controller.deletePreset(state.definition.noteId, name);
-        const loaded = await controller.load(state.definition.noteId);
+        await controller.deletePreset(definition.noteId, name);
+        if (state.definition !== definition) {
+            return;
+        }
+        const loaded = await controller.load(definition.noteId);
+        if (state.definition !== definition) {
+            return;
+        }
         state.loaded = loaded;
         state.presets = loaded.presets || [];
         renderDetail();
@@ -718,6 +736,7 @@ function openPalette(controller, options) {
         deleteButton.type = 'button';
         let deleteArmed = false;
         let deleteTimer = null;
+        let deleteRunning = false;
         function disarmDelete() {
             deleteArmed = false;
             deleteButton.textContent = 'Delete';
@@ -729,6 +748,9 @@ function openPalette(controller, options) {
         }
         deleteButton.addEventListener('click', function (event) {
             event.preventDefault();
+            if (deleteRunning) {
+                return;
+            }
             const name = state.presetSelect ? state.presetSelect.value : '';
             if (!name) {
                 notify(new Error('Pick a preset first.'));
@@ -743,7 +765,16 @@ function openPalette(controller, options) {
                 return;
             }
             disarmDelete();
-            deletePreset().catch(notify);
+            // Same in-flight rule as the modal actions: one confirmed click
+            // issues exactly one deletePreset write.
+            deleteRunning = true;
+            deleteButton.disabled = true;
+            deletePreset()
+                .catch(notify)
+                .then(function () {
+                    deleteRunning = false;
+                    deleteButton.disabled = false;
+                });
         });
         select.addEventListener('change', disarmDelete);
         row.appendChild(deleteButton);
@@ -868,15 +899,36 @@ function openPalette(controller, options) {
         input.value = state.definition.base;
         input.setAttribute('aria-label', 'Base command');
         input.addEventListener('change', function () {
-            const value = input.value.trim();
-            guarded(async function () {
-                await controller.setToolBase(state.definition.noteId, value);
-                state.definition.base = value || Model.deriveBase(state.definition.title);
-                state.values = Object.assign(Model.defaultValueMap(state.definition), state.values);
+            if (input.disabled || !state.definition) {
+                return;
+            }
+            const definition = state.definition;
+            const value = String(input.value || '').trim();
+            input.disabled = true;
+            (async function () {
+                try {
+                    await controller.setToolBase(definition.noteId, value);
+                } catch (error) {
+                    notify(error);
+                    if (state.definition === definition) {
+                        // Success renders a fresh input; only a failed write
+                        // must hand this one back to the user.
+                        input.disabled = false;
+                    }
+                    return;
+                }
+                // A newer selection may own the pane by now; stamping the
+                // finished write onto its definition would corrupt it. On
+                // success the (still current) pane is re-rendered fresh.
+                if (state.definition !== definition) {
+                    return;
+                }
+                definition.base = value || Model.deriveBase(definition.title);
+                state.values = Object.assign(Model.defaultValueMap(definition), state.values);
                 state.exampleLoaded = false;
                 renderDetail();
                 setStatus('Base command updated.');
-            }, notify)();
+            })();
         });
         row.appendChild(input);
         return row;
@@ -1286,7 +1338,8 @@ function openPalette(controller, options) {
             closeModal();
             const created = result && typeof result.created === 'number' ? result.created : 'the selected';
             const skipped = result && result.skipped ? ' Skipped ' + result.skipped + ' duplicate(s).' : '';
-            statusMessage = 'Imported ' + created + ' option(s).' + skipped;
+            const capped = result && result.capped ? ' Ignored ' + result.capped + ' options over the per-import limit.' : '';
+            statusMessage = 'Imported ' + created + ' option(s).' + skipped + capped;
             await controller.refresh();
             await runSearch();
             await selectItem(tool, { preserveValues: true });

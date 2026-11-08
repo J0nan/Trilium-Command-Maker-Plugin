@@ -1265,6 +1265,136 @@ test('the detail pane never shows the previous tool while a newer selection load
     assert.deepEqual(env.calls.errors, []);
 });
 
+test('a slow base-command write cannot corrupt the newly selected tool', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    let releaseBase;
+    const baseGate = new Promise((resolve) => {
+        releaseBase = resolve;
+    });
+    const originalRun = env.api.runOnBackend.bind(env.api);
+    env.api.runOnBackend = function (fn, params) {
+        if (params[0].action === 'setToolBase') {
+            return baseGate.then(function () {
+                return { ok: true };
+            });
+        }
+        return originalRun(fn, params);
+    };
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    const rows = findAll(dom.body, (node) => classed(node, 'cm-result'));
+    rows[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'ffmpeg pane');
+
+    const baseInput = find(dom.body, (node) => node.getAttribute('aria-label') === 'Base command');
+    baseInput.value = 'ffmpeg-renamed';
+    baseInput.dispatch('change');
+    rows[1].click();
+    await waitFor(() => {
+        const preview = find(dom.body, (node) => classed(node, 'cm-preview'));
+        return preview && String(preview.value).startsWith('git commit') ? preview : null;
+    }, 'git pane');
+
+    releaseBase();
+    for (let turn = 0; turn < 40; turn += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    const liveBase = find(dom.body, (node) => node.getAttribute('aria-label') === 'Base command');
+    assert.ok(
+        !/ffmpeg-renamed/.test(String(liveBase.value)),
+        'the finished old-tool write must not stamp its value onto the newer selection: ' + liveBase.value
+    );
+    const preview = find(dom.body, (node) => classed(node, 'cm-preview'));
+    assert.ok(String(preview.value).startsWith('git commit'), 'the pane keeps the newest tool');
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('a preset-save refresh cannot repaint a mixed detail pane', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    const originalContent = fixture.ffmpeg.getContent.bind(fixture.ffmpeg);
+    let releaseReload;
+    const reloadGate = new Promise((resolve) => {
+        releaseReload = resolve;
+    });
+    let ffmpegContentReads = 0;
+    fixture.ffmpeg.getContent = async function () {
+        ffmpegContentReads += 1;
+        // Boot read #1 and selection read #2 pass; the save-continuation
+        // reload (read #3) is held so a newer selection can land in between.
+        if (ffmpegContentReads >= 3) {
+            await reloadGate;
+        }
+        return originalContent();
+    };
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    const rows = findAll(dom.body, (node) => classed(node, 'cm-result'));
+    rows[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'ffmpeg pane');
+
+    const nameInput = find(dom.body, (node) => node.placeholder === 'Preset name');
+    nameInput.value = 'fast';
+    buttonWithText(dom.body, 'Save preset').click();
+    await new Promise((resolve) => setImmediate(resolve));
+    rows[1].click();
+    await waitFor(() => {
+        const preview = find(dom.body, (node) => classed(node, 'cm-preview'));
+        return preview && String(preview.value).startsWith('git commit') ? preview : null;
+    }, 'git pane');
+
+    releaseReload();
+    for (let turn = 0; turn < 40; turn += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    const what = findAll(dom.body, (node) => classed(node, 'cm-what'))
+        .map((node) => String(node.textContent))
+        .join(' ');
+    assert.ok(!/Encode and process video/.test(what), 'the stale ffmpeg reload must not paint its body under git commit: ' + what);
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('the armed preset delete cannot fire twice while its write is in flight', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'ffmpeg pane');
+
+    const select = find(dom.body, (node) => node.getAttribute('aria-label') === 'Preset');
+    select.value = 'web';
+    select.dispatch('change');
+    const first = buttonWithText(dom.body, 'Delete');
+    assert.ok(first, 'the preset row offers a Delete button');
+    first.click();
+    const armed = buttonWithText(dom.body, 'Confirm delete');
+    assert.ok(armed, 'the first click arms the delete');
+    armed.click();
+    const retry = buttonWithText(dom.body, 'Confirm delete') || armed;
+    retry.click();
+    retry.click();
+    await waitFor(() => env.calls.backend.some((entry) => entry.action === 'deletePreset'), 'first delete call');
+    for (let turn = 0; turn < 40; turn += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.equal(
+        env.calls.backend.filter((entry) => entry.action === 'deletePreset').length,
+        1,
+        'rapid clicks while the delete write runs issue exactly one backend call'
+    );
+    assert.deepEqual(env.calls.errors, []);
+});
+
 test('a slow tool load cannot hijack the detail pane of a newer selection', async () => {
     const dom = createDom();
     const fixture = buildFixture();

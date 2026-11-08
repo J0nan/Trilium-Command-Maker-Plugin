@@ -762,6 +762,21 @@ test('setToolsRoot sweeps extra #cmTools labels, including hand-placed ones', ()
     assert.equal(handPlaced.hasLabel(labels.tools), false, 'a hand-placed second root loses the pointer');
 });
 
+test('importOptions caps a hostile option list at the per-import limit', () => {
+    const api = createApi();
+    const beRun = serialise(Backend.beRun, api);
+    const { toolsRootId } = boot(api, beRun);
+    const tool = beRun({ action: 'createTool', labels, toolsRootId, title: 'cap', base: 'cap' });
+    const specs = [];
+    for (let index = 0; index < 205; index += 1) {
+        specs.push({ label: 'o' + index, flag: '--o' + index });
+    }
+
+    const result = beRun({ action: 'importOptions', labels, toolId: tool.noteId, options: specs });
+    assert.equal(result.created, 200, 'one action never creates thousands of notes');
+    assert.equal(result.capped, 5, 'the excess is reported, not silently dropped');
+});
+
 test('importTool creates a tool note with its category, children and options', () => {
     const { api, beRun, result } = seedApi();
     const created = beRun({

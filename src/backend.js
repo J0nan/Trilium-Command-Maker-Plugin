@@ -484,8 +484,13 @@ function beRun(params) {
     }
 
     function importOptions() {
+        // Same bound the tool-file reader enforces (src/toolfile.js
+        // MAX_OPTIONS): one action must never create thousands of notes from
+        // one pasted --help dump.
+        const MAX_IMPORT_OPTIONS = 200;
         const location = presetsLocation(options.toolId);
-        const specs = Array.isArray(options.options) ? options.options : [];
+        const all = Array.isArray(options.options) ? options.options : [];
+        const specs = all.slice(0, MAX_IMPORT_OPTIONS);
         // Flag text comes from imported JSON; a plain object would confuse
         // `__proto__` and friends with membership.
         const seenFlags = new Set();
@@ -510,7 +515,7 @@ function beRun(params) {
             }
             noteIds.push(createOptionNote(location.folder, spec).noteId);
         }
-        return { created: noteIds.length, skipped: skipped, noteIds: noteIds };
+        return { created: noteIds.length, skipped: skipped, capped: all.length - specs.length, noteIds: noteIds };
     }
 
     /**
