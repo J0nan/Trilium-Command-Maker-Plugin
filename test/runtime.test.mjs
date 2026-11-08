@@ -73,7 +73,8 @@ function makeTool() {
     const input = makeNote({
         noteId: 'o1',
         title: 'Input file',
-        labels: { cmOption: '', cmFlag: '-i', cmType: 'path', cmDoc: 'Input file to read.', cmDefault: 'in.mp4' }
+        labels: { cmOption: '', cmFlag: '-i', cmType: 'path', cmDoc: 'Input file to read.', cmDefault: 'in.mp4' },
+        content: '<p>Read the input file.</p>'
     });
     const codec = makeNote({
         noteId: 'o2',
@@ -116,7 +117,7 @@ function makeTool() {
     const tool = makeNote({
         noteId: 't1',
         title: 'ffmpeg',
-        labels: { cmTool: '', cmBase: 'ffmpeg', cmDesc: 'Media toolkit' },
+        labels: { cmTool: '', cmBase: 'ffmpeg', cmDesc: 'Media toolkit', cmTags: 'video, media' },
         content: [
             '<h2>What is?</h2><p>Encode and process video.</p>',
             '<h2>Official links</h2><ul><li><a href="https://ffmpeg.org">ffmpeg.org</a></li></ul>',
@@ -221,11 +222,12 @@ test('exportTool builds a portable file with raw contents and every option', asy
 
     const file = await controller.exportTool('t1');
     assert.equal(file.kind, 'command-maker-tool');
-    assert.equal(file.version, 1);
+    assert.equal(file.version, 2, 'exports use the lossless v2 format');
     assert.equal(file.tool.title, 'ffmpeg');
     assert.equal(file.tool.category, 'Media');
     assert.equal(file.tool.base, 'ffmpeg');
     assert.equal(file.tool.description, 'Media toolkit');
+    assert.equal(file.tool.tags, 'video, media', 'the backup carries the tool tags');
     assert.match(file.tool.content, /<h2>What is\?<\/h2>/);
     assert.match(file.tool.install, /<p>winget install ffmpeg<\/p>/, 'install keeps its HTML');
     assert.match(file.tool.usage, /<pre><code>ffmpeg -i in.mp4 out.mp4<\/code><\/pre>/);
@@ -234,7 +236,30 @@ test('exportTool builds a portable file with raw contents and every option', asy
     assert.equal(file.tool.options[0].label, 'Input file');
     assert.equal(file.tool.options[0].flag, '-i');
     assert.equal(file.tool.options[0].type, 'path');
+    assert.equal(file.tool.options[0].content, '<p>Read the input file.</p>', 'option note bodies are in the backup');
+    assert.equal(file.tool.options[1].content, '', 'options without a body export as empty, not undefined');
     assert.deepEqual(file.tool.options[1].values, ['libx264', 'libx265']);
+    assert.deepEqual(
+        file.tool.presets,
+        [{ name: 'web', values: { 'note:o1': 'web.mp4' } }],
+        'the presets JSON survives the export'
+    );
+
+    globalThis.api = undefined;
+});
+
+test('load reports a tool note that was deleted externally instead of rendering it empty', async () => {
+    const built = makeTool();
+    installApi(built.tool, {});
+    await Runtime.refresh();
+    const controller = Runtime.controller();
+
+    built.tool.getContent = () => Promise.reject(new Error('note deleted'));
+    await assert.rejects(
+        () => controller.load('t1'),
+        /could not be read/,
+        'a vanished tool note surfaces as a readable error, not a silent empty pane'
+    );
 
     globalThis.api = undefined;
 });

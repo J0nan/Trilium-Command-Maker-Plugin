@@ -3,31 +3,33 @@
 /**
  * Portable tool files: one JSON document that holds everything needed to
  * recreate a tool note (metadata, the three H2 sections, the standard child
- * notes and every option).
+ * notes, every option including its note body, the tool tags and the presets).
  *
  * The palette exports a tool with buildToolFile() and imports one with
  * parseToolFile(). Both are pure: no Trilium API, no DOM, no file system.
  *
- * Shape:
+ * Shape (version 2; version 1 files still import — the new fields are
+ * simply absent there, so a v1 backup cannot restore tags, bodies or presets):
  * {
  *   kind: 'command-maker-tool',
- *   version: 1,
+ *   version: 2,
  *   tool: {
- *     title, category, base, description,
+ *     title, category, base, description, tags,
  *     content, install, usage, help,
- *     options: [ option, ... ]
+ *     options: [ { ...option fields, content }, ... ],
+ *     presets: [ { name, values }, ... ]
  *   }
  * }
  *
  * An option uses the same fields the backend option notes store, with the
  * portable names label/help/values/default so an AI model can fill it in
- * without knowing Trilium's labels.
+ * without knowing Trilium's labels. `content` carries the option note's body.
  */
 
 const Model = require('./model');
 
 const TOOL_KIND = 'command-maker-tool';
-const FILE_VERSION = 1;
+const FILE_VERSION = 2;
 
 function text(value) {
     return value === undefined || value === null ? '' : String(value);
@@ -59,6 +61,34 @@ function splitValues(value) {
         if (next !== '' && out.indexOf(next) === -1) {
             out.push(next);
         }
+    }
+    return out;
+}
+
+/** Preset list -> safe [{ name, values }] with primitive own keys only. Never throws. */
+function normalisePresets(raw) {
+    const out = [];
+    if (!Array.isArray(raw)) {
+        return out;
+    }
+    for (const entry of raw) {
+        if (!entry || typeof entry.name !== 'string' || trimmed(entry.name) === '') {
+            continue;
+        }
+        const values = {};
+        if (entry.values && typeof entry.values === 'object' && !Array.isArray(entry.values)) {
+            for (const key of Object.keys(entry.values)) {
+                if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+                    continue;
+                }
+                const value = entry.values[key];
+                if (value === null || typeof value === 'object' || typeof value === 'function') {
+                    continue;
+                }
+                values[key] = value;
+            }
+        }
+        out.push({ name: trimmed(entry.name), values: values });
     }
     return out;
 }
@@ -129,6 +159,7 @@ function normaliseOption(entry, index, warnings) {
         label: label === '' ? flag : label,
         flag: flag,
         help: trimmed(entry.help !== undefined ? entry.help : entry.doc),
+        content: text(entry.content),
         type: type,
         values: values,
         default: normaliseDefault(rawDefault),
@@ -164,11 +195,13 @@ function normaliseTool(spec, warnings) {
         category: trimmed(source.category),
         base: trimmed(source.base),
         description: trimmed(source.description),
+        tags: trimmed(source.tags),
         content: text(source.content),
         install: text(source.install),
         usage: text(source.usage),
         help: text(source.help),
-        options: options
+        options: options,
+        presets: normalisePresets(source.presets)
     };
 }
 

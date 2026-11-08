@@ -207,7 +207,8 @@ function buildFixture() {
     const input = note({
         noteId: 'o1',
         title: 'Input file',
-        labels: { cmOption: '', cmFlag: '-i', cmType: 'path', cmDoc: 'Input file to read.', cmDefault: 'in.mp4', cmOrder: '10', cmRequired: 'true' }
+        labels: { cmOption: '', cmFlag: '-i', cmType: 'path', cmDoc: 'Input file to read.', cmDefault: 'in.mp4', cmOrder: '10', cmRequired: 'true' },
+        content: '<p>Read the input file.</p>'
     });
     const codec = note({
         noteId: 'o2',
@@ -1076,4 +1077,193 @@ test('a render-note host mounts the palette inside its tab container', async () 
     const style = dom.getElementById('cm-palette-style');
     assert.match(style.textContent, /\.cm-tab-view\{[^}]*position:relative/);
     assert.match(style.textContent, /\.cm-tab-view \.cm-panel\{[^}]*height:100%/);
+});
+
+test('double-clicking Import tool while the import is in flight creates one tool, not two', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    let releaseImport;
+    const gate = new Promise((resolve) => {
+        releaseImport = resolve;
+    });
+    const originalRun = env.api.runOnBackend.bind(env.api);
+    env.api.runOnBackend = function (fn, params) {
+        const result = originalRun(fn, params);
+        if (params[0].action === 'importTool') {
+            return gate.then(() => ({ noteId: 'new-tool' }));
+        }
+        return result;
+    };
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    buttonWithText(dom.body, 'Import tool').click();
+    const modal = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-modal')), 'import tool modal');
+    const area = find(modal, (node) => node.tagName === 'TEXTAREA');
+    area.value = JSON.stringify(portableTool);
+    buttonWithText(modal, 'Parse').click();
+    await waitFor(() => buttonWithText(modal, 'Import tool').disabled === false, 'parsed import action enabled');
+
+    const importButton = buttonWithText(modal, 'Import tool');
+    importButton.click();
+    assert.equal(importButton.disabled, true, 'the action button disables itself while the backend call runs');
+    importButton.click();
+    releaseImport();
+
+    await waitFor(() => {
+        return env.calls.messages.some((message) => /Imported tool "ripgrep"/.test(message));
+    }, 'import status toast');
+    assert.equal(
+        env.calls.backend.filter((entry) => entry.action === 'importTool').length,
+        1,
+        'a double click issues exactly one importTool backend call'
+    );
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('double-clicking Create, Add option and Import selected issues one backend call each', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    // The mock DOM leaves removed nodes reachable, so the newest modal is the
+    // last cm-modal in document order, not the first.
+    const topModal = () => findAll(dom.body, (node) => classed(node, 'cm-modal')).pop();
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+
+    buttonWithText(dom.body, 'New tool').click();
+    const titleInput = find(dom.body, (node) => node.placeholder === 'Tool name (e.g. docker)');
+    titleInput.value = 'docker';
+    const createButton = buttonWithText(dom.body, 'Create');
+    createButton.click();
+    createButton.click();
+    await waitFor(() => {
+        return env.calls.messages.some((message) => /Tool created\./.test(message));
+    }, 'create tool completion');
+    assert.equal(
+        env.calls.backend.filter((entry) => entry.action === 'createTool').length,
+        1,
+        'a double click creates exactly one tool'
+    );
+
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+    buttonWithText(dom.body, 'Add option').click();
+    const addModal = await waitFor(topModal, 'add option modal');
+    find(addModal, (node) => node.placeholder === 'Option label, e.g. Output file').value = 'Output file';
+    const addButton = buttonWithText(addModal, 'Add');
+    addButton.click();
+    addButton.click();
+    await waitFor(() => {
+        return env.calls.messages.some((message) => /Option added\./.test(message));
+    }, 'add option completion');
+    assert.equal(
+        env.calls.backend.filter((entry) => entry.action === 'addOption').length,
+        1,
+        'a double click adds exactly one option'
+    );
+
+    buttonWithText(dom.body, 'Import options').click();
+    const importModal = await waitFor(topModal, 'import options modal');
+    const helpArea = find(importModal, (node) => node.tagName === 'TEXTAREA');
+    helpArea.value = 'Usage: demo\n\n  -a, --all        include everything\n';
+    buttonWithText(importModal, 'Parse').click();
+    await waitFor(() => buttonWithText(importModal, 'Import selected').disabled === false, 'parsed import action enabled');
+    const importSelected = buttonWithText(importModal, 'Import selected');
+    importSelected.click();
+    importSelected.click();
+    await waitFor(() => {
+        return env.calls.messages.some((message) => /Imported 1 option\(s\)\./.test(message));
+    }, 'import options completion');
+    assert.equal(
+        env.calls.backend.filter((entry) => entry.action === 'importOptions').length,
+        1,
+        'a double click imports the options exactly once'
+    );
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('Export tool produces a file that carries tags, option bodies and presets', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const originalLabel = fixture.ffmpeg.getLabelValue.bind(fixture.ffmpeg);
+    fixture.ffmpeg.getLabelValue = function (name) {
+        return name === 'cmTags' ? 'video, media' : originalLabel(name);
+    };
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+
+    buttonWithText(dom.body, 'Export tool').click();
+    const modal = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-modal')), 'export modal');
+    const area = find(modal, (node) => node.tagName === 'TEXTAREA' && node.readOnly);
+    assert.ok(area, 'the export modal shows the file in a read-only text area');
+
+    const file = JSON.parse(area.value);
+    assert.equal(file.version, 2, 'exports use the lossless v2 format');
+    assert.equal(file.tool.tags, 'video, media', 'the backup carries the tool tags');
+    assert.ok(
+        file.tool.presets.some((preset) => preset.name === 'web'),
+        'the backup carries the presets'
+    );
+    const inputOption = file.tool.options.filter((entry) => entry.label === 'Input file')[0];
+    assert.match(inputOption.content, /Read the input file/, 'the backup carries the option note body');
+
+    const note = find(modal, (node) => classed(node, 'cm-note'));
+    assert.match(
+        note.textContent,
+        /tags, options and presets/,
+        'the modal states what the backup holds'
+    );
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('a slow tool load cannot hijack the detail pane of a newer selection', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    const originalContent = fixture.ffmpeg.getContent.bind(fixture.ffmpeg);
+    let releaseSlowLoad;
+    const slowGate = new Promise((resolve) => {
+        releaseSlowLoad = resolve;
+    });
+    let ffmpegContentReads = 0;
+    fixture.ffmpeg.getContent = async function () {
+        ffmpegContentReads += 1;
+        // Boot refresh reads the note once; the gated selection load is held.
+        if (ffmpegContentReads > 1) {
+            await slowGate;
+        }
+        return originalContent();
+    };
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    const rows = findAll(dom.body, (node) => classed(node, 'cm-result'));
+    rows[0].click();
+    await new Promise((resolve) => setImmediate(resolve));
+    rows[1].click();
+
+    const preview = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'git preview');
+    assert.ok(String(preview.value).startsWith('git commit'), 'the newest selection renders first');
+
+    // Let the older ffmpeg load finish; its result must not replace the pane.
+    releaseSlowLoad();
+    for (let turn = 0; turn < 60; turn += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    const livePreview = find(dom.body, (node) => classed(node, 'cm-preview'));
+    assert.ok(
+        String(livePreview.value).startsWith('git commit'),
+        'the preview keeps the newest selection after the older load resolves: ' + livePreview.value
+    );
+    const activeRow = find(dom.body, (node) => classed(node, 'is-active'));
+    assert.equal(activeRow.children[0].textContent, 'git commit', 'the highlight follows the newest selection');
+    assert.deepEqual(env.calls.errors, []);
 });

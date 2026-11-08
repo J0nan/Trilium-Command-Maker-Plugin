@@ -294,6 +294,73 @@ test('relocating the Tools folder never seeds the chosen note', () => {
     assert.equal(api.getNote(result.toolsRootId).hasLabel(labels.tools), false, 'the old root lost the label');
 });
 
+test('setToolsRoot keeps the pointer when removing the old label fails', () => {
+    const { api, beRun, result } = seedApi();
+    const userFolder = api.createNewNote({
+        parentNoteId: result.rootId,
+        title: 'My tools',
+        type: 'text',
+        content: ''
+    }).note;
+    const old = api.getNote(result.toolsRootId);
+    old.removeLabel = function () {
+        throw new Error('label store is busy');
+    };
+
+    assert.throws(() => beRun({
+        action: 'setToolsRoot',
+        labels,
+        noteId: userFolder.noteId,
+        oldToolsRootId: result.toolsRootId
+    }), 'the failure still surfaces to the caller');
+
+    assert.ok(
+        userFolder.hasLabel(labels.tools),
+        'the new root holds the pointer even when the old label removal fails'
+    );
+});
+
+test('createToolNote removes notes it already created when a later step throws', () => {
+    const { api, beRun, result } = seedApi();
+    const originalCreate = api.createNewNote;
+    let createCount = 0;
+    api.createNewNote = function (params) {
+        createCount += 1;
+        if (createCount === 3) {
+            throw new Error('database is busy');
+        }
+        return originalCreate.call(api, params);
+    };
+
+    assert.throws(() => beRun({
+        action: 'importTool',
+        labels,
+        toolsRootId: result.toolsRootId,
+        newToolNotes: Model.newToolNotes(),
+        tool: { title: 'partial', category: 'Partial cat', base: 'partial', options: [{ label: 'X', flag: '-x' }] }
+    }), 'the import failure surfaces');
+    api.createNewNote = originalCreate;
+
+    // Mirror Trilium semantics: deleted (moved-to-trash) notes drop out of label queries.
+    const aliveTools = api.getNotesWithLabel(labels.tool).filter((note) => !note.deleted);
+    assert.equal(
+        aliveTools.filter((note) => note.title === 'partial').length,
+        0,
+        'the half-created tool was cleaned up'
+    );
+    assert.equal(
+        api.getNotesWithLabel(labels.category)
+            .filter((entry) => entry.title === 'Partial cat' && !entry.deleted).length,
+        0,
+        'a category created for the failed tool is cleaned up too'
+    );
+    assert.equal(
+        aliveTools.length,
+        2,
+        'the seeded tools survive untouched'
+    );
+});
+
 test('bootstrap honours parentId and always ensures the Tools root', () => {
     const api = createApi();
     const beRun = serialise(Backend.beRun, api);
@@ -719,6 +786,61 @@ test('importTool creates a tool note with its category, children and options', (
     assert.equal(options[1].getLabelValue(labels.flag), null, 'positional options have no flag label');
     assert.equal(options[1].getLabelValue(labels.required), 'true');
     assert.equal(options[1].getLabelValue(labels.placeholder), 'pattern');
+});
+
+test('importTool restores tags, option content and presets from a v2 tool file', () => {
+    const { api, beRun, result } = seedApi();
+    const presetValues = { 'note:x': 'y', deep: {} };
+    Object.defineProperty(presetValues, '__proto__', { value: 'nope', enumerable: true });
+    const created = beRun({
+        action: 'importTool',
+        labels,
+        toolsRootId: result.toolsRootId,
+        newToolNotes: Model.newToolNotes(),
+        tool: {
+            title: 'rg2',
+            category: 'Search',
+            base: 'rg',
+            tags: 'search, cli',
+            options: [{ label: 'Ignore case', flag: '-i', type: 'boolean', content: '<p>Long explanation.</p>' }],
+            presets: [
+                { name: 'web', values: presetValues },
+                { value: 1 }
+            ]
+        }
+    });
+
+    const tool = api.getNote(created.noteId);
+    assert.equal(tool.getLabelValue(labels.tags), 'search, cli', 'tags land on the tool note');
+
+    const options = labelledChildren(findByTitle(tool, 'Options'), labels.option);
+    assert.match(options[0].getContent(), /Long explanation/, 'the option note body survives the import');
+
+    const presetsNote = findByTitle(findByTitle(tool, 'Options'), 'Presets');
+    const saved = JSON.parse(presetsNote.getContent());
+    assert.equal(saved.v, 1);
+    assert.deepEqual(
+        saved.presets,
+        [{ name: 'web', values: { 'note:x': 'y' } }],
+        'magic and object values are filtered and nameless entries dropped'
+    );
+});
+
+test('importTool without tags or presets keeps the empty-presets default', () => {
+    const { api, beRun, result } = seedApi();
+    const created = beRun({
+        action: 'importTool',
+        labels,
+        toolsRootId: result.toolsRootId,
+        newToolNotes: Model.newToolNotes(),
+        tool: { title: 'plain', category: 'Misc', options: [{ label: 'Fast', flag: '-f', type: 'boolean' }] }
+    });
+    const tool = api.getNote(created.noteId);
+    assert.equal(tool.getLabelValue(labels.tags), null, 'no tags label is invented');
+    const option = labelledChildren(findByTitle(tool, 'Options'), labels.option)[0];
+    assert.equal(option.getContent(), '', 'options without content stay empty');
+    const presetsNote = findByTitle(findByTitle(tool, 'Options'), 'Presets');
+    assert.deepEqual(JSON.parse(presetsNote.getContent()), { v: 1, presets: [] });
 });
 
 test('importTool falls back to the content template passed by the frontend', () => {

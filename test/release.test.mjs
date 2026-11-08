@@ -17,7 +17,7 @@ test('the release workflow is manual and publishes both artifacts', () => {
     assert.match(workflow, /contents: write/);
     assert.match(workflow, /node tools\/bump-version\.mjs/);
     assert.match(workflow, /npm run check/);
-    assert.match(workflow, /softprops\/action-gh-release@v2/);
+    assert.match(workflow, /softprops\/action-gh-release@[0-9a-f]{40} # v2/, 'the release action is SHA-pinned');
     assert.match(workflow, /dist\/command-maker\.js/);
     assert.match(workflow, /dist\/install\.js/);
     assert.match(workflow, /git tag "v\$VERSION"/, 'the tag uses the env copy of the version');
@@ -27,6 +27,19 @@ test('the release workflow is manual and publishes both artifacts', () => {
         false,
         'the version input is never interpolated directly into a shell command'
     );
+});
+
+test('every third-party action is pinned to a full commit SHA, not a mutable tag', () => {
+    const workflow = fs.readFileSync(workflowPath, 'utf8');
+    const uses = workflow.split(/\r?\n/).filter((line) => /^\s*uses:\s*\S/.test(line));
+    assert.ok(uses.length >= 3, 'the workflow runs the expected actions');
+    for (const line of uses) {
+        assert.match(
+            line,
+            /^\s*uses:\s*[\w./-]+@[0-9a-f]{40}( # v[\d.]+)?\s*$/,
+            'each uses: line is owner/repo@<40-hex-sha> with a human tag comment: ' + line
+        );
+    }
 });
 
 test('release versions are validated and ordered', () => {

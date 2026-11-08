@@ -1252,6 +1252,7 @@ const ALLOWED_TAGS = new Set([
 ]);
 const DROP_ELEMENT_RE = /<(script|style|iframe|object|embed|svg|math|form|input|textarea|select|button|link|meta)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
 const TAG_TOKEN_RE = /<\/?([a-zA-Z][A-Za-z0-9:-]*)([^>]*)>/g;
+const TRAILING_UNCLOSED_TAG_RE = /<[a-zA-Z][^>]*$/;
 const COMMENT_RE = /<!--[\s\S]*?-->/g;
 
 function trim(value) {
@@ -1466,7 +1467,7 @@ function sanitizeNoteHtml(html) {
                 : '<a href="' + escapeAttribute(href) + '" target="_blank" rel="noreferrer">';
         }
         return '<' + tag + '>';
-    });
+    }).replace(TRAILING_UNCLOSED_TAG_RE, '');
 }
 
 /**
@@ -1498,31 +1499,33 @@ __def("toolfile", function (module, exports, __require) {
 /**
  * Portable tool files: one JSON document that holds everything needed to
  * recreate a tool note (metadata, the three H2 sections, the standard child
- * notes and every option).
+ * notes, every option including its note body, the tool tags and the presets).
  *
  * The palette exports a tool with buildToolFile() and imports one with
  * parseToolFile(). Both are pure: no Trilium API, no DOM, no file system.
  *
- * Shape:
+ * Shape (version 2; version 1 files still import — the new fields are
+ * simply absent there, so a v1 backup cannot restore tags, bodies or presets):
  * {
  *   kind: 'command-maker-tool',
- *   version: 1,
+ *   version: 2,
  *   tool: {
- *     title, category, base, description,
+ *     title, category, base, description, tags,
  *     content, install, usage, help,
- *     options: [ option, ... ]
+ *     options: [ { ...option fields, content }, ... ],
+ *     presets: [ { name, values }, ... ]
  *   }
  * }
  *
  * An option uses the same fields the backend option notes store, with the
  * portable names label/help/values/default so an AI model can fill it in
- * without knowing Trilium's labels.
+ * without knowing Trilium's labels. `content` carries the option note's body.
  */
 
 const Model = __require("model");
 
 const TOOL_KIND = 'command-maker-tool';
-const FILE_VERSION = 1;
+const FILE_VERSION = 2;
 
 function text(value) {
     return value === undefined || value === null ? '' : String(value);
@@ -1554,6 +1557,34 @@ function splitValues(value) {
         if (next !== '' && out.indexOf(next) === -1) {
             out.push(next);
         }
+    }
+    return out;
+}
+
+/** Preset list -> safe [{ name, values }] with primitive own keys only. Never throws. */
+function normalisePresets(raw) {
+    const out = [];
+    if (!Array.isArray(raw)) {
+        return out;
+    }
+    for (const entry of raw) {
+        if (!entry || typeof entry.name !== 'string' || trimmed(entry.name) === '') {
+            continue;
+        }
+        const values = {};
+        if (entry.values && typeof entry.values === 'object' && !Array.isArray(entry.values)) {
+            for (const key of Object.keys(entry.values)) {
+                if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+                    continue;
+                }
+                const value = entry.values[key];
+                if (value === null || typeof value === 'object' || typeof value === 'function') {
+                    continue;
+                }
+                values[key] = value;
+            }
+        }
+        out.push({ name: trimmed(entry.name), values: values });
     }
     return out;
 }
@@ -1624,6 +1655,7 @@ function normaliseOption(entry, index, warnings) {
         label: label === '' ? flag : label,
         flag: flag,
         help: trimmed(entry.help !== undefined ? entry.help : entry.doc),
+        content: text(entry.content),
         type: type,
         values: values,
         default: normaliseDefault(rawDefault),
@@ -1659,11 +1691,13 @@ function normaliseTool(spec, warnings) {
         category: trimmed(source.category),
         base: trimmed(source.base),
         description: trimmed(source.description),
+        tags: trimmed(source.tags),
         content: text(source.content),
         install: text(source.install),
         usage: text(source.usage),
         help: text(source.help),
-        options: options
+        options: options,
+        presets: normalisePresets(source.presets)
     };
 }
 
@@ -1743,7 +1777,7 @@ __def("prompt", function (module, exports, __require) {
 const SCHEMA = [
     '{',
     '  "kind": "command-maker-tool",',
-    '  "version": 1,',
+    '  "version": 2,',
     '  "tool": {',
     '    "title": "<command name, e.g. git commit>",',
     '    "category": "<short group, e.g. Version control>",',
@@ -1775,6 +1809,7 @@ const SCHEMA = [
 
 const RULES = [
     '- title: the command name. base: the exact command the user types (keep subcommands, e.g. "git commit").',
+    '- tags, presets and per-option "content" exist for full backups; leave them out unless a backup was asked for.',
     '- category: a short group such as "Network", "Media" or "Version control".',
     '- description: one sentence that explains what the tool does.',
     '- content: HTML with exactly three <h2> sections in this order: "What is?", "Official links", "Useful links".',
@@ -2176,10 +2211,13 @@ function valuesFromExample(definition, command) {
         }
     }
 
-    const byFlag = {};
+    // A Map, like every other flag-keyed structure in this file: a tool file
+    // can carry a literal "__proto__" flag, and a plain object would let that
+    // key replace the map's prototype instead of becoming an entry.
+    const byFlag = new Map();
     for (const option of options) {
         if (option.flag) {
-            byFlag[option.flag] = option;
+            byFlag.set(option.flag, option);
         }
     }
 
@@ -2201,7 +2239,7 @@ function valuesFromExample(definition, command) {
             flag = token.slice(0, equals);
             inlineValue = token.slice(equals + 1);
         }
-        const option = byFlag[flag];
+        const option = byFlag.get(flag);
         if (!option) {
             unknownFlag = true;
             continue;
@@ -2216,7 +2254,7 @@ function valuesFromExample(definition, command) {
             continue;
         }
         const next = tokens[index + 1];
-        const nextIsKnownFlag = next !== undefined && next.charAt(0) === '-' && next.length > 1 && byFlag[next];
+        const nextIsKnownFlag = next !== undefined && next.charAt(0) === '-' && next.length > 1 && byFlag.get(next);
         if (next !== undefined && !nextIsKnownFlag) {
             values[key] = next;
             index += 1;
@@ -2959,6 +2997,20 @@ function beRun(params) {
         return note;
     }
 
+    /**
+     * When set, every note created by the action below is recorded here, so a
+     * failed multi-step create can delete exactly the notes it made — never an
+     * existing category, folder or unrelated note.
+     */
+    let rollbackBatch = null;
+
+    function track(note) {
+        if (rollbackBatch) {
+            rollbackBatch.push(note);
+        }
+        return note;
+    }
+
     function findChildWithLabel(parent, name) {
         const children = parent.getChildNotes();
         for (let index = 0; index < children.length; index += 1) {
@@ -2995,12 +3047,12 @@ function beRun(params) {
         if (existing) {
             return existing;
         }
-        const note = api.createNewNote({
+        const note = track(api.createNewNote({
             parentNoteId: toolsRoot.noteId,
             title: name,
             type: 'text',
             content: ''
-        }).note;
+        }).note);
         note.setLabel(labels.category, '');
         return note;
     }
@@ -3010,12 +3062,12 @@ function beRun(params) {
         if (existing) {
             return existing;
         }
-        const note = api.createNewNote({
+        const note = track(api.createNewNote({
             parentNoteId: toolNote.noteId,
             title: 'Options',
             type: 'text',
             content: ''
-        }).note;
+        }).note);
         note.setLabel(labels.options, '');
         ensureIcon(note, icons.options);
         return note;
@@ -3026,15 +3078,47 @@ function beRun(params) {
         if (existing) {
             return existing;
         }
-        const note = api.createNewNote({
+        const note = track(api.createNewNote({
             parentNoteId: optionsFolder.noteId,
             title: 'Presets',
             type: 'code',
             mime: 'application/json',
             content: '{"v":1,"presets":[]}'
-        }).note;
+        }).note);
         note.setLabel(labels.presets, '');
         return note;
+    }
+
+    /**
+     * Tool-file presets -> the JSON stored in the Presets note. Mirrors the
+     * frontend reader: entries need a name, values keep own primitive keys
+     * only, so a hand-edited file can never smuggle __proto__ into the note.
+     */
+    function sanitisePresets(raw) {
+        const out = [];
+        if (!Array.isArray(raw)) {
+            return out;
+        }
+        for (const entry of raw) {
+            if (!entry || typeof entry.name !== 'string' || String(entry.name).trim() === '') {
+                continue;
+            }
+            const values = {};
+            if (entry.values && typeof entry.values === 'object' && !Array.isArray(entry.values)) {
+                for (const key of Object.keys(entry.values)) {
+                    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+                        continue;
+                    }
+                    const value = entry.values[key];
+                    if (value === null || typeof value === 'object' || typeof value === 'function') {
+                        continue;
+                    }
+                    values[key] = value;
+                }
+            }
+            out.push({ name: String(entry.name).trim(), values: values });
+        }
+        return out;
     }
 
     /** Validate the tool and make sure its Options folder and Presets note exist. */
@@ -3085,17 +3169,37 @@ function beRun(params) {
 
     /** Shared creation path for createTool, bootstrap seeding and the importer. */
     function createToolNote(toolsRoot, spec, fallbacks) {
+        const batch = [];
+        const previousBatch = rollbackBatch;
+        rollbackBatch = batch;
+        try {
+            return createToolNoteNotes(toolsRoot, spec, fallbacks);
+        } catch (error) {
+            for (let index = batch.length - 1; index >= 0; index -= 1) {
+                try {
+                    batch[index].deleteNote();
+                } catch (ignored) {
+                    // Best effort: the original failure is the one to report.
+                }
+            }
+            throw error;
+        } finally {
+            rollbackBatch = previousBatch;
+        }
+    }
+
+    function createToolNoteNotes(toolsRoot, spec, fallbacks) {
         const safeSpec = spec || {};
         const safeFallbacks = fallbacks || {};
         const categoryName = nonEmpty(safeSpec.category) ? String(safeSpec.category) : 'Uncategorized';
         const title = nonEmpty(safeSpec.title) ? String(safeSpec.title) : 'New tool';
         const category = ensureCategory(toolsRoot, categoryName);
-        const note = api.createNewNote({
+        const note = track(api.createNewNote({
             parentNoteId: category.noteId,
             title: title,
             type: 'text',
             content: nonEmpty(safeSpec.content) ? String(safeSpec.content) : defaultToolContent(safeFallbacks)
-        }).note;
+        }).note);
         note.setLabel(labels.tool, '');
         if (nonEmpty(safeSpec.base)) {
             note.setLabel(labels.base, String(safeSpec.base));
@@ -3103,30 +3207,33 @@ function beRun(params) {
         if (nonEmpty(safeSpec.description)) {
             note.setLabel(labels.description, String(safeSpec.description));
         }
+        if (nonEmpty(safeSpec.tags)) {
+            note.setLabel(labels.tags, String(safeSpec.tags));
+        }
 
-        const install = api.createNewNote({
+        const install = track(api.createNewNote({
             parentNoteId: note.noteId,
             title: 'Install',
             type: 'text',
             content: childContent(safeSpec.install, safeFallbacks.install)
-        }).note;
+        }).note);
         install.setLabel(labels.install, '');
 
-        const usage = api.createNewNote({
+        const usage = track(api.createNewNote({
             parentNoteId: note.noteId,
             title: 'Usage',
             type: 'text',
             content: childContent(safeSpec.usage, safeFallbacks.usage)
-        }).note;
+        }).note);
         usage.setLabel(labels.usage, '');
 
-        const help = api.createNewNote({
+        const help = track(api.createNewNote({
             parentNoteId: note.noteId,
             title: 'Help',
             type: 'code',
             mime: 'text/x-sh',
             content: childContent(safeSpec.help, safeFallbacks.help)
-        }).note;
+        }).note);
         help.setLabel(labels.helpNote, '');
 
         ensureIcon(install, icons.install);
@@ -3134,7 +3241,11 @@ function beRun(params) {
         ensureIcon(help, icons.help);
 
         const folder = ensureOptionsFolder(note);
-        ensurePresetsNote(folder);
+        const presetsNote = ensurePresetsNote(folder);
+        const presetSpecs = sanitisePresets(safeSpec.presets);
+        if (presetSpecs.length) {
+            presetsNote.setContent(JSON.stringify({ v: 1, presets: presetSpecs }));
+        }
         const specs = Array.isArray(safeSpec.options) ? safeSpec.options : [];
         for (let index = 0; index < specs.length; index += 1) {
             createOptionNote(folder, specs[index]);
@@ -3146,12 +3257,12 @@ function beRun(params) {
     function createOptionNote(folder, spec) {
         const safe = spec || {};
         const title = nonEmpty(safe.label) ? String(safe.label) : 'Option';
-        const note = api.createNewNote({
+        const note = track(api.createNewNote({
             parentNoteId: folder.noteId,
             title: title,
             type: 'text',
             content: safe.content == null ? '' : String(safe.content)
-        }).note;
+        }).note);
         note.setLabel(labels.option, '');
         if (nonEmpty(safe.flag)) {
             note.setLabel(labels.flag, String(safe.flag));
@@ -3384,15 +3495,18 @@ function beRun(params) {
 
     function setToolsRoot() {
         const target = requireNote(options.noteId, 'Note not found');
+        // Set the new pointer first: if removing the label from the old root
+        // fails afterwards, the tools stay visible instead of losing the
+        // pointer and making the next bootstrap seed an empty folder.
+        target.setLabel(labels.tools, '');
+        // A folder the user picks is theirs: never seed examples into it.
+        target.setLabel(labels.seeded, '');
         if (options.oldToolsRootId && options.oldToolsRootId !== options.noteId) {
             const old = api.getNote(options.oldToolsRootId);
             if (old && typeof old.removeLabel === 'function') {
                 old.removeLabel(labels.tools);
             }
         }
-        target.setLabel(labels.tools, '');
-        // A folder the user picks is theirs: never seed examples into it.
-        target.setLabel(labels.seeded, '');
         return { ok: true };
     }
 
@@ -3541,7 +3655,6 @@ __def("ui", function (module, exports, __require) {
  *   savePreset(toolId, name, values): Promise<void>
  *   deletePreset(toolId, name): Promise<void>
  *   addOption(toolId, option): Promise<void>
- *   deleteOption(noteId): Promise<void>
  *   setToolBase(toolId, base): Promise<void>
  *   currentToolsRoot(): Promise<{ noteId, title } | null>
  *   setToolsRoot(noteId): Promise<void>
@@ -3575,13 +3688,40 @@ const NEW_CATEGORY = '__new__';
 
 let instance = null;
 
-/** Resolve after the handler, so a rejected promise becomes a status message. */
+/**
+ * Resolve after the handler, so a rejected promise becomes a status message.
+ * While an async handler is in flight the originating button is disabled and
+ * further clicks are ignored, so one double click cannot issue the backend
+ * write twice (the palette's only idempotency guard for note-creating calls).
+ */
 function guarded(handler, onError) {
     return function (event) {
+        const target = event && (event.currentTarget || event.target);
+        const origin = this && typeof this.disabled === 'boolean'
+            ? this
+            : target && typeof target.disabled === 'boolean' ? target : null;
+        if (origin && origin.disabled) {
+            return;
+        }
         try {
             const result = handler(event);
             if (result && typeof result.then === 'function') {
-                result.catch(onError);
+                if (origin) {
+                    origin.disabled = true;
+                }
+                result.then(
+                    function () {
+                        if (origin) {
+                            origin.disabled = false;
+                        }
+                    },
+                    function (error) {
+                        if (origin) {
+                            origin.disabled = false;
+                        }
+                        onError(error);
+                    }
+                );
             }
         } catch (error) {
             onError(error);
@@ -3771,7 +3911,7 @@ function openPalette(controller, options) {
         node.type = 'button';
         node.addEventListener('click', function (event) {
             event.preventDefault();
-            guarded(handler, notify)();
+            guarded(handler, notify).call(node, event);
         });
         return node;
     }
@@ -3920,17 +4060,25 @@ function openPalette(controller, options) {
         }
     }
 
+    // Every selection bumps this; load results from older selections are
+    // discarded so a slow backend cannot render (or keep alive) a stale tool.
+    let selectionGeneration = 0;
+
     async function selectItem(item, selectOptions) {
         const preserve = Boolean(selectOptions && selectOptions.preserveValues);
         const previousValues = preserve ? state.values : null;
         const previousEdited = preserve ? state.edited : false;
         const previousPreview = preserve && state.previewEl ? state.previewEl.value : '';
+        const generation = ++selectionGeneration;
         state.current = item;
         state.edited = false;
         state.exampleLoaded = false;
         markActive(item);
         try {
             const loaded = await controller.load(item.noteId);
+            if (generation !== selectionGeneration) {
+                return;
+            }
             state.loaded = loaded;
             state.definition = loaded.definition;
             state.presets = loaded.presets || [];
@@ -3945,6 +4093,9 @@ function openPalette(controller, options) {
             }
             setStatus('');
         } catch (error) {
+            if (generation !== selectionGeneration) {
+                return;
+            }
             state.loaded = null;
             state.definition = null;
             renderDetail();
@@ -4906,7 +5057,7 @@ function openPalette(controller, options) {
         const filename = (Render.slugify(file.tool.title) || 'tool') + '.tool.json';
 
         const bodyNode = Dom.el('div', '');
-        bodyNode.appendChild(Dom.el('div', 'cm-note', 'This plain-JSON file can be imported here, kept as a backup, or shared.'));
+        bodyNode.appendChild(Dom.el('div', 'cm-note', 'This plain-JSON file carries the tags, options and presets, so it can be imported here, kept as a backup, or shared.'));
         const area = document.createElement('textarea');
         area.className = 'cm-control cm-preview';
         area.rows = 18;
@@ -5501,7 +5652,9 @@ async function load(noteId) {
     try {
         toolContent = await note.getContent();
     } catch (error) {
-        toolContent = '';
+        // The indexed note vanished (deleted from another tab or session).
+        // Surface it instead of rendering a silently empty tool.
+        throw new Error('Tool "' + note.title + '" could not be read; it may have been deleted. Reopen the palette to refresh.');
     }
     const parsed = Sections.parseToolNote(toolContent);
 
@@ -5583,7 +5736,8 @@ async function readRawContent(note) {
 
 /**
  * Read one tool into the portable file the palette writes to disk.
- * Raw note contents are kept so an export/import round trip loses nothing.
+ * Raw note contents, the tool tags, the per-option note bodies and the
+ * presets are kept so an export/import round trip loses nothing.
  */
 async function exportTool(noteId) {
     const entry = entriesById.get(noteId);
@@ -5596,6 +5750,22 @@ async function exportTool(noteId) {
     const installNote = await standardChild(note, Model.LABELS.install, 'Install');
     const usageNote = await standardChild(note, Model.LABELS.usage, 'Usage');
     const helpNote = await standardChild(note, Model.LABELS.helpNote, 'Help');
+
+    const optionsNote = await childWithLabel(note, Model.LABELS.options);
+    const presetsNote = optionsNote ? await childWithLabel(optionsNote, Model.LABELS.presets) : null;
+    const presetRead = presetsNote
+        ? readPresetsContent(await readRawContent(presetsNote))
+        : { presets: [] };
+
+    const optionBodies = new Map();
+    if (optionsNote) {
+        const children = await optionsNote.getChildNotes();
+        for (const child of children) {
+            if (hasLabel(child, Model.LABELS.option)) {
+                optionBodies.set(child.noteId, await readRawContent(child));
+            }
+        }
+    }
 
     const definition = Model.buildTool({
         noteId: note.noteId,
@@ -5610,11 +5780,17 @@ async function exportTool(noteId) {
         category: entry.category,
         base: definition.base,
         description: definition.description,
+        tags: labels[Model.LABELS.tags] || '',
         content: await readRawContent(note),
         install: await readRawContent(installNote),
         usage: await readRawContent(usageNote),
         help: await readRawContent(helpNote),
-        options: definition.options
+        options: definition.options.map(function (option) {
+            return Object.assign({}, option, {
+                content: optionBodies.has(option.noteId) ? optionBodies.get(option.noteId) : ''
+            });
+        }),
+        presets: presetRead.presets
     });
 }
 
