@@ -33,6 +33,7 @@ The installer is idempotent. It creates the `Command Maker` settings note, the `
 - **Works as a tab.** **Open in tab** moves the same interface next to your notes instead of over them.
 - **A width that fits your screen.** The settings menu sizes the floating palette from 30% to 100% of the window (70% by default); the choice is stored in the `cmPanelWidth` label and never changes the tab view.
 - **English and Spanish.** The interface is translated into English and Spain Spanish. The version menu in the footer switches it (see [Change the language](#change-the-language)); the choice is stored in the `cmLang` label of the settings note and applies immediately.
+- **Updates from the palette.** Once a day, when the palette opens, it asks GitHub for the latest release. When a newer one exists, a bar above the list offers **Update now**: it downloads that release's `command-maker.js`, verifies the version inside, rewrites the plugin note and reloads the page. The version menu keeps the manual **Check for updates**.
 
 ## Change the language
 

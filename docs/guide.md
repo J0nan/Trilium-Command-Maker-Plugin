@@ -293,6 +293,8 @@ The model is told to return only the JSON object. If a markdown fence still slip
 
 Current version: **1.2**. The palette footer shows `v1.2`; click it to check GitHub's latest release (falling back to the highest tag, then `package.json` on `main`). The settings note stores `#cmVersion`, and the installer log prints the version. A network/CORS failure is reported in the status and the **Repository** link opens the source.
 
+Opening the palette also checks at most once a day: when a newer release exists, a bar above the list reads **Update available: v1.2 → vX.Y** and offers **Update now**. That button downloads `dist/command-maker.js` from the matching version tag, refuses the file unless it declares that exact version, writes it into the plugin script note (found through `#cmPlugin`), records `#cmVersion` and reloads the page. The time and result of the check are kept in the browser's `localStorage` (`cmUpdateCheckedAt`), so reloading the page does not hit the network again during the same day; the manual **Check for updates** entry always bypasses that throttle. An update never runs without pressing the button.
+
 ## Design notes
 
 - `src/model.js`, `src/render.js`, `src/parse.js`, `src/sections.js`, `src/toolfile.js`, `src/prompt.js` and `src/styles.js` are pure and unit tested. `src/dom.js` holds the shared DOM helpers (elements, styles, clipboard, download, file reads); it has no Trilium API dependency and is exercised through the palette tests. `src/ui.js` and `src/sourcePicker.js` build their own elements directly on the `document`. UI code reads everything it needs from the runtime controller, so it never touches the Trilium `api` global itself.
@@ -320,7 +322,7 @@ npm test          # unit tests for model, parser, sections, renderer, backend, U
 npm run check     # both
 ```
 
-No dependencies, Node 20+. Network access is only used when you click the version in the palette to check for updates.
+No dependencies, Node 20+. Network access is only used when the palette checks for updates (once a day, or on demand from the version menu).
 
 CI (`.github/workflows/ci.yml`) runs `npm run check` on Node 20, 22 and 24, plus once on Windows, and fails when the committed `dist/` no longer matches a fresh build.
 

@@ -33,6 +33,7 @@ El instalador es idempotente. Crea la nota de ajustes `Command Maker`, la carpet
 - **Funciona como pestaña.** **Abrir en pestaña** mueve la misma interfaz junto a tus notas en lugar de encima de ellas.
 - **Un ancho que encaja en tu pantalla.** El menú de ajustes cambia el ancho de la paleta flotante entre el 30 % y el 100 % de la ventana (70 % por defecto); la elección se guarda en la etiqueta `cmPanelWidth` y no afecta a la vista de pestaña.
 - **Inglés y español.** La interfaz está traducida al inglés y al español de España. El menú de versión del pie permite cambiarla (ver [Cambiar el idioma](#cambiar-el-idioma)); la elección se guarda en la etiqueta `cmLang` de la nota de ajustes y se aplica al instante.
+- **Actualizaciones desde la paleta.** Una vez al día, al abrir la paleta, se consulta la última versión publicada en GitHub. Si hay una más nueva, una barra sobre la lista ofrece **Actualizar ahora**: descarga el `command-maker.js` de esa versión, comprueba la versión que contiene, reescribe la nota del plugin y recarga la página. El menú de versión conserva **Buscar actualizaciones** para hacerlo a mano.
 
 ## Cambiar el idioma
 

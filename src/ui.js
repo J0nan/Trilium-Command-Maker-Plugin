@@ -32,6 +32,8 @@
  *   version(): string
  *   repository(): string
  *   checkLatestVersion(): Promise<{ current, latest, outdated, error }>
+ *   checkUpdatesIfDue(): Promise<{ current, latest, outdated, error }>
+ *   installUpdate(): Promise<{ noteId, version, reloading }>
  *
  * This module never touches the Trilium `api` global: everything goes through
  * the controller, which keeps the DOM code testable with a plain DOM.
@@ -264,7 +266,24 @@ function openPalette(controller, options) {
 
     const modalHost = Dom.el('div', 'cm-modal-host');
 
+    // Update banner: the daily check fills it when a newer release exists, and
+    // its button downloads that release and rewrites the plugin note.
+    const updateBar = Dom.el('div', 'cm-update');
+    updateBar.setAttribute('role', 'status');
+    updateBar.style.display = 'none';
+    const updateText = Dom.el('span', 'cm-update-text', '');
+    const updateApply = Dom.el('button', 'cm-button cm-update-apply', I18n.t('update.install'));
+    updateApply.type = 'button';
+    const updateDismiss = Dom.el('button', 'cm-update-dismiss', '✕');
+    updateDismiss.type = 'button';
+    updateDismiss.title = I18n.t('update.dismiss');
+    updateDismiss.setAttribute('aria-label', I18n.t('update.dismiss'));
+    updateBar.appendChild(updateText);
+    updateBar.appendChild(updateApply);
+    updateBar.appendChild(updateDismiss);
+
     panel.appendChild(head);
+    panel.appendChild(updateBar);
     panel.appendChild(body);
     panel.appendChild(footer);
     if (embedded) {
@@ -458,6 +477,65 @@ function openPalette(controller, options) {
         setStatus(error && error.message ? error.message : String(error), true);
     }
 
+    // Version the user hid, and the one the bar currently offers, so a dismiss
+    // and a later check never resurrect the banner for the same release.
+    let dismissedUpdate = '';
+    let shownUpdate = '';
+
+    function hideUpdateBar() {
+        updateBar.style.display = 'none';
+    }
+
+    /** Fill the banner for an outdated status; hide it for anything else. */
+    function showUpdateBar(info) {
+        const outdated = Boolean(info && info.outdated && info.latest && !info.error);
+        if (!outdated || info.latest === dismissedUpdate) {
+            hideUpdateBar();
+            return;
+        }
+        shownUpdate = info.latest;
+        updateText.textContent = I18n.t('update.available', {
+            current: info.current,
+            latest: info.latest
+        });
+        updateApply.textContent = I18n.t('update.install');
+        versionLabel.textContent = 'v' + info.current + ' → v' + info.latest;
+        versionButton.title = I18n.t('status.installedLatest', {
+            current: info.current,
+            latest: info.latest
+        });
+        updateBar.style.display = '';
+    }
+
+    /**
+     * The daily check stays silent on failure: it only ever raises the banner
+     * for a published update, and the manual menu entry reports the errors.
+     */
+    function checkUpdatesIfDue() {
+        if (typeof controller.checkUpdatesIfDue !== 'function') {
+            return;
+        }
+        Promise.resolve(controller.checkUpdatesIfDue()).then(showUpdateBar, function () {
+            // Invisible on purpose; the menu can retry on demand.
+        });
+    }
+
+    async function installUpdate() {
+        updateApply.textContent = I18n.t('update.installing');
+        let installed;
+        try {
+            installed = await controller.installUpdate();
+        } catch (error) {
+            updateApply.textContent = I18n.t('update.install');
+            throw error;
+        }
+        dismissedUpdate = '';
+        hideUpdateBar();
+        versionLabel.textContent = 'v' + installed.version;
+        versionButton.title = I18n.t('status.latest', { version: installed.version });
+        setStatus(I18n.t('update.done', { version: installed.version }));
+    }
+
     async function checkForUpdates() {
         if (typeof controller.checkLatestVersion !== 'function') {
             setStatus(I18n.t('status.updateUnavailable'), true);
@@ -469,10 +547,7 @@ function openPalette(controller, options) {
             setStatus(I18n.t('status.updateError', { version: info.current, error: info.error }), true);
             return;
         }
-        if (info.outdated && info.latest) {
-            versionLabel.textContent = 'v' + info.current + ' → v' + info.latest;
-            versionButton.title = I18n.t('status.installedLatest', { current: info.current, latest: info.latest });
-        }
+        showUpdateBar(info);
 
         if (info.latest && info.latest === info.current) {
             setStatus(I18n.t('status.latest', { version: info.current }));
@@ -2422,6 +2497,11 @@ function openPalette(controller, options) {
         event.preventDefault();
         toggleMenu();
     });
+    updateApply.addEventListener('click', guarded(installUpdate, notify));
+    updateDismiss.addEventListener('click', function () {
+        dismissedUpdate = shownUpdate;
+        hideUpdateBar();
+    });
     newToolButton.addEventListener('click', toggleNewTool);
     importToolButton.addEventListener('click', openImportTool);
     exportToolButton.addEventListener('click', guarded(openExportTool, notify));
@@ -2462,6 +2542,8 @@ function openPalette(controller, options) {
         await controller.refresh();
         await runSearch();
     }, notify)();
+
+    checkUpdatesIfDue();
 
     return handle;
 }

@@ -136,6 +136,11 @@ const EN = {
     'status.outdated': 'v{current} installed · latest is v{latest}.',
     'status.ahead': 'v{current} is newer than the latest published tag (v{latest}).',
     'status.noPublished': 'v{version}: no published version found.',
+    'update.available': 'Update available: v{current} → v{latest}',
+    'update.install': 'Update now',
+    'update.installing': 'Updating…',
+    'update.dismiss': 'Hide this update',
+    'update.done': 'Updated to v{version}. Reload the page if it does not refresh.',
     'status.nothingToCopy': 'Nothing to copy.',
     'status.copied': 'Copied to the clipboard.',
     'status.clipboardFailed': 'Could not write to the clipboard.',
@@ -335,6 +340,10 @@ const EN = {
     'error.updateCheckUnavailable': 'This environment cannot check for updates.',
     'error.noPublishedVersion': 'No published version found.',
     'error.updateCheckFailed': 'Could not check for updates: {error}',
+    'error.noUpdateAvailable': 'There is no update to install.',
+    'error.updateNotABundle': 'The downloaded file is not a Command Maker build.',
+    'error.updateBundleMismatch': 'The downloaded file is version {found}, not v{expected}.',
+    'error.updateBundleTooLarge': 'The downloaded update is too large.',
 
     // --- AI prompt ---------------------------------------------------------
     'prompt.intro': 'You convert command-line tool documentation into a Command Maker tool file.',
@@ -412,6 +421,8 @@ const EN = {
     'back.errorToolNote': 'Tool note not found',
     'back.errorOptionNote': 'Option note not found',
     'back.errorSettingsNote': 'Command Maker settings note not found',
+    'back.errorPluginNote': 'Command Maker plugin script note not found',
+    'back.errorEmptyBundle': 'The downloaded update is empty',
     'back.errorNotAnOptionPrefix': 'Note is not an option of a tool: ',
     'back.errorNoteNotFound': 'Note not found',
     'back.errorInvalidOrder': 'Option order must be a number: ',
@@ -584,6 +595,11 @@ const ES = {
     'status.outdated': 'Instalada la v{current} · la última es la v{latest}.',
     'status.ahead': 'La v{current} es más reciente que la última etiqueta publicada (v{latest}).',
     'status.noPublished': 'v{version}: no se encontró ninguna versión publicada.',
+    'update.available': 'Actualización disponible: v{current} → v{latest}',
+    'update.install': 'Actualizar ahora',
+    'update.installing': 'Actualizando…',
+    'update.dismiss': 'Ocultar esta actualización',
+    'update.done': 'Actualizado a la v{version}. Recarga la página si no se actualiza sola.',
     'status.nothingToCopy': 'No hay nada que copiar.',
     'status.copied': 'Copiado al portapapeles.',
     'status.clipboardFailed': 'No se pudo escribir en el portapapeles.',
@@ -791,6 +807,10 @@ const ES = {
     'error.updateCheckUnavailable': 'Este entorno no puede comprobar actualizaciones.',
     'error.noPublishedVersion': 'No se encontró ninguna versión publicada.',
     'error.updateCheckFailed': 'No se pudieron comprobar las actualizaciones: {error}',
+    'error.noUpdateAvailable': 'No hay ninguna actualización para instalar.',
+    'error.updateNotABundle': 'El archivo descargado no es una compilación de Command Maker.',
+    'error.updateBundleMismatch': 'El archivo descargado es la versión {found}, no la v{expected}.',
+    'error.updateBundleTooLarge': 'La actualización descargada es demasiado grande.',
 
     // --- AI prompt ---------------------------------------------------------
     'prompt.intro': 'Conviertes la documentación de herramientas de línea de comandos en un archivo de herramienta de Command Maker.',
@@ -868,6 +888,8 @@ const ES = {
     'back.errorToolNote': 'No se encontró la nota de la herramienta',
     'back.errorOptionNote': 'No se encontró la nota de la opción',
     'back.errorSettingsNote': 'No se encontró la nota de ajustes de Command Maker',
+    'back.errorPluginNote': 'No se encontró la nota del script del plugin Command Maker',
+    'back.errorEmptyBundle': 'La actualización descargada está vacía',
     'back.errorNotAnOptionPrefix': 'La nota no es una opción de ninguna herramienta: ',
     'back.errorNoteNotFound': 'Nota no encontrada',
     'back.errorInvalidOrder': 'El orden de la opción debe ser un número: ',
@@ -1007,7 +1029,8 @@ const BACKEND_KEYS = [
     'back.noteToolsContent', 'back.noteTabTitle', 'back.noteTabRenderTitle',
     'back.toolContent',
     'back.errorToolsRoot', 'back.errorToolNote', 'back.errorOptionNote',
-    'back.errorSettingsNote', 'back.errorNotAnOptionPrefix',
+    'back.errorSettingsNote', 'back.errorPluginNote', 'back.errorEmptyBundle',
+    'back.errorNotAnOptionPrefix',
     'back.errorNoteNotFound',
     'back.errorInvalidOrder',
     'back.errorPresetsSave', 'back.errorPresetsDelete',
@@ -3057,6 +3080,7 @@ const LABELS = {
     seeded: 'cmSeeded',
     managed: 'cmManaged',
     version: 'cmVersion',
+    plugin: 'cmPlugin',
     // note presentation
     icon: 'iconClass',
     // settings
@@ -3695,13 +3719,27 @@ const REPOSITORY = 'https://github.com/J0nan/Trilium-Command-Maker-Plugin';
 const LATEST_RELEASE_API = 'https://api.github.com/repos/J0nan/Trilium-Command-Maker-Plugin/releases/latest';
 const LATEST_TAGS_API = 'https://api.github.com/repos/J0nan/Trilium-Command-Maker-Plugin/tags?per_page=50';
 const LATEST_RAW = 'https://raw.githubusercontent.com/J0nan/Trilium-Command-Maker-Plugin/main/package.json';
+const RAW_PREFIX = 'https://raw.githubusercontent.com/J0nan/Trilium-Command-Maker-Plugin';
+const BUNDLE_MAIN = RAW_PREFIX + '/main/dist/command-maker.js';
+
+/**
+ * Where the built runtime for one version tag lives. The release workflow
+ * commits `dist/` with every tag, so a raw URL serves exactly the bytes a
+ * release shipped without depending on an asset redirect.
+ */
+function bundleUrl(version) {
+    const tag = String(version == null ? '' : version).replace(/^v/i, '').trim();
+    return tag === '' ? BUNDLE_MAIN : RAW_PREFIX + '/v' + tag + '/dist/command-maker.js';
+}
 
 module.exports = {
     VERSION,
     REPOSITORY,
     LATEST_RELEASE_API,
     LATEST_TAGS_API,
-    LATEST_RAW
+    LATEST_RAW,
+    BUNDLE_MAIN,
+    bundleUrl
 };
 });
 __def("styles", function (module, exports, __require) {
@@ -3723,6 +3761,10 @@ const CSS = [
     '.cm-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--main-border-color,#ddd);}',
     '.cm-search{flex:1;padding:8px 10px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--input-background-color,#fafafa);color:inherit;font-size:15px;}',
     '.cm-close{border:0;background:transparent;color:inherit;font-size:16px;cursor:pointer;padding:4px 8px;}',
+    '.cm-update{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--main-border-color,#ddd);background:var(--accented-background-color,#eef2ff);font-size:12px;}',
+    '.cm-update-text{flex:1;min-width:0;overflow-wrap:anywhere;}',
+    '.cm-button.cm-update-apply{padding:3px 10px;font-size:12px;white-space:nowrap;}',
+    '.cm-update .cm-update-dismiss{border:0;background:transparent;color:inherit;font-size:13px;cursor:pointer;padding:2px 6px;}',
     '.cm-open-tab{border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer;padding:4px 10px;white-space:nowrap;}',
     '.cm-open-tab:hover{background:var(--accented-background-color,#eef2ff);}',
     '.cm-open-tab:disabled{opacity:.5;cursor:default;}',
@@ -4203,7 +4245,7 @@ __def("backend", function (module, exports, __require) {
  *
  * Actions: bootstrap | setLanguage | setPanelWidth | createTool | importTool |
  * addOption | updateOption | reorderOptions | importOptions | deleteOption |
- * setToolBase | setToolsRoot | savePreset | deletePreset | ensureTab
+ * setToolBase | setToolsRoot | savePreset | deletePreset | ensureTab | applyBundle
  */
 
 function beRun(params) {
@@ -5002,6 +5044,33 @@ function beRun(params) {
         return { tabNoteId: tab.noteId, htmlNoteId: html.noteId };
     }
 
+    /**
+     * Rewrite the frontend plugin note with a downloaded release bundle. The
+     * note is found through its `#cmPlugin` label, so a wrong id can never
+     * overwrite an unrelated note; the version label records what is installed.
+     */
+    function applyBundle() {
+        if (!labels.plugin) {
+            throw new Error(text('back.errorUnknownActionPrefix', 'Unknown action: ') + 'applyBundle');
+        }
+        if (!nonEmpty(options.bundle)) {
+            throw new Error(text('back.errorEmptyBundle', 'The downloaded update is empty'));
+        }
+        const root = api.getNoteWithLabel(labels.root);
+        if (!root) {
+            throw new Error(text('back.errorSettingsNote', 'Command Maker settings note not found'));
+        }
+        const plugin = api.getNoteWithLabel(labels.plugin) || findChildWithLabel(root, labels.plugin);
+        if (!plugin) {
+            throw new Error(text('back.errorPluginNote', 'Command Maker plugin script note not found'));
+        }
+        plugin.setContent(String(options.bundle));
+        if (nonEmpty(options.version)) {
+            root.setLabel(labels.version, String(options.version));
+        }
+        return { noteId: plugin.noteId, version: nonEmpty(options.version) ? String(options.version) : '' };
+    }
+
     function setLanguage() {
         const root = requireNote(options.rootId, text('back.errorSettingsNote', 'Command Maker settings note not found'));
         if (!labels.lang) {
@@ -5056,6 +5125,8 @@ function beRun(params) {
             return deletePreset();
         case 'ensureTab':
             return ensureTab();
+        case 'applyBundle':
+            return applyBundle();
         default:
             throw new Error(text('back.errorUnknownActionPrefix', 'Unknown action: ') + options.action);
     }
@@ -5099,6 +5170,8 @@ __def("ui", function (module, exports, __require) {
  *   version(): string
  *   repository(): string
  *   checkLatestVersion(): Promise<{ current, latest, outdated, error }>
+ *   checkUpdatesIfDue(): Promise<{ current, latest, outdated, error }>
+ *   installUpdate(): Promise<{ noteId, version, reloading }>
  *
  * This module never touches the Trilium `api` global: everything goes through
  * the controller, which keeps the DOM code testable with a plain DOM.
@@ -5331,7 +5404,24 @@ function openPalette(controller, options) {
 
     const modalHost = Dom.el('div', 'cm-modal-host');
 
+    // Update banner: the daily check fills it when a newer release exists, and
+    // its button downloads that release and rewrites the plugin note.
+    const updateBar = Dom.el('div', 'cm-update');
+    updateBar.setAttribute('role', 'status');
+    updateBar.style.display = 'none';
+    const updateText = Dom.el('span', 'cm-update-text', '');
+    const updateApply = Dom.el('button', 'cm-button cm-update-apply', I18n.t('update.install'));
+    updateApply.type = 'button';
+    const updateDismiss = Dom.el('button', 'cm-update-dismiss', '✕');
+    updateDismiss.type = 'button';
+    updateDismiss.title = I18n.t('update.dismiss');
+    updateDismiss.setAttribute('aria-label', I18n.t('update.dismiss'));
+    updateBar.appendChild(updateText);
+    updateBar.appendChild(updateApply);
+    updateBar.appendChild(updateDismiss);
+
     panel.appendChild(head);
+    panel.appendChild(updateBar);
     panel.appendChild(body);
     panel.appendChild(footer);
     if (embedded) {
@@ -5525,6 +5615,65 @@ function openPalette(controller, options) {
         setStatus(error && error.message ? error.message : String(error), true);
     }
 
+    // Version the user hid, and the one the bar currently offers, so a dismiss
+    // and a later check never resurrect the banner for the same release.
+    let dismissedUpdate = '';
+    let shownUpdate = '';
+
+    function hideUpdateBar() {
+        updateBar.style.display = 'none';
+    }
+
+    /** Fill the banner for an outdated status; hide it for anything else. */
+    function showUpdateBar(info) {
+        const outdated = Boolean(info && info.outdated && info.latest && !info.error);
+        if (!outdated || info.latest === dismissedUpdate) {
+            hideUpdateBar();
+            return;
+        }
+        shownUpdate = info.latest;
+        updateText.textContent = I18n.t('update.available', {
+            current: info.current,
+            latest: info.latest
+        });
+        updateApply.textContent = I18n.t('update.install');
+        versionLabel.textContent = 'v' + info.current + ' → v' + info.latest;
+        versionButton.title = I18n.t('status.installedLatest', {
+            current: info.current,
+            latest: info.latest
+        });
+        updateBar.style.display = '';
+    }
+
+    /**
+     * The daily check stays silent on failure: it only ever raises the banner
+     * for a published update, and the manual menu entry reports the errors.
+     */
+    function checkUpdatesIfDue() {
+        if (typeof controller.checkUpdatesIfDue !== 'function') {
+            return;
+        }
+        Promise.resolve(controller.checkUpdatesIfDue()).then(showUpdateBar, function () {
+            // Invisible on purpose; the menu can retry on demand.
+        });
+    }
+
+    async function installUpdate() {
+        updateApply.textContent = I18n.t('update.installing');
+        let installed;
+        try {
+            installed = await controller.installUpdate();
+        } catch (error) {
+            updateApply.textContent = I18n.t('update.install');
+            throw error;
+        }
+        dismissedUpdate = '';
+        hideUpdateBar();
+        versionLabel.textContent = 'v' + installed.version;
+        versionButton.title = I18n.t('status.latest', { version: installed.version });
+        setStatus(I18n.t('update.done', { version: installed.version }));
+    }
+
     async function checkForUpdates() {
         if (typeof controller.checkLatestVersion !== 'function') {
             setStatus(I18n.t('status.updateUnavailable'), true);
@@ -5536,10 +5685,7 @@ function openPalette(controller, options) {
             setStatus(I18n.t('status.updateError', { version: info.current, error: info.error }), true);
             return;
         }
-        if (info.outdated && info.latest) {
-            versionLabel.textContent = 'v' + info.current + ' → v' + info.latest;
-            versionButton.title = I18n.t('status.installedLatest', { current: info.current, latest: info.latest });
-        }
+        showUpdateBar(info);
 
         if (info.latest && info.latest === info.current) {
             setStatus(I18n.t('status.latest', { version: info.current }));
@@ -7489,6 +7635,11 @@ function openPalette(controller, options) {
         event.preventDefault();
         toggleMenu();
     });
+    updateApply.addEventListener('click', guarded(installUpdate, notify));
+    updateDismiss.addEventListener('click', function () {
+        dismissedUpdate = shownUpdate;
+        hideUpdateBar();
+    });
     newToolButton.addEventListener('click', toggleNewTool);
     importToolButton.addEventListener('click', openImportTool);
     exportToolButton.addEventListener('click', guarded(openExportTool, notify));
@@ -7529,6 +7680,8 @@ function openPalette(controller, options) {
         await controller.refresh();
         await runSearch();
     }, notify)();
+
+    checkUpdatesIfDue();
 
     return handle;
 }
@@ -8185,6 +8338,33 @@ function compareVersions(left, right) {
 }
 
 /**
+ * One HTTP read with a bounded wait. `fetch` is absent on some Trilium builds,
+ * and the callers turn that into a readable status instead of an exception.
+ */
+async function readUrl(url, kind) {
+    const options = { headers: { Accept: kind === 'json' ? 'application/json' : 'text/plain' } };
+    let timer = null;
+    if (typeof AbortController === 'function') {
+        const controller = new AbortController();
+        options.signal = controller.signal;
+        timer = setTimeout(function () {
+            controller.abort();
+        }, 10000);
+    }
+    try {
+        const response = await fetch(url, options);
+        if (!response || !response.ok) {
+            throw new Error('HTTP ' + (response ? response.status : 'unknown'));
+        }
+        return kind === 'json' ? response.json() : response.text();
+    } finally {
+        if (timer) {
+            clearTimeout(timer);
+        }
+    }
+}
+
+/**
  * Best-effort update check: the latest GitHub release, else the highest tag,
  * else the package.json version on the default branch. A private or unreachable
  * repository becomes a readable error.
@@ -8196,31 +8376,8 @@ async function checkLatestVersion() {
         return result;
     }
 
-    async function read(url, kind) {
-        const options = { headers: { Accept: kind === 'json' ? 'application/json' : 'text/plain' } };
-        let timer = null;
-        if (typeof AbortController === 'function') {
-            const controller = new AbortController();
-            options.signal = controller.signal;
-            timer = setTimeout(function () {
-                controller.abort();
-            }, 10000);
-        }
-        try {
-            const response = await fetch(url, options);
-            if (!response || !response.ok) {
-                throw new Error('HTTP ' + (response ? response.status : 'unknown'));
-            }
-            return kind === 'json' ? response.json() : response.text();
-        } finally {
-            if (timer) {
-                clearTimeout(timer);
-            }
-        }
-    }
-
     try {
-        const release = await read(Version.LATEST_RELEASE_API, 'json');
+        const release = await readUrl(Version.LATEST_RELEASE_API, 'json');
         const tag = release && (release.tag_name || release.name);
         if (tag) {
             result.latest = String(tag).replace(/^v/i, '');
@@ -8232,7 +8389,7 @@ async function checkLatestVersion() {
     }
 
     try {
-        const tags = await read(Version.LATEST_TAGS_API, 'json');
+        const tags = await readUrl(Version.LATEST_TAGS_API, 'json');
         if (Array.isArray(tags) && tags.length) {
             const names = tags
                 .map(function (tag) {
@@ -8253,7 +8410,7 @@ async function checkLatestVersion() {
     }
 
     try {
-        const text = String(await read(Version.LATEST_RAW, 'text') || '');
+        const text = String(await readUrl(Version.LATEST_RAW, 'text') || '');
         const match = /"version"\s*:\s*"([^"]+)"/.exec(text);
         if (match) {
             result.latest = match[1];
@@ -8267,6 +8424,231 @@ async function checkLatestVersion() {
         });
     }
     return result;
+}
+
+// --- automatic update check ------------------------------------------------
+// The palette opens from the launcher, so that is when Trilium can look for
+// updates without a background timer. The attempt and its result are remembered
+// for a day (localStorage when the webview allows it), so a page reload keeps
+// the banner without a second request, and the manual menu entry always
+// bypasses the throttle.
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const UPDATE_CHECKED_KEY = 'cmUpdateCheckedAt';
+const MAX_BUNDLE_CHARS = 4 * 1024 * 1024;
+const BUNDLE_MARKER = 'Command Maker - generated by tools/build.mjs';
+
+let updateInfo = null;
+let updateCheckedAt = 0;
+let storedUpdate;
+let updateCheckPromise = null;
+
+/** Last stored check, or null when missing, unreadable or from another build. */
+function readStoredUpdate() {
+    try {
+        if (typeof localStorage === 'undefined' || !localStorage) {
+            return null;
+        }
+        const raw = localStorage.getItem(UPDATE_CHECKED_KEY);
+        if (!raw) {
+            return null;
+        }
+        const parsed = JSON.parse(raw);
+        const at = Number(parsed && parsed.at);
+        if (!isFinite(at) || at <= 0) {
+            return null;
+        }
+        return {
+            at: at,
+            info: {
+                current: String(parsed.current == null ? '' : parsed.current),
+                latest: String(parsed.latest == null ? '' : parsed.latest),
+                outdated: Boolean(parsed.outdated),
+                error: String(parsed.error == null ? '' : parsed.error)
+            }
+        };
+    } catch (error) {
+        return null;
+    }
+}
+
+function rememberUpdateCheck(info) {
+    updateInfo = info;
+    updateCheckedAt = Date.now();
+    try {
+        if (typeof localStorage !== 'undefined' && localStorage) {
+            localStorage.setItem(UPDATE_CHECKED_KEY, JSON.stringify({
+                at: updateCheckedAt,
+                current: info.current,
+                latest: info.latest,
+                outdated: info.outdated,
+                error: info.error || ''
+            }));
+        }
+    } catch (error) {
+        // A private window may refuse storage; the in-memory cache still holds.
+    }
+}
+
+/** The manual check always looks again and refreshes the cached status. */
+async function checkLatestVersionNow() {
+    const info = await checkLatestVersion();
+    rememberUpdateCheck(info);
+    return info;
+}
+
+/** The stored result while it is under a day old and belongs to this build. */
+function cachedUpdate() {
+    let at = updateCheckedAt;
+    let info = updateInfo;
+    if (!info) {
+        if (storedUpdate === undefined) {
+            storedUpdate = readStoredUpdate();
+        }
+        if (!storedUpdate || storedUpdate.info.current !== Version.VERSION) {
+            return null;
+        }
+        at = storedUpdate.at;
+        info = storedUpdate.info;
+        updateInfo = info;
+        updateCheckedAt = at;
+    }
+    if (info.current !== Version.VERSION) {
+        return null;
+    }
+    if (!at || (Date.now() - at) >= UPDATE_CHECK_INTERVAL_MS) {
+        return null;
+    }
+    return info;
+}
+
+/**
+ * Run the network check only when the last result is a day old. Startup and
+ * every palette open call this; the first caller performs the request and the
+ * others share the same promise.
+ */
+function checkUpdatesIfDue() {
+    if (updateCheckPromise) {
+        return updateCheckPromise;
+    }
+    const cached = cachedUpdate();
+    if (cached) {
+        return Promise.resolve(cached);
+    }
+    updateCheckPromise = checkLatestVersionNow().then(function (info) {
+        updateCheckPromise = null;
+        return info;
+    }, function (error) {
+        updateCheckPromise = null;
+        throw error;
+    });
+    return updateCheckPromise;
+}
+
+function bundleVersion(text) {
+    const match = /const VERSION = '([^']+)';/.exec(String(text || ''));
+    return match ? match[1] : '';
+}
+
+/**
+ * Download the bundle published for `version` and refuse anything that is not
+ * that exact build: the file is about to replace the running plugin note, so a
+ * stale, truncated or unrelated response must never be written.
+ */
+async function downloadBundle(version) {
+    if (typeof fetch !== 'function') {
+        throw new Error(I18n.t('error.updateCheckUnavailable'));
+    }
+    const tagUrl = Version.bundleUrl(version);
+    let text = '';
+    try {
+        text = String(await readUrl(tagUrl, 'text') || '');
+    } catch (error) {
+        // The fallback only exists for a version announced through package.json
+        // on the default branch, where no tag exists yet. The version marker is
+        // still checked, so a newer branch can never slip in unannounced.
+        if (tagUrl === Version.BUNDLE_MAIN) {
+            throw error;
+        }
+        text = String(await readUrl(Version.BUNDLE_MAIN, 'text') || '');
+    }
+    if (text === '') {
+        throw new Error(I18n.t('error.updateNotABundle'));
+    }
+    if (text.length > MAX_BUNDLE_CHARS) {
+        throw new Error(I18n.t('error.updateBundleTooLarge'));
+    }
+    if (text.indexOf(BUNDLE_MARKER) === -1 || text.indexOf('function __def(') === -1) {
+        throw new Error(I18n.t('error.updateNotABundle'));
+    }
+    const found = bundleVersion(text);
+    if (compareVersions(found, version) !== 0) {
+        throw new Error(I18n.t('error.updateBundleMismatch', {
+            expected: String(version).replace(/^v/i, ''),
+            found: found || '?'
+        }));
+    }
+    return text;
+}
+
+function canReloadPage() {
+    try {
+        if (typeof window !== 'undefined' && window && window.location && typeof window.location.reload === 'function') {
+            return true;
+        }
+    } catch (error) {
+        // fall through to the Trilium api
+    }
+    try {
+        const apiRef = getApi();
+        return Boolean(apiRef && typeof apiRef.reload === 'function');
+    } catch (error) {
+        return false;
+    }
+}
+
+function reloadPage() {
+    try {
+        if (typeof window !== 'undefined' && window && window.location && typeof window.location.reload === 'function') {
+            window.location.reload();
+            return true;
+        }
+    } catch (error) {
+        // fall through to the Trilium api
+    }
+    try {
+        const apiRef = getApi();
+        if (apiRef && typeof apiRef.reload === 'function') {
+            apiRef.reload();
+            return true;
+        }
+    } catch (error) {
+        // the caller tells the user to reload by hand
+    }
+    return false;
+}
+
+/**
+ * Install the update the last check found: fetch the matching bundle, write it
+ * into the plugin note through the backend and refresh the page so the new
+ * script runs. Nothing here runs unless the user presses the update button.
+ */
+async function installUpdate() {
+    const info = updateInfo;
+    if (!info || !info.outdated || !info.latest) {
+        throw new Error(I18n.t('error.noUpdateAvailable'));
+    }
+    const bundle = await downloadBundle(info.latest);
+    const installed = await backendAction('applyBundle', {
+        bundle: bundle,
+        version: info.latest
+    });
+    const version = installed && installed.version ? installed.version : info.latest;
+    rememberUpdateCheck({ current: version, latest: version, outdated: false, error: '' });
+    const reloading = canReloadPage();
+    if (reloading) {
+        setTimeout(reloadPage, 1500);
+    }
+    return { noteId: installed ? installed.noteId : '', version: version, reloading: reloading };
 }
 
 /**
@@ -8332,7 +8714,11 @@ function controller() {
         repository() {
             return Version.REPOSITORY;
         },
-        checkLatestVersion: checkLatestVersion,
+        checkLatestVersion: checkLatestVersionNow,
+        /** Run the throttled daily check; resolves to the cached status. */
+        checkUpdatesIfDue: checkUpdatesIfDue,
+        /** Download and write the bundle the last check found. */
+        installUpdate: installUpdate,
 
         /** Surface a message in the Trilium UI; the footer keeps its own copy. */
         message(text) {

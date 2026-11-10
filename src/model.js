@@ -57,6 +57,7 @@ const LABELS = {
     seeded: 'cmSeeded',
     managed: 'cmManaged',
     version: 'cmVersion',
+    plugin: 'cmPlugin',
     // note presentation
     icon: 'iconClass',
     // settings

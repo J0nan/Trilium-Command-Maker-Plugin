@@ -12,7 +12,7 @@
  *
  * Actions: bootstrap | setLanguage | setPanelWidth | createTool | importTool |
  * addOption | updateOption | reorderOptions | importOptions | deleteOption |
- * setToolBase | setToolsRoot | savePreset | deletePreset | ensureTab
+ * setToolBase | setToolsRoot | savePreset | deletePreset | ensureTab | applyBundle
  */
 
 function beRun(params) {
@@ -811,6 +811,33 @@ function beRun(params) {
         return { tabNoteId: tab.noteId, htmlNoteId: html.noteId };
     }
 
+    /**
+     * Rewrite the frontend plugin note with a downloaded release bundle. The
+     * note is found through its `#cmPlugin` label, so a wrong id can never
+     * overwrite an unrelated note; the version label records what is installed.
+     */
+    function applyBundle() {
+        if (!labels.plugin) {
+            throw new Error(text('back.errorUnknownActionPrefix', 'Unknown action: ') + 'applyBundle');
+        }
+        if (!nonEmpty(options.bundle)) {
+            throw new Error(text('back.errorEmptyBundle', 'The downloaded update is empty'));
+        }
+        const root = api.getNoteWithLabel(labels.root);
+        if (!root) {
+            throw new Error(text('back.errorSettingsNote', 'Command Maker settings note not found'));
+        }
+        const plugin = api.getNoteWithLabel(labels.plugin) || findChildWithLabel(root, labels.plugin);
+        if (!plugin) {
+            throw new Error(text('back.errorPluginNote', 'Command Maker plugin script note not found'));
+        }
+        plugin.setContent(String(options.bundle));
+        if (nonEmpty(options.version)) {
+            root.setLabel(labels.version, String(options.version));
+        }
+        return { noteId: plugin.noteId, version: nonEmpty(options.version) ? String(options.version) : '' };
+    }
+
     function setLanguage() {
         const root = requireNote(options.rootId, text('back.errorSettingsNote', 'Command Maker settings note not found'));
         if (!labels.lang) {
@@ -865,6 +892,8 @@ function beRun(params) {
             return deletePreset();
         case 'ensureTab':
             return ensureTab();
+        case 'applyBundle':
+            return applyBundle();
         default:
             throw new Error(text('back.errorUnknownActionPrefix', 'Unknown action: ') + options.action);
     }

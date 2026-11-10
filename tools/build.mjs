@@ -99,10 +99,11 @@ function buildInstaller(bundle, version) {
  * The installer runs on the backend before the bundle exists, so it hard-codes
  * the label names it needs. Fail the build when one of them drifts away from
  * Model.LABELS: a typo would otherwise create a second, unfindable root note.
- * `cmPlugin` and `cmShortcut` are installer-only attributes the plugin never
- * reads, so they are not part of Model.LABELS.
+ * `cmShortcut` is an installer-only attribute the plugin never reads, so it is
+ * not part of Model.LABELS; `cmPlugin` is in the model because the in-plugin
+ * update finds the script note through it.
  */
-const INSTALLER_ONLY_LABELS = ['cmPlugin', 'cmShortcut'];
+const INSTALLER_ONLY_LABELS = ['cmShortcut'];
 
 function assertInstallerLabels(template) {
     const model = fs.readFileSync(path.join(sourceDir, 'model.js'), 'utf8');

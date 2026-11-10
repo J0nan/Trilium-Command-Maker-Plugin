@@ -1267,6 +1267,37 @@ test('ensureTab creates one render note, one HTML wrapper and one plugin clone',
     );
 });
 
+test('applyBundle rewrites the plugin script and records the new version', () => {
+    const { api, beRun, result } = seedApi();
+    const plugin = api.createNewNote({
+        parentNoteId: result.rootId,
+        title: 'Command Maker.js',
+        type: 'code',
+        mime: 'application/javascript;env=frontend',
+        content: 'old bundle'
+    }).note;
+    plugin.setLabel(labels.plugin, '');
+
+    const applied = beRun({ action: 'applyBundle', labels, bundle: 'new bundle', version: '9.9.9' });
+
+    assert.equal(applied.noteId, plugin.noteId);
+    assert.equal(applied.version, '9.9.9');
+    assert.equal(plugin.getContent(), 'new bundle');
+    assert.equal(api.getNote(result.rootId).getLabelValue(labels.version), '9.9.9');
+});
+
+test('applyBundle refuses an empty bundle or a missing plugin note', () => {
+    const { beRun } = seedApi();
+    assert.throws(
+        () => beRun({ action: 'applyBundle', labels, bundle: '', version: '9.9.9' }),
+        /empty/i
+    );
+    assert.throws(
+        () => beRun({ action: 'applyBundle', labels, bundle: 'bundle', version: '9.9.9' }),
+        /plugin/i
+    );
+});
+
 test('unknown actions throw', () => {
     const api = createApi();
     const beRun = serialise(Backend.beRun, api);

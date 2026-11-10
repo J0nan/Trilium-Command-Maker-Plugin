@@ -325,6 +325,9 @@ function makeApi(fixture) {
             if (params[0].action === 'ensureTab') {
                 return { tabNoteId: 'tab-note', htmlNoteId: 'tab-html' };
             }
+            if (params[0].action === 'applyBundle') {
+                return { noteId: 'plugin-note', version: params[0].version };
+            }
             if (params[0].action === 'updateOption') {
                 const option = params[0].option || {};
                 const saved = { cmOption: '' };
@@ -2040,4 +2043,66 @@ test('closing the reorder modal discards the changed order', async () => {
         'closing without Save writes nothing'
     );
     assert.deepEqual(env.calls.backend.filter((call) => call.action === 'updateOption'), []);
+});
+
+
+test('the daily check shows an update bar whose button installs the published bundle', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    const bundle = buildBundle().replace(
+        "const VERSION = '" + Version.VERSION + "'",
+        "const VERSION = '9.9.9'"
+    );
+    assert.ok(bundle.indexOf("const VERSION = '9.9.9'") !== -1, 'the fake bundle declares the new version');
+    const fetchCalls = [];
+    const fakeFetch = async function (url) {
+        fetchCalls.push(url);
+        if (url.indexOf('/releases/latest') !== -1) {
+            return {
+                ok: true,
+                async json() {
+                    return { tag_name: 'v9.9.9' };
+                },
+                async text() {
+                    return '';
+                }
+            };
+        }
+        return {
+            ok: true,
+            async json() {
+                return {};
+            },
+            async text() {
+                return bundle;
+            }
+        };
+    };
+    run(dom, env.api, env.navigator, { fetch: fakeFetch });
+
+    const bar = await waitFor(() => {
+        const node = find(dom.body, (entry) => classed(entry, 'cm-update'));
+        return node && node.style.display === '' ? node : null;
+    }, 'update bar');
+    assert.match(
+        find(bar, (node) => classed(node, 'cm-update-text')).textContent,
+        /v9\.9\.9/,
+        'the bar names the published version'
+    );
+
+    find(bar, (node) => classed(node, 'cm-update-apply')).click();
+    await waitFor(
+        () => env.calls.backend.filter((call) => call.action === 'applyBundle').length > 0,
+        'applyBundle action'
+    );
+    const apply = env.calls.backend.filter((call) => call.action === 'applyBundle')[0];
+    assert.equal(apply.version, '9.9.9');
+    assert.equal(apply.bundle, bundle, 'the downloaded bundle is written as-is');
+    await waitFor(() => {
+        const status = find(dom.body, (node) => classed(node, 'cm-status'));
+        return status && status.textContent.indexOf('9.9.9') !== -1;
+    }, 'updated status');
+    assert.equal(bar.style.display, 'none', 'the bar disappears once the update lands');
+    assert.deepEqual(env.calls.errors, []);
 });
