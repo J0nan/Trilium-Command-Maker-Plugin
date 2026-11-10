@@ -495,6 +495,7 @@ async function exportTool(noteId) {
     return ToolFile.buildToolFile({
         title: note.title,
         category: entry.category,
+        categoryPath: entry.categoryPath,
         base: definition.base,
         description: definition.description,
         tags: labels[Model.LABELS.tags] || '',

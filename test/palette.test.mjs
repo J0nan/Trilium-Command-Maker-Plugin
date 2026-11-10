@@ -846,6 +846,7 @@ const portableTool = {
     tool: {
         title: 'ripgrep',
         category: 'Search',
+        categoryPath: ['Infrastructure', 'Search'],
         base: 'rg',
         description: 'Search text recursively.',
         content: '<h2>What is?</h2><p>Fast search.</p><h2>Official links</h2><ul></ul><h2>Useful links</h2><ul></ul>',
@@ -892,6 +893,11 @@ test('Import tool parses a tool file, copies the AI prompt and imports the tool'
     }, 'parse status');
     assert.ok(buttonWithText(modal, 'Import tool').disabled === false, 'the import action is enabled');
     assert.ok(
+        find(modal, (node) => classed(node, 'cm-import-flag')
+            && node.textContent === 'Category: Infrastructure / Search'),
+        'the preview shows the whole category path'
+    );
+    assert.ok(
         env.calls.messages.some((message) => /Parsed tool "ripgrep"/.test(message)),
         'the parse status is also shown as a Trilium message'
     );
@@ -901,6 +907,7 @@ test('Import tool parses a tool file, copies the AI prompt and imports the tool'
         return env.calls.backend.filter((entry) => entry.action === 'importTool')[0];
     }, 'importTool backend call');
     assert.equal(call.tool.title, 'ripgrep');
+    assert.deepEqual(Array.from(call.tool.categoryPath), ['Infrastructure', 'Search'], 'the imported path reaches the backend');
     assert.equal(call.tool.options.length, 2);
     assert.equal(call.tool.options[1].flag, '', 'the positional option survives the import');
     await waitFor(() => {

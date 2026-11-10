@@ -120,7 +120,7 @@ Tools/                              #cmTools  (move it anywhere, the label follo
         └── ...
 ```
 
-Folders can nest as deep as you like: a tool inside `Tools/Infrastructure/Wifi` is listed and shown as **Infrastructure / Wifi**, and every folder in the chain is searchable. The category picker in the new-tool form still creates one folder directly under `Tools`; create subcategories by hand in the note tree.
+Folders can nest as deep as you like: a tool inside `Tools/Infrastructure/Wifi` is listed and shown as **Infrastructure / Wifi**, and every folder in the chain is searchable. The category picker in the new-tool form still creates one folder directly under `Tools`; create subcategories by hand in the note tree, or import a tool file that carries a category path (below).
 
 The `Tools` folder is found by its `#cmTools` label, so you can drag it to another path and the plugin keeps working. Use **Tools folder → Use the active note** in the palette (or the note-ID field there) to pick a different root: moving the root **moves the `#cmTools` label** from the old folder to the new one, and only one folder should carry the label; if you label a second folder by hand while another still holds it, the palette picks one of them unpredictably, so use the palette action instead of manual labelling.
 
@@ -234,6 +234,7 @@ The footer has **Import tool** and **Export tool** next to the option actions. B
   "version": 2,
   "tool": {
     "title": "ripgrep",
+    "categoryPath": ["Infrastructure", "Search"],
     "category": "Search",
     "base": "rg",
     "description": "Search text recursively.",
@@ -266,8 +267,9 @@ The footer has **Import tool** and **Export tool** next to the option actions. B
 }
 ```
 
-- **Export tool** reads the selected tool, its three standard children, every option with its note body, the `#cmTags` value and the presets, and shows the JSON. **Copy JSON** copies it; **Download .json** saves it as `<tool>.tool.json`. A version-2 file is therefore a real backup: importing it recreates the tool with nothing the file holds dropped. (Preset values are keyed by option note IDs, so after importing into a *different* instance the stored preset values may not line up with the recreated option notes.) The file must carry `"version": 2` (or no version at all, for hand-written objects, which are read in the current shape); a file declaring any other version is rejected by **Parse** and nothing is written.
-- **Import tool** accepts the same JSON from a paste, the active note or a file. It previews the title, category, base and options, then creates a new tool note under that category. A file listing more than 200 options imports only the first 200, with a warning in the preview. Existing tools are never modified or overwritten.
+- **Export tool** reads the selected tool, its three standard children, every option with its note body, the `#cmTags` value, the presets and the folder path that groups it, and shows the JSON. **Copy JSON** copies it; **Download .json** saves it as `<tool>.tool.json`. A version-2 file is therefore a real backup: importing it recreates the tool, its nested category folders included, with nothing the file holds dropped. (Preset values are keyed by option note IDs, so after importing into a *different* instance the stored preset values may not line up with the recreated option notes.) The file must carry `"version": 2` (or no version at all, for hand-written objects, which are read in the current shape); a file declaring any other version is rejected by **Parse** and nothing is written.
+- **Import tool** accepts the same JSON from a paste, the active note or a file. It previews the title, category path, base and options, then creates the new tool note in that folder, creating the nested category folders when they do not exist yet. A file listing more than 200 options imports only the first 200, with a warning in the preview. Existing tools are never modified or overwritten.
+- **Category path.** `categoryPath` is the folder chain from the `Tools` root to the tool's own folder, outermost first: `["Infrastructure", "Wifi"]` puts the tool in `Tools/Infrastructure/Wifi`. `category` keeps the last entry so older readers still know where the tool belongs; the importer recomputes it from the path. Files exported before this field existed have no `categoryPath`, and still import into one folder, so nothing needs converting. A path deeper than 16 folders is truncated with a warning in the preview.
 
 ### Generating the file with an AI model
 

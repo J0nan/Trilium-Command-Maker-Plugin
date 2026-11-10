@@ -57,6 +57,15 @@ function codeCopyButton() {
 
 const NEW_CATEGORY = '__new__';
 
+/** Category line of the import preview: the whole folder path when there is one. */
+function categoryPreview(tool) {
+    const safe = tool || {};
+    if (Array.isArray(safe.categoryPath) && safe.categoryPath.length) {
+        return safe.categoryPath.join(' / ');
+    }
+    return safe.category || I18n.t('importTool.uncategorized');
+}
+
 let instance = null;
 
 /**
@@ -1526,7 +1535,7 @@ function openPalette(controller, options) {
             }
             [
                 [I18n.t('importTool.fieldTitle'), tool.title],
-                [I18n.t('importTool.fieldCategory'), tool.category || I18n.t('importTool.uncategorized')],
+                [I18n.t('importTool.fieldCategory'), categoryPreview(tool)],
                 [I18n.t('importTool.fieldBase'), tool.base || Model.deriveBase(tool.title)]
             ].forEach(function (line) {
                 previewList.appendChild(Dom.el('div', 'cm-import-flag', line[0] + ': ' + line[1]));

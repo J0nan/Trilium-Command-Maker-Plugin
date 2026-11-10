@@ -248,6 +248,7 @@ test('exportTool builds a portable file with raw contents and every option', asy
     assert.equal(file.version, 2, 'exports use the lossless v2 format');
     assert.equal(file.tool.title, 'ffmpeg');
     assert.equal(file.tool.category, 'Media');
+    assert.deepEqual(file.tool.categoryPath, ['Media'], 'a flat folder exports as a one-entry path');
     assert.equal(file.tool.base, 'ffmpeg');
     assert.equal(file.tool.description, 'Media toolkit');
     assert.equal(file.tool.tags, 'video, media', 'the backup carries the tool tags');

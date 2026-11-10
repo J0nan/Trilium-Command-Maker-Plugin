@@ -15,12 +15,16 @@
  *   kind: 'command-maker-tool',
  *   version: 2,
  *   tool: {
- *     title, category, base, description, tags,
+ *     title, category, categoryPath, base, description, tags,
  *     content, install, usage, help,
  *     options: [ { ...option fields, content }, ... ],
  *     presets: [ { name, values }, ... ]
  *   }
  * }
+ *
+ * `categoryPath` is the folder chain from the Tools root to the tool's own
+ * folder, outermost first (`["Infrastructure", "Wifi"]`); `category` repeats
+ * its last entry so older readers still know where the tool goes.
  *
  * An option uses the same fields the backend option notes store, with the
  * portable names label/help/values/default so an AI model can fill it in
@@ -35,6 +39,8 @@ const FILE_VERSION = 2;
 // One tool file must not be able to create thousands of notes in a single
 // import: the same bound the parser applies to examples (MAX_EXAMPLES).
 const MAX_OPTIONS = 200;
+// A hostile or generated file must not create a deep folder tree either.
+const MAX_CATEGORY_DEPTH = 16;
 
 function text(value) {
     return value === undefined || value === null ? '' : String(value);
@@ -178,9 +184,43 @@ function normaliseOption(entry, index, warnings) {
     };
 }
 
+/**
+ * Category chain (outermost first) -> the folder titles the backend creates.
+ * Only strings count, so a hand-edited file cannot smuggle objects or numbers
+ * into folder titles; a file without a usable chain falls back to its single
+ * `category`, which is how version-2 files exported before nesting support
+ * still land in the right folder.
+ */
+function normaliseCategoryPath(raw, fallback, warnings) {
+    const out = [];
+    if (Array.isArray(raw)) {
+        for (let index = 0; index < raw.length; index += 1) {
+            if (typeof raw[index] !== 'string') {
+                continue;
+            }
+            const next = raw[index].trim();
+            if (next !== '') {
+                out.push(next);
+            }
+        }
+    }
+    if (out.length === 0 && nonEmpty(fallback)) {
+        out.push(trimmed(fallback));
+    }
+    if (out.length > MAX_CATEGORY_DEPTH) {
+        warnings.push({
+            code: 'category-path-too-deep',
+            message: I18n.t('warn.categoryPathTooDeep', { max: MAX_CATEGORY_DEPTH })
+        });
+        out.length = MAX_CATEGORY_DEPTH;
+    }
+    return out;
+}
+
 /** Tool object (exported or hand-written) -> the canonical portable tool. */
 function normaliseTool(spec, warnings) {
     const source = spec && typeof spec === 'object' && !Array.isArray(spec) ? spec : {};
+    const categoryPath = normaliseCategoryPath(source.categoryPath, source.category, warnings);
     const options = [];
     if (Array.isArray(source.options)) {
         for (let index = 0; index < source.options.length; index += 1) {
@@ -198,7 +238,8 @@ function normaliseTool(spec, warnings) {
 
     return {
         title: trimmed(source.title),
-        category: trimmed(source.category),
+        categoryPath: categoryPath,
+        category: categoryPath.length ? categoryPath[categoryPath.length - 1] : trimmed(source.category),
         base: trimmed(source.base),
         description: trimmed(source.description),
         tags: trimmed(source.tags),
@@ -293,6 +334,7 @@ module.exports = {
     TOOL_KIND,
     FILE_VERSION,
     MAX_OPTIONS,
+    MAX_CATEGORY_DEPTH,
     normalisePresets,
     buildToolFile,
     parseToolFile

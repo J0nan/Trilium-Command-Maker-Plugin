@@ -134,6 +134,61 @@ test('a built file survives a JSON round trip through parseToolFile', () => {
     assert.deepEqual(parsed.tool, file.tool);
 });
 
+test('a nested category path survives export and re-import', () => {
+    const file = ToolFile.buildToolFile({
+        title: 'iwconfig',
+        category: 'Wifi',
+        categoryPath: ['Infrastructure', 'Wifi']
+    });
+    assert.deepEqual(file.tool.categoryPath, ['Infrastructure', 'Wifi']);
+    assert.equal(file.tool.category, 'Wifi', 'the leaf stays in category for older readers');
+
+    const parsed = ToolFile.parseToolFile(JSON.stringify(file));
+    assert.deepEqual(parsed.tool.categoryPath, ['Infrastructure', 'Wifi']);
+    assert.equal(parsed.tool.category, 'Wifi');
+});
+
+test('a file without a category path derives it from its category', () => {
+    const flat = ToolFile.parseToolFile(JSON.stringify({ tool: { title: 'x', category: 'Search' } }));
+    assert.deepEqual(flat.tool.categoryPath, ['Search']);
+    assert.equal(flat.tool.category, 'Search');
+
+    const bare = ToolFile.parseToolFile(JSON.stringify({ tool: { title: 'y' } }));
+    assert.deepEqual(bare.tool.categoryPath, []);
+    assert.equal(bare.tool.category, '');
+});
+
+test('category path entries are cleaned and its depth is capped', () => {
+    const parsed = ToolFile.parseToolFile(JSON.stringify({
+        tool: {
+            title: 'x',
+            category: 'Wifi',
+            categoryPath: ['  Infrastructure  ', '', null, 7, 'Wifi']
+        }
+    }));
+    assert.deepEqual(parsed.tool.categoryPath, ['Infrastructure', 'Wifi']);
+    assert.equal(parsed.tool.category, 'Wifi');
+
+    const notAnArray = ToolFile.parseToolFile(JSON.stringify({
+        tool: { title: 'x', category: 'Media', categoryPath: 'Media' }
+    }));
+    assert.deepEqual(notAnArray.tool.categoryPath, ['Media'], 'a non-array path falls back to the category');
+
+    const emptied = ToolFile.parseToolFile(JSON.stringify({
+        tool: { title: 'x', category: 'Media', categoryPath: [' ', null] }
+    }));
+    assert.deepEqual(emptied.tool.categoryPath, ['Media'], 'a path with no usable entry falls back to the category');
+
+    const deep = [];
+    for (let index = 0; index < ToolFile.MAX_CATEGORY_DEPTH + 3; index += 1) {
+        deep.push('c' + index);
+    }
+    const capped = ToolFile.parseToolFile(JSON.stringify({ tool: { title: 'deep', categoryPath: deep } }));
+    assert.equal(capped.tool.categoryPath.length, ToolFile.MAX_CATEGORY_DEPTH);
+    assert.ok(capped.warnings.some((warning) => warning.code === 'category-path-too-deep'));
+    assert.equal(capped.tool.category, 'c' + (ToolFile.MAX_CATEGORY_DEPTH - 1), 'the category follows the capped path');
+});
+
 test('parseToolFile accepts a bare tool object and a tool envelope', () => {
     const bare = ToolFile.parseToolFile(JSON.stringify(sampleTool()));
     assert.equal(bare.tool.title, 'ffmpeg');
