@@ -59,6 +59,8 @@ const EN = {
     'reorder.moveDown': 'Move down',
     'reorder.moveUpLabel': 'Move "{title}" up',
     'reorder.moveDownLabel': 'Move "{title}" down',
+    'reorder.preview': 'Command order',
+    'reorder.previewHint': 'Muted flags have no value yet.',
     'ui.edit': 'Edit',
     'ui.editOptionsConfig': 'Edit options configuration',
     'ui.done': 'Done',
@@ -505,6 +507,8 @@ const ES = {
     'reorder.moveDown': 'Bajar',
     'reorder.moveUpLabel': 'Subir "{title}"',
     'reorder.moveDownLabel': 'Bajar "{title}"',
+    'reorder.preview': 'Orden del comando',
+    'reorder.previewHint': 'Los flags atenuados aún no tienen valor.',
     'ui.edit': 'Editar',
     'ui.editOptionsConfig': 'Editar configuración de opciones',
     'ui.done': 'Listo',
@@ -3765,10 +3769,17 @@ const CSS = [
     '.cm-button.cm-options-reorder{padding:2px 10px;font-size:12px;}',
     '.cm-button.cm-options-edit{padding:2px 10px;font-size:12px;}',
     '.cm-filter{width:100%;box-sizing:border-box;margin-bottom:4px;}',
+    '.cm-reorder-body{display:flex;flex-direction:column;gap:8px;}',
+    '.cm-reorder-preview{position:sticky;top:0;z-index:1;display:flex;flex-direction:column;gap:4px;padding:6px 0;background:var(--main-background-color,#fff);border-bottom:1px solid var(--main-border-color,#ddd);}',
+    '.cm-reorder-preview-label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;opacity:.65;}',
+    '.cm-reorder-flags{display:flex;flex-wrap:wrap;gap:4px;}',
+    '.cm-reorder-flag{font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;padding:1px 6px;border-radius:4px;border:1px solid transparent;background:var(--accented-background-color,#eef2ff);opacity:.4;}',
+    '.cm-reorder-flag.is-emitted{opacity:1;border-color:var(--link-color,#4f8cff);}',
     '.cm-reorder-list{display:flex;flex-direction:column;gap:4px;}',
     '.cm-reorder-item{display:flex;align-items:center;gap:8px;padding:4px 6px;border:1px solid var(--main-border-color,#ddd);border-radius:6px;}',
     '.cm-reorder-item.is-dragging{opacity:.45;}',
-    '.cm-reorder-item.is-drop-target{border-color:var(--link-color,#4f8cff);box-shadow:inset 0 0 0 1px var(--link-color,#4f8cff);}',
+    '.cm-reorder-item.is-drop-before{box-shadow:inset 0 2px 0 0 var(--link-color,#4f8cff);}',
+    '.cm-reorder-item.is-drop-after{box-shadow:inset 0 -2px 0 0 var(--link-color,#4f8cff);}',
     '.cm-reorder-handle{opacity:.45;cursor:grab;user-select:none;font-size:14px;line-height:1;}',
     '.cm-reorder-pos{width:2em;text-align:end;opacity:.6;font-variant-numeric:tabular-nums;}',
     '.cm-reorder-info{flex:1;min-width:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}',
@@ -6868,35 +6879,148 @@ function openPalette(controller, options) {
             return;
         }
 
-        const bodyNode = Dom.el('div', '');
+        const inlineNames = Render.placeholderNames(state.definition.base);
+        const bodyNode = Dom.el('div', 'cm-reorder-body');
         bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('reorder.note')));
+        const previewNode = Dom.el('div', 'cm-reorder-preview');
+        previewNode.setAttribute('title', I18n.t('reorder.previewHint'));
+        previewNode.appendChild(Dom.el('div', 'cm-reorder-preview-label', I18n.t('reorder.preview')));
+        const stripNode = Dom.el('div', 'cm-reorder-flags');
+        previewNode.appendChild(stripNode);
+        bodyNode.appendChild(previewNode);
         const listNode = Dom.el('div', 'cm-reorder-list');
         bodyNode.appendChild(listNode);
+
+        let scrollBody = null;
+        let dragIndex = null;
+
+        function flagLabel(option) {
+            if (option.mode === 'inline') {
+                return option.placeholder ? '{{' + option.placeholder + '}}' : option.title;
+            }
+            if (option.flag) {
+                return option.flag;
+            }
+            if (option.placeholder) {
+                return '{{' + option.placeholder + '}}';
+            }
+            return option.title;
+        }
+
+        function isEmitted(option) {
+            if (option.mode === 'inline') {
+                return false;
+            }
+            if (option.placeholder && inlineNames.indexOf(option.placeholder) !== -1) {
+                return false;
+            }
+            const value = state.values[Render.valueKey(option)];
+            if (Render.isEmpty(value)) {
+                return false;
+            }
+            if (option.type === 'boolean' && !Render.isTruthyFlag(value)) {
+                return false;
+            }
+            if (option.type === 'number' && !isFinite(Number(value))) {
+                return false;
+            }
+            return true;
+        }
+
+        function renderPreview() {
+            stripNode.textContent = '';
+            items.forEach(function (option) {
+                const chip = Dom.el('code', 'cm-reorder-flag' + (isEmitted(option) ? ' is-emitted' : ''), flagLabel(option));
+                chip.setAttribute('title', option.title);
+                stripNode.appendChild(chip);
+            });
+        }
+
+        function captureTops() {
+            const tops = new Map();
+            Array.prototype.forEach.call(listNode.children, function (node) {
+                if (node.cmNoteId && typeof node.getBoundingClientRect === 'function') {
+                    tops.set(node.cmNoteId, node.getBoundingClientRect().top);
+                }
+            });
+            return tops;
+        }
+
+        function animateRows(previousTops) {
+            if (!previousTops || !previousTops.size) {
+                return;
+            }
+            Array.prototype.forEach.call(listNode.children, function (node) {
+                if (!node.cmNoteId || typeof node.animate !== 'function' || typeof node.getBoundingClientRect !== 'function') {
+                    return;
+                }
+                const before = previousTops.get(node.cmNoteId);
+                if (before === undefined) {
+                    return;
+                }
+                const delta = before - node.getBoundingClientRect().top;
+                if (!isFinite(delta) || Math.abs(delta) < 1) {
+                    return;
+                }
+                node.animate(
+                    [{ transform: 'translateY(' + delta + 'px)' }, { transform: 'translateY(0)' }],
+                    { duration: 180, easing: 'ease-out' }
+                );
+            });
+        }
+
+        function dropAfter(row, event) {
+            if (typeof row.getBoundingClientRect !== 'function' || !event || typeof event.clientY !== 'number') {
+                return false;
+            }
+            const rect = row.getBoundingClientRect();
+            return Boolean(rect) && event.clientY > rect.top + rect.height / 2;
+        }
+
+        function autoScroll(event) {
+            if (!scrollBody || typeof scrollBody.getBoundingClientRect !== 'function' || !event || typeof event.clientY !== 'number') {
+                return;
+            }
+            const rect = scrollBody.getBoundingClientRect();
+            if (!rect) {
+                return;
+            }
+            const threshold = 48;
+            const speed = 18;
+            const current = Number(scrollBody.scrollTop) || 0;
+            if (event.clientY < rect.top + threshold) {
+                scrollBody.scrollTop = Math.max(0, current - speed);
+            } else if (event.clientY > rect.bottom - threshold) {
+                scrollBody.scrollTop = current + speed;
+            }
+        }
 
         function move(index, delta) {
             const target = index + delta;
             if (target < 0 || target >= items.length) {
                 return;
             }
+            const previousTops = captureTops();
             const moved = items.splice(index, 1)[0];
             items.splice(target, 0, moved);
-            renderItems();
+            renderItems(previousTops);
         }
-
-        let dragIndex = null;
 
         function clearDropTargets() {
             Array.prototype.forEach.call(listNode.children, function (node) {
                 if (node.classList) {
+                    node.classList.remove('is-drop-before');
+                    node.classList.remove('is-drop-after');
                     node.classList.remove('is-drop-target');
                 }
             });
         }
 
-        function renderItems() {
+        function renderItems(previousTops) {
             listNode.textContent = '';
             items.forEach(function (option, index) {
                 const row = Dom.el('div', 'cm-reorder-item');
+                row.cmNoteId = option.noteId;
                 row.draggable = true;
                 row.setAttribute('draggable', 'true');
                 const handle = Dom.el('span', 'cm-reorder-handle', '⠿');
@@ -6945,8 +7069,9 @@ function openPalette(controller, options) {
                     if (event && event.dataTransfer) {
                         event.dataTransfer.dropEffect = 'move';
                     }
+                    autoScroll(event);
                     clearDropTargets();
-                    row.classList.add('is-drop-target');
+                    row.classList.add(dropAfter(row, event) ? 'is-drop-after' : 'is-drop-before');
                 });
                 row.addEventListener('drop', function (event) {
                     if (dragIndex === null) {
@@ -6960,22 +7085,18 @@ function openPalette(controller, options) {
                     // Drop above the row midpoint inserts before it and below
                     // inserts after it. Without geometry (tests, odd browsers)
                     // the drop falls back to "before this row".
-                    const rect = typeof row.getBoundingClientRect === 'function'
-                        ? row.getBoundingClientRect()
-                        : null;
-                    const after = rect && event && typeof event.clientY === 'number'
-                        ? event.clientY > rect.top + rect.height / 2
-                        : false;
+                    const after = dropAfter(row, event);
                     let target = index + (after ? 1 : 0);
                     if (from < target) {
                         target -= 1;
                     }
                     target = Math.max(0, Math.min(items.length - 1, target));
+                    const previousTops = captureTops();
                     if (target !== from) {
                         const moved = items.splice(from, 1)[0];
                         items.splice(target, 0, moved);
                     }
-                    renderItems();
+                    renderItems(previousTops);
                 });
                 row.addEventListener('dragend', function () {
                     dragIndex = null;
@@ -6989,6 +7110,8 @@ function openPalette(controller, options) {
 
                 listNode.appendChild(row);
             });
+            renderPreview();
+            animateRows(previousTops);
         }
 
         renderItems();
@@ -7014,7 +7137,8 @@ function openPalette(controller, options) {
         actionsNode.appendChild(save);
         actionsNode.appendChild(modalCloseButton());
 
-        modalShell(I18n.t('reorder.title', { title: tool.title }), bodyNode, actionsNode);
+        const shell = modalShell(I18n.t('reorder.title', { title: tool.title }), bodyNode, actionsNode);
+        scrollBody = shell.body;
     }
 
     function openOptionModal(existing) {

@@ -1960,11 +1960,14 @@ test('reorder options modal supports drag and drop', async () => {
     find(dom.body, (node) => classed(node, 'cm-options-reorder')).click();
     const modal = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-modal')), 'reorder modal');
     let items = findAll(modal, (node) => classed(node, 'cm-reorder-item'));
+    const previewFlags = () => findAll(modal, (node) => classed(node, 'cm-reorder-flag'))
+        .map((node) => node.textContent);
+    assert.deepEqual(previewFlags(), ['-i', '-c:v', '-v'], 'the flag strip starts in command order');
 
     items[2].dispatch('dragstart');
     assert.equal(classed(items[2], 'is-dragging'), true, 'the dragged row is marked');
     items[0].dispatch('dragover');
-    assert.equal(classed(items[0], 'is-drop-target'), true, 'the hovered row is marked');
+    assert.equal(classed(items[0], 'is-drop-before'), true, 'the hovered row shows the drop line');
     items[0].dispatch('drop');
 
     items = findAll(modal, (node) => classed(node, 'cm-reorder-item'));
@@ -1972,6 +1975,7 @@ test('reorder options modal supports drag and drop', async () => {
         items.map((node) => find(node, (entry) => classed(entry, 'cm-opt-title')).textContent),
         ['Verbose', 'Input file', 'Video codec']
     );
+    assert.deepEqual(previewFlags(), ['-v', '-i', '-c:v'], 'the flag strip follows the drop');
 
     buttonWithText(modal, 'Save').click();
     await waitFor(
@@ -1984,4 +1988,34 @@ test('reorder options modal supports drag and drop', async () => {
         { noteId: 'o1', order: 20 },
         { noteId: 'o2', order: 30 }
     ]);
+});
+
+test('closing the reorder modal discards the changed order', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+
+    find(dom.body, (node) => classed(node, 'cm-options-reorder')).click();
+    const modal = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-modal')), 'reorder modal');
+    const items = findAll(modal, (node) => classed(node, 'cm-reorder-item'));
+
+    find(items[0], (node) => node.getAttribute('aria-label') === 'Move "Input file" down').click();
+    assert.deepEqual(
+        findAll(modal, (node) => classed(node, 'cm-reorder-flag')).map((node) => node.textContent),
+        ['-c:v', '-i', '-v'],
+        'the strip reflects the pending move'
+    );
+
+    buttonWithText(modal, 'Close').click();
+    assert.deepEqual(
+        env.calls.backend.filter((call) => call.action === 'reorderOptions'),
+        [],
+        'closing without Save writes nothing'
+    );
+    assert.deepEqual(env.calls.backend.filter((call) => call.action === 'updateOption'), []);
 });
