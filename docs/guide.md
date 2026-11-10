@@ -199,7 +199,7 @@ Options live under the tool's `Options` folder. Each option is a note whose titl
 | `#cmQuote` | `none`, `single`, `double` (emitted segments) | `none` |
 | `#cmSep` | `space` or `=` (`--flag=value`) | `space` |
 
-Required options are grouped under a **Required** heading before the **Optional** ones, and produce a warning until they have a value. Set one with `#cmRequired=true`; the **Add option** modal and the import preview can set it for you.
+Required options are grouped under a **Required** heading before the **Optional** ones, and produce a warning until they have a value. Set one with `#cmRequired=true`; the **Add option** modal and the import preview can set it for you. Every option row can be edited without touching note labels: press **Edit options configuration** next to the **Options (n)** heading, then use the **Edit** button that appears on each row. The same form opens with the option's current attributes; **Done** hides the row buttons again.
 
 Clicking anywhere on a boolean option row toggles its checkbox.
 
@@ -229,7 +229,7 @@ A preset saves the current value map. Presets are stored in one JSON note inside
 2. **JSON**: an array, `{ "options": [...] }` or `{ "tool": { "options": [...] } }` with `flag`, `help`, `label`, `type`, `values`, `default`, `required`, `mode`, `placeholder`, `order`, `quote`, `sep`.
 3. **Markdown table**: `| Flag | Help | Type |` rows.
 
-Nothing is written until you parse and confirm: a preview lists every detected option with a checkbox. One import creates at most 200 option notes; when the source contains more, the status names how many were ignored (the same bound tool-file imports enforce). For a single option, use **Add option** in the palette footer; the modal sets every option property the note understands — label, flag, help, type, mode, placeholder, default, enum values, quoting, separator, order and required — so you never have to edit labels by hand.
+Nothing is written until you parse and confirm: a preview lists every detected option with a checkbox. One import creates at most 200 option notes; when the source contains more, the status names how many were ignored (the same bound tool-file imports enforce). For a single option, use **Add option** in the palette footer; the modal sets every option property the note understands — label, flag, help, type, mode, placeholder, default, enum values, quoting, separator, order and required — so you never have to edit labels by hand. To change an existing option, press **Edit options configuration** next to **Options (n)**, then **Edit** on the row: the same form opens with that option's current attributes and saves them back to its note.
 
 ## Importing and exporting whole tools
 

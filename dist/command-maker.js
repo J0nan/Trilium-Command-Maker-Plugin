@@ -52,6 +52,10 @@ const EN = {
     'ui.exportTool': 'Export tool',
     'ui.importOptions': 'Import options',
     'ui.addOption': 'Add option',
+    'ui.edit': 'Edit',
+    'ui.editOptionsConfig': 'Edit options configuration',
+    'ui.done': 'Done',
+    'ui.save': 'Save',
     'ui.toolsFolder': 'Tools folder',
     'ui.repository': 'Repository',
     'ui.language': 'Language',
@@ -145,6 +149,7 @@ const EN = {
     'status.downloaded': 'Downloaded {name}.',
     'status.optionLabelRequired': 'Option label is required.',
     'status.optionAdded': 'Option added.',
+    'status.optionUpdated': 'Option updated.',
     'status.toolsRootActive': 'Tools folder updated to the active note.',
     'status.enterNoteId': 'Enter a note ID.',
     'status.toolsRootUpdated': 'Tools folder updated.',
@@ -278,6 +283,11 @@ const EN = {
     'addOption.fieldValues': 'Values',
     'addOption.fieldOrder': 'Order',
     'addOption.title': 'Add an option to "{title}"',
+
+    // --- edit option dialog ------------------------------------------------
+    'editOption.title': 'Edit "{title}"',
+    'editOption.editLabel': 'Edit option "{title}"',
+    'editOption.note': "Saving rewrites this option note's attributes; the note body is left untouched.",
 
     // --- tools folder dialog ----------------------------------------------
     'toolsFolder.useActive': 'Use the active note',
@@ -479,6 +489,10 @@ const ES = {
     'ui.exportTool': 'Exportar herramienta',
     'ui.importOptions': 'Importar opciones',
     'ui.addOption': 'Añadir opción',
+    'ui.edit': 'Editar',
+    'ui.editOptionsConfig': 'Editar configuración de opciones',
+    'ui.done': 'Listo',
+    'ui.save': 'Guardar',
     'ui.toolsFolder': 'Carpeta de herramientas',
     'ui.repository': 'Repositorio',
     'ui.language': 'Idioma',
@@ -572,6 +586,7 @@ const ES = {
     'status.downloaded': 'Se descargó {name}.',
     'status.optionLabelRequired': 'La etiqueta de la opción es obligatoria.',
     'status.optionAdded': 'Opción añadida.',
+    'status.optionUpdated': 'Opción actualizada.',
     'status.toolsRootActive': 'Carpeta de herramientas actualizada a la nota activa.',
     'status.enterNoteId': 'Introduce un ID de nota.',
     'status.toolsRootUpdated': 'Carpeta de herramientas actualizada.',
@@ -713,6 +728,11 @@ const ES = {
     'addOption.fieldValues': 'Valores',
     'addOption.fieldOrder': 'Orden',
     'addOption.title': 'Añadir una opción a "{title}"',
+
+    // --- edit option dialog ------------------------------------------------
+    'editOption.title': 'Editar "{title}"',
+    'editOption.editLabel': 'Editar la opción "{title}"',
+    'editOption.note': 'Al guardar se reescriben los atributos de esta nota de opción; el cuerpo de la nota no se toca.',
 
     // --- tools folder dialog ----------------------------------------------
     'toolsFolder.useActive': 'Usar la nota activa',
@@ -3667,6 +3687,11 @@ const CSS = [
     '.cm-opt-help{font-size:12px;opacity:.7;margin-top:2px;line-height:1.4;}',
     '.cm-opt-control{flex:0 0 210px;max-width:45%;}',
     '.cm-opt-check{flex:0 0 auto;margin-left:auto;align-self:center;}',
+    '.cm-button.cm-opt-edit{display:none;flex:0 0 auto;align-self:flex-start;padding:6px 12px;font-size:13px;}',
+    '.cm-edit-mode .cm-opt-edit{display:inline-block;}',
+    '.cm-options-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:14px 0 6px;}',
+    '.cm-options-title{margin:0;}',
+    '.cm-button.cm-options-edit{padding:2px 10px;font-size:12px;}',
     '.cm-filter{width:100%;box-sizing:border-box;margin-bottom:4px;}',
     '.cm-form{display:flex;flex-direction:column;gap:6px;margin-bottom:10px;}',
     '.cm-control{padding:6px 8px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--input-background-color,#fafafa);color:inherit;font:inherit;box-sizing:border-box;}',
@@ -4085,8 +4110,8 @@ __def("backend", function (module, exports, __require) {
  * module-scope binding and dispatches on literal action strings only.
  *
  * Actions: bootstrap | setLanguage | setPanelWidth | createTool | importTool |
- * addOption | importOptions | deleteOption | setToolBase | setToolsRoot |
- * savePreset | deletePreset | ensureTab
+ * addOption | updateOption | importOptions | deleteOption | setToolBase |
+ * setToolsRoot | savePreset | deletePreset | ensureTab
  */
 
 function beRun(params) {
@@ -4423,6 +4448,62 @@ function beRun(params) {
         return note;
     }
 
+    /**
+     * Write one label, removing it when the value is empty so an edited option
+     * never keeps a stale attribute the user just cleared.
+     */
+    function setOrRemoveLabel(note, name, value) {
+        if (!name) {
+            return;
+        }
+        if (nonEmpty(value)) {
+            note.setLabel(name, String(value));
+        } else if (typeof note.removeLabel === 'function') {
+            note.removeLabel(name);
+        } else {
+            note.setLabel(name, '');
+        }
+    }
+
+    /** Apply every option attribute to an existing option note. */
+    function applyOptionLabels(note, spec) {
+        const safe = spec || {};
+        note.setLabel(labels.option, '');
+        setOrRemoveLabel(note, labels.flag, safe.flag);
+        const doc = safe.help || safe.doc;
+        setOrRemoveLabel(note, labels.doc, doc);
+        setOrRemoveLabel(note, labels.type, safe.type);
+        const enumValues = safe.values !== undefined && safe.values !== null ? safe.values : safe.enumValues;
+        if (Array.isArray(enumValues)) {
+            setOrRemoveLabel(note, labels.enumValues, enumValues.length > 0 ? enumValues.join(',') : '');
+        } else {
+            setOrRemoveLabel(note, labels.enumValues, enumValues);
+        }
+        let rawDefault = undefined;
+        if (safe.default !== undefined && safe.default !== null) {
+            rawDefault = safe.default;
+        } else if (safe.defaultValue !== undefined && safe.defaultValue !== null) {
+            rawDefault = safe.defaultValue;
+        }
+        // A provided default is kept even when it is the empty string, which is
+        // how a boolean default of `false` and an explicit empty default persist.
+        if (rawDefault !== undefined) {
+            note.setLabel(labels.defaultValue, String(rawDefault));
+        } else if (typeof note.removeLabel === 'function') {
+            note.removeLabel(labels.defaultValue);
+        }
+        setOrRemoveLabel(note, labels.required, safe.required ? 'true' : '');
+        setOrRemoveLabel(note, labels.mode, safe.mode === 'inline' ? 'inline' : '');
+        setOrRemoveLabel(note, labels.placeholder, safe.placeholder);
+        setOrRemoveLabel(
+            note,
+            labels.order,
+            safe.order !== undefined && safe.order !== null && String(safe.order).trim() !== '' ? safe.order : ''
+        );
+        setOrRemoveLabel(note, labels.quote, safe.quote);
+        setOrRemoveLabel(note, labels.separator, safe.sep === '=' || safe.separator === '=' ? '=' : '');
+    }
+
     /** Create one option note under a tool's Options folder. */
     function createOptionNote(folder, spec) {
         const safe = spec || {};
@@ -4433,53 +4514,24 @@ function beRun(params) {
             type: 'text',
             content: safe.content == null ? '' : String(safe.content)
         }).note);
-        note.setLabel(labels.option, '');
-        if (nonEmpty(safe.flag)) {
-            note.setLabel(labels.flag, String(safe.flag));
-        }
-        const doc = safe.help || safe.doc;
-        if (nonEmpty(doc)) {
-            note.setLabel(labels.doc, String(doc));
-        }
-        if (nonEmpty(safe.type)) {
-            note.setLabel(labels.type, String(safe.type));
-        }
-        const enumValues = safe.values !== undefined && safe.values !== null ? safe.values : safe.enumValues;
-        if (Array.isArray(enumValues)) {
-            if (enumValues.length > 0) {
-                note.setLabel(labels.enumValues, enumValues.join(','));
-            }
-        } else if (nonEmpty(enumValues)) {
-            note.setLabel(labels.enumValues, String(enumValues));
-        }
-        let rawDefault = undefined;
-        if (safe.default !== undefined && safe.default !== null) {
-            rawDefault = safe.default;
-        } else if (safe.defaultValue !== undefined && safe.defaultValue !== null) {
-            rawDefault = safe.defaultValue;
-        }
-        if (rawDefault !== undefined) {
-            note.setLabel(labels.defaultValue, String(rawDefault));
-        }
-        if (safe.required) {
-            note.setLabel(labels.required, 'true');
-        }
-        if (safe.mode === 'inline') {
-            note.setLabel(labels.mode, 'inline');
-        }
-        if (nonEmpty(safe.placeholder)) {
-            note.setLabel(labels.placeholder, String(safe.placeholder));
-        }
-        if (safe.order !== undefined && safe.order !== null && String(safe.order).trim() !== '') {
-            note.setLabel(labels.order, String(safe.order));
-        }
-        if (nonEmpty(safe.quote)) {
-            note.setLabel(labels.quote, String(safe.quote));
-        }
-        if (safe.sep === '=' || safe.separator === '=') {
-            note.setLabel(labels.separator, '=');
-        }
+        applyOptionLabels(note, safe);
         return note;
+    }
+
+    /**
+     * Rewrite one existing option note in place. The target must carry the
+     * option label, so a wrong or hostile note id can never edit an unrelated
+     * note, and the note body is left untouched.
+     */
+    function updateOption() {
+        const note = requireNote(options.noteId, text('back.errorOptionNote', 'Option note not found'));
+        if (!hasLabel(note, labels.option)) {
+            throw new Error(text('back.errorNotAnOptionPrefix', 'Note is not an option of a tool: ') + note.noteId);
+        }
+        const spec = options.option || {};
+        note.title = nonEmpty(spec.label) ? String(spec.label) : text('back.noteOption', 'Option');
+        applyOptionLabels(note, spec);
+        return { noteId: note.noteId };
     }
 
     function parentForRoot() {
@@ -4849,6 +4901,8 @@ function beRun(params) {
             return importTool();
         case 'addOption':
             return addOption();
+        case 'updateOption':
+            return updateOption();
         case 'importOptions':
             return importOptions();
         case 'deleteOption':
@@ -4895,6 +4949,7 @@ __def("ui", function (module, exports, __require) {
  *   savePreset(toolId, name, values): Promise<void>
  *   deletePreset(toolId, name): Promise<void>
  *   addOption(toolId, option): Promise<void>
+ *   updateOption(noteId, option): Promise<void>
  *   setToolBase(toolId, base): Promise<void>
  *   currentToolsRoot(): Promise<{ noteId, title } | null>
  *   setToolsRoot(noteId): Promise<void>
@@ -5028,6 +5083,7 @@ function openPalette(controller, options) {
         values: {},
         edited: false,
         exampleLoaded: false,
+        editMode: false,
         optionRows: [],
         optionGroups: [],
         previewEl: null,
@@ -5533,6 +5589,9 @@ function openPalette(controller, options) {
 
     async function selectItem(item, selectOptions) {
         const preserve = Boolean(selectOptions && selectOptions.preserveValues);
+        if (!preserve) {
+            state.editMode = false;
+        }
         const previousValues = preserve ? state.values : null;
         const previousEdited = preserve ? state.edited : false;
         const previousPreview = preserve && state.previewEl ? state.previewEl.value : '';
@@ -5646,10 +5705,21 @@ function openPalette(controller, options) {
         row.appendChild(main);
         const control = optionControl(option);
         row.appendChild(control);
+        let editButton = null;
+        if (!inferred && option.noteId) {
+            editButton = button(I18n.t('ui.edit'), function (event) {
+                if (event && typeof event.stopPropagation === 'function') {
+                    event.stopPropagation();
+                }
+                openOptionModal(option);
+            }, 'cm-opt-edit');
+            editButton.setAttribute('aria-label', I18n.t('editOption.editLabel', { title: option.title }));
+            row.appendChild(editButton);
+        }
         if (option.type === 'boolean') {
             row.classList.add('cm-option-bool');
             row.addEventListener('click', function (event) {
-                if (event.target === control) {
+                if (event.target === control || event.target === editButton) {
                     return;
                 }
                 control.checked = !control.checked;
@@ -6072,7 +6142,21 @@ function openPalette(controller, options) {
         detail.appendChild(baseRow());
         detail.appendChild(presetBlock());
 
-        detail.appendChild(Dom.el('div', 'cm-section', I18n.t('ui.optionsCount', { count: definition.options.length })));
+        const optionsHead = Dom.el('div', 'cm-options-head');
+        optionsHead.appendChild(Dom.el(
+            'span',
+            'cm-section cm-options-title',
+            I18n.t('ui.optionsCount', { count: definition.options.length })
+        ));
+        const editToggle = button(I18n.t(state.editMode ? 'ui.done' : 'ui.editOptionsConfig'), function () {
+            state.editMode = !state.editMode;
+            form.classList.toggle('cm-edit-mode', state.editMode);
+            editToggle.textContent = I18n.t(state.editMode ? 'ui.done' : 'ui.editOptionsConfig');
+            editToggle.setAttribute('aria-pressed', state.editMode ? 'true' : 'false');
+        }, 'cm-options-edit');
+        editToggle.setAttribute('aria-pressed', state.editMode ? 'true' : 'false');
+        optionsHead.appendChild(editToggle);
+        detail.appendChild(optionsHead);
         const filter = document.createElement('input');
         filter.type = 'search';
         filter.className = 'cm-control cm-filter';
@@ -6094,6 +6178,7 @@ function openPalette(controller, options) {
         detail.appendChild(filter);
 
         const form = Dom.el('div', 'cm-form');
+        form.classList.toggle('cm-edit-mode', state.editMode);
         const requiredOptions = definition.options
             .filter(function (option) {
                 return option.required;
@@ -6630,12 +6715,13 @@ function openPalette(controller, options) {
         modalShell(I18n.t('export.title', { title: file.tool.title }), bodyNode, actionsNode);
     }
 
-    function openAddOption() {
+    function openOptionModal(existing) {
         if (!state.current) {
             notify(new Error(I18n.t('status.selectToolFirst')));
             return;
         }
         const tool = state.current;
+        const editing = Boolean(existing && existing.noteId);
 
         function field(labelText, control) {
             const wrapper = Dom.el('label', 'cm-field');
@@ -6726,9 +6812,26 @@ function openPalette(controller, options) {
         requiredRow.appendChild(Dom.el('span', 'cm-base-label', I18n.t('ui.required')));
         requiredRow.appendChild(requiredInput);
 
-        const add = Dom.el('button', 'cm-button', I18n.t('ui.add'));
-        add.type = 'button';
-        add.addEventListener('click', guarded(async function () {
+        if (editing) {
+            labelInput.value = existing.title;
+            flagInput.value = existing.flag || '';
+            helpInput.value = existing.help || '';
+            typeSelect.value = existing.type;
+            modeSelect.value = existing.mode === 'inline' ? 'inline' : 'flag';
+            placeholderInput.value = existing.placeholder || '';
+            defaultInput.value = existing.defaultValue === undefined || existing.defaultValue === null
+                ? ''
+                : String(existing.defaultValue);
+            valuesInput.value = (existing.enumValues || []).join(', ');
+            quoteSelect.value = existing.quote || 'none';
+            sepSelect.value = existing.sep === '=' ? '=' : ' ';
+            orderInput.value = typeof existing.order === 'number' ? String(existing.order) : '100';
+            requiredInput.checked = Boolean(existing.required);
+        }
+
+        const save = Dom.el('button', 'cm-button', I18n.t(editing ? 'ui.save' : 'ui.add'));
+        save.type = 'button';
+        save.addEventListener('click', guarded(async function () {
             const label = labelInput.value.trim();
             if (!label) {
                 throw new Error(I18n.t('status.optionLabelRequired'));
@@ -6740,8 +6843,9 @@ function openPalette(controller, options) {
                 .filter(function (entry) {
                     return entry !== '';
                 });
-            const order = Number(orderInput.value);
-            await controller.addOption(tool.noteId, {
+            const orderText = String(orderInput.value == null ? '' : orderInput.value).trim();
+            const order = orderText === '' ? 100 : Number(orderText);
+            const spec = {
                 label: label,
                 flag: flagInput.value.trim(),
                 help: helpInput.value.trim(),
@@ -6754,18 +6858,23 @@ function openPalette(controller, options) {
                 quote: Model.QUOTES.indexOf(quoteSelect.value) === -1 ? 'none' : quoteSelect.value,
                 separator: sepSelect.value === '=' ? '=' : ' ',
                 order: isFinite(order) ? order : 100
-            });
+            };
+            if (editing) {
+                await controller.updateOption(existing.noteId, spec);
+            } else {
+                await controller.addOption(tool.noteId, spec);
+            }
             closeModal();
             await controller.refresh();
             await runSearch();
             await selectItem(tool, { preserveValues: true });
-            setStatus(I18n.t('status.optionAdded'));
+            setStatus(I18n.t(editing ? 'status.optionUpdated' : 'status.optionAdded'));
         }, notify));
 
         const closeButton2 = modalCloseButton();
 
         const bodyNode = Dom.el('div', '');
-        bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('addOption.note')));
+        bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t(editing ? 'editOption.note' : 'addOption.note')));
         bodyNode.appendChild(field(I18n.t('addOption.fieldLabel'), labelInput));
         bodyNode.appendChild(field(I18n.t('addOption.fieldFlag'), flagInput));
         bodyNode.appendChild(field(I18n.t('addOption.fieldHelp'), helpInput));
@@ -6781,10 +6890,10 @@ function openPalette(controller, options) {
         bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('addOption.requiredNote')));
 
         const actionsNode = Dom.el('div', 'cm-inline');
-        actionsNode.appendChild(add);
+        actionsNode.appendChild(save);
         actionsNode.appendChild(closeButton2);
 
-        modalShell(I18n.t('addOption.title', { title: tool.title }), bodyNode, actionsNode);
+        modalShell(I18n.t(editing ? 'editOption.title' : 'addOption.title', { title: editing ? existing.title : tool.title }), bodyNode, actionsNode);
         labelInput.focus();
     }
 
@@ -6878,7 +6987,9 @@ function openPalette(controller, options) {
     importToolButton.addEventListener('click', openImportTool);
     exportToolButton.addEventListener('click', guarded(openExportTool, notify));
     importButton.addEventListener('click', openImport);
-    addOptionButton.addEventListener('click', openAddOption);
+    addOptionButton.addEventListener('click', function () {
+        openOptionModal();
+    });
     toolsButton.addEventListener('click', openToolsFolder);
     if (embedded) {
         shell.addEventListener('keydown', onKeyDown);
@@ -7744,6 +7855,10 @@ function controller() {
 
         addOption(toolId, option) {
             return backendAction('addOption', { toolId: toolId, option: option });
+        },
+
+        updateOption(noteId, option) {
+            return backendAction('updateOption', { noteId: noteId, option: option });
         },
 
         exportTool(noteId) {

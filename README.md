@@ -27,7 +27,7 @@ The installer is idempotent. It creates the `Command Maker` settings note, the `
 
 - **A palette for your CLI notes.** `Ctrl+Shift+Space` opens a searchable list of the tools you documented, with their folder path (`Infrastructure / Wifi`).
 - **Docs where you need them.** Each tool note keeps a *What is?* section plus sections for the official links and the install, usage and `--help` output.
-- **Options, not memorised flags.** Each option is a note with a flag, help text and a type, so the palette renders the right control: text, path, number, boolean or enum.
+- **Options, not memorised flags.** Each option is a note with a flag, help text and a type, so the palette renders the right control: text, path, number, boolean or enum. Add an option from the footer, or press **Edit options configuration** next to **Options (n)** to reveal an edit button on every row.
 - **A command you can trust.** The preview assembles base, extra arguments and selected flags in order, quotes them for a POSIX shell, and lets you copy, insert into the editor or save as a preset.
 - **Import instead of retyping.** Paste `--help` output, JSON or a markdown table and preview every detected option before anything is written. Whole tools move in and out as one JSON file, including the folder path that groups them.
 - **Works as a tab.** **Open in tab** moves the same interface next to your notes instead of over them.

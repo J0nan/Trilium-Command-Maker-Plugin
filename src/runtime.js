@@ -825,6 +825,10 @@ function controller() {
             return backendAction('addOption', { toolId: toolId, option: option });
         },
 
+        updateOption(noteId, option) {
+            return backendAction('updateOption', { noteId: noteId, option: option });
+        },
+
         exportTool(noteId) {
             return exportTool(noteId);
         },

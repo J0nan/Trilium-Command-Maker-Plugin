@@ -35,6 +35,10 @@ const EN = {
     'ui.exportTool': 'Export tool',
     'ui.importOptions': 'Import options',
     'ui.addOption': 'Add option',
+    'ui.edit': 'Edit',
+    'ui.editOptionsConfig': 'Edit options configuration',
+    'ui.done': 'Done',
+    'ui.save': 'Save',
     'ui.toolsFolder': 'Tools folder',
     'ui.repository': 'Repository',
     'ui.language': 'Language',
@@ -128,6 +132,7 @@ const EN = {
     'status.downloaded': 'Downloaded {name}.',
     'status.optionLabelRequired': 'Option label is required.',
     'status.optionAdded': 'Option added.',
+    'status.optionUpdated': 'Option updated.',
     'status.toolsRootActive': 'Tools folder updated to the active note.',
     'status.enterNoteId': 'Enter a note ID.',
     'status.toolsRootUpdated': 'Tools folder updated.',
@@ -261,6 +266,11 @@ const EN = {
     'addOption.fieldValues': 'Values',
     'addOption.fieldOrder': 'Order',
     'addOption.title': 'Add an option to "{title}"',
+
+    // --- edit option dialog ------------------------------------------------
+    'editOption.title': 'Edit "{title}"',
+    'editOption.editLabel': 'Edit option "{title}"',
+    'editOption.note': "Saving rewrites this option note's attributes; the note body is left untouched.",
 
     // --- tools folder dialog ----------------------------------------------
     'toolsFolder.useActive': 'Use the active note',
@@ -462,6 +472,10 @@ const ES = {
     'ui.exportTool': 'Exportar herramienta',
     'ui.importOptions': 'Importar opciones',
     'ui.addOption': 'Añadir opción',
+    'ui.edit': 'Editar',
+    'ui.editOptionsConfig': 'Editar configuración de opciones',
+    'ui.done': 'Listo',
+    'ui.save': 'Guardar',
     'ui.toolsFolder': 'Carpeta de herramientas',
     'ui.repository': 'Repositorio',
     'ui.language': 'Idioma',
@@ -555,6 +569,7 @@ const ES = {
     'status.downloaded': 'Se descargó {name}.',
     'status.optionLabelRequired': 'La etiqueta de la opción es obligatoria.',
     'status.optionAdded': 'Opción añadida.',
+    'status.optionUpdated': 'Opción actualizada.',
     'status.toolsRootActive': 'Carpeta de herramientas actualizada a la nota activa.',
     'status.enterNoteId': 'Introduce un ID de nota.',
     'status.toolsRootUpdated': 'Carpeta de herramientas actualizada.',
@@ -696,6 +711,11 @@ const ES = {
     'addOption.fieldValues': 'Valores',
     'addOption.fieldOrder': 'Orden',
     'addOption.title': 'Añadir una opción a "{title}"',
+
+    // --- edit option dialog ------------------------------------------------
+    'editOption.title': 'Editar "{title}"',
+    'editOption.editLabel': 'Editar la opción "{title}"',
+    'editOption.note': 'Al guardar se reescriben los atributos de esta nota de opción; el cuerpo de la nota no se toca.',
 
     // --- tools folder dialog ----------------------------------------------
     'toolsFolder.useActive': 'Usar la nota activa',

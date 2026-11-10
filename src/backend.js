@@ -11,8 +11,8 @@
  * module-scope binding and dispatches on literal action strings only.
  *
  * Actions: bootstrap | setLanguage | setPanelWidth | createTool | importTool |
- * addOption | importOptions | deleteOption | setToolBase | setToolsRoot |
- * savePreset | deletePreset | ensureTab
+ * addOption | updateOption | importOptions | deleteOption | setToolBase |
+ * setToolsRoot | savePreset | deletePreset | ensureTab
  */
 
 function beRun(params) {
@@ -349,6 +349,62 @@ function beRun(params) {
         return note;
     }
 
+    /**
+     * Write one label, removing it when the value is empty so an edited option
+     * never keeps a stale attribute the user just cleared.
+     */
+    function setOrRemoveLabel(note, name, value) {
+        if (!name) {
+            return;
+        }
+        if (nonEmpty(value)) {
+            note.setLabel(name, String(value));
+        } else if (typeof note.removeLabel === 'function') {
+            note.removeLabel(name);
+        } else {
+            note.setLabel(name, '');
+        }
+    }
+
+    /** Apply every option attribute to an existing option note. */
+    function applyOptionLabels(note, spec) {
+        const safe = spec || {};
+        note.setLabel(labels.option, '');
+        setOrRemoveLabel(note, labels.flag, safe.flag);
+        const doc = safe.help || safe.doc;
+        setOrRemoveLabel(note, labels.doc, doc);
+        setOrRemoveLabel(note, labels.type, safe.type);
+        const enumValues = safe.values !== undefined && safe.values !== null ? safe.values : safe.enumValues;
+        if (Array.isArray(enumValues)) {
+            setOrRemoveLabel(note, labels.enumValues, enumValues.length > 0 ? enumValues.join(',') : '');
+        } else {
+            setOrRemoveLabel(note, labels.enumValues, enumValues);
+        }
+        let rawDefault = undefined;
+        if (safe.default !== undefined && safe.default !== null) {
+            rawDefault = safe.default;
+        } else if (safe.defaultValue !== undefined && safe.defaultValue !== null) {
+            rawDefault = safe.defaultValue;
+        }
+        // A provided default is kept even when it is the empty string, which is
+        // how a boolean default of `false` and an explicit empty default persist.
+        if (rawDefault !== undefined) {
+            note.setLabel(labels.defaultValue, String(rawDefault));
+        } else if (typeof note.removeLabel === 'function') {
+            note.removeLabel(labels.defaultValue);
+        }
+        setOrRemoveLabel(note, labels.required, safe.required ? 'true' : '');
+        setOrRemoveLabel(note, labels.mode, safe.mode === 'inline' ? 'inline' : '');
+        setOrRemoveLabel(note, labels.placeholder, safe.placeholder);
+        setOrRemoveLabel(
+            note,
+            labels.order,
+            safe.order !== undefined && safe.order !== null && String(safe.order).trim() !== '' ? safe.order : ''
+        );
+        setOrRemoveLabel(note, labels.quote, safe.quote);
+        setOrRemoveLabel(note, labels.separator, safe.sep === '=' || safe.separator === '=' ? '=' : '');
+    }
+
     /** Create one option note under a tool's Options folder. */
     function createOptionNote(folder, spec) {
         const safe = spec || {};
@@ -359,53 +415,24 @@ function beRun(params) {
             type: 'text',
             content: safe.content == null ? '' : String(safe.content)
         }).note);
-        note.setLabel(labels.option, '');
-        if (nonEmpty(safe.flag)) {
-            note.setLabel(labels.flag, String(safe.flag));
-        }
-        const doc = safe.help || safe.doc;
-        if (nonEmpty(doc)) {
-            note.setLabel(labels.doc, String(doc));
-        }
-        if (nonEmpty(safe.type)) {
-            note.setLabel(labels.type, String(safe.type));
-        }
-        const enumValues = safe.values !== undefined && safe.values !== null ? safe.values : safe.enumValues;
-        if (Array.isArray(enumValues)) {
-            if (enumValues.length > 0) {
-                note.setLabel(labels.enumValues, enumValues.join(','));
-            }
-        } else if (nonEmpty(enumValues)) {
-            note.setLabel(labels.enumValues, String(enumValues));
-        }
-        let rawDefault = undefined;
-        if (safe.default !== undefined && safe.default !== null) {
-            rawDefault = safe.default;
-        } else if (safe.defaultValue !== undefined && safe.defaultValue !== null) {
-            rawDefault = safe.defaultValue;
-        }
-        if (rawDefault !== undefined) {
-            note.setLabel(labels.defaultValue, String(rawDefault));
-        }
-        if (safe.required) {
-            note.setLabel(labels.required, 'true');
-        }
-        if (safe.mode === 'inline') {
-            note.setLabel(labels.mode, 'inline');
-        }
-        if (nonEmpty(safe.placeholder)) {
-            note.setLabel(labels.placeholder, String(safe.placeholder));
-        }
-        if (safe.order !== undefined && safe.order !== null && String(safe.order).trim() !== '') {
-            note.setLabel(labels.order, String(safe.order));
-        }
-        if (nonEmpty(safe.quote)) {
-            note.setLabel(labels.quote, String(safe.quote));
-        }
-        if (safe.sep === '=' || safe.separator === '=') {
-            note.setLabel(labels.separator, '=');
-        }
+        applyOptionLabels(note, safe);
         return note;
+    }
+
+    /**
+     * Rewrite one existing option note in place. The target must carry the
+     * option label, so a wrong or hostile note id can never edit an unrelated
+     * note, and the note body is left untouched.
+     */
+    function updateOption() {
+        const note = requireNote(options.noteId, text('back.errorOptionNote', 'Option note not found'));
+        if (!hasLabel(note, labels.option)) {
+            throw new Error(text('back.errorNotAnOptionPrefix', 'Note is not an option of a tool: ') + note.noteId);
+        }
+        const spec = options.option || {};
+        note.title = nonEmpty(spec.label) ? String(spec.label) : text('back.noteOption', 'Option');
+        applyOptionLabels(note, spec);
+        return { noteId: note.noteId };
     }
 
     function parentForRoot() {
@@ -775,6 +802,8 @@ function beRun(params) {
             return importTool();
         case 'addOption':
             return addOption();
+        case 'updateOption':
+            return updateOption();
         case 'importOptions':
             return importOptions();
         case 'deleteOption':

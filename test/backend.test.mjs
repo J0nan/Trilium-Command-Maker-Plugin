@@ -674,6 +674,81 @@ test('addOption writes every option label including the help string', () => {
     assert.equal(plainNote.hasLabel(labels.separator), false);
 });
 
+test('updateOption rewrites an option in place and refuses notes that are not options', () => {
+    const api = createApi();
+    const beRun = serialise(Backend.beRun, api);
+    const { toolsRootId, rootId } = boot(api, beRun);
+    const created = beRun({ action: 'createTool', labels, toolsRootId, title: 'curl', base: 'curl' });
+
+    const added = beRun({
+        action: 'addOption',
+        labels,
+        toolId: created.noteId,
+        option: {
+            label: 'Old label',
+            flag: '-o',
+            type: 'string',
+            help: 'Old help.',
+            values: ['a', 'b'],
+            default: 'out.bin',
+            required: true,
+            mode: 'inline',
+            placeholder: 'output',
+            order: 7,
+            quote: 'single',
+            separator: '=',
+            content: 'Body kept.'
+        }
+    });
+
+    const updated = beRun({
+        action: 'updateOption',
+        labels,
+        noteId: added.noteId,
+        option: {
+            label: 'New label',
+            flag: '',
+            type: 'boolean',
+            help: 'New help.',
+            values: [],
+            defaultValue: '',
+            required: false,
+            mode: 'flag',
+            placeholder: '',
+            order: '',
+            quote: '',
+            separator: ' '
+        }
+    });
+    assert.equal(updated.noteId, added.noteId);
+
+    const note = api.getNote(added.noteId);
+    assert.equal(note.title, 'New label');
+    assert.equal(note.getContent(), 'Body kept.');
+    assert.equal(note.getLabelValue(labels.option), '');
+    assert.equal(note.hasLabel(labels.flag), false, 'a cleared flag removes the label');
+    assert.equal(note.getLabelValue(labels.type), 'boolean');
+    assert.equal(note.getLabelValue(labels.doc), 'New help.');
+    assert.equal(note.hasLabel(labels.enumValues), false, 'cleared enum values remove the label');
+    assert.equal(note.getLabelValue(labels.defaultValue), '', 'an explicit empty default is kept');
+    assert.equal(note.hasLabel(labels.required), false);
+    assert.equal(note.hasLabel(labels.mode), false);
+    assert.equal(note.hasLabel(labels.placeholder), false);
+    assert.equal(note.hasLabel(labels.order), false);
+    assert.equal(note.hasLabel(labels.quote), false);
+    assert.equal(note.hasLabel(labels.separator), false);
+
+    const category = api.getNote(toolsRootId).getChildNotes()[0];
+    for (const noteId of [toolsRootId, created.noteId, category.noteId, rootId]) {
+        assert.throws(
+            () => beRun({ action: 'updateOption', labels, noteId, option: { label: 'Hijack' } }),
+            /not an option/,
+            'a non-option note is protected'
+        );
+    }
+    assert.throws(() => beRun({ action: 'updateOption', labels, noteId: 'nope', option: {} }), /Option note not found/);
+});
+
 test('importOptions creates options and deleteOption removes one', () => {
     const api = createApi();
     const beRun = serialise(Backend.beRun, api);

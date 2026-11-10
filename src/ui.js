@@ -21,6 +21,7 @@
  *   savePreset(toolId, name, values): Promise<void>
  *   deletePreset(toolId, name): Promise<void>
  *   addOption(toolId, option): Promise<void>
+ *   updateOption(noteId, option): Promise<void>
  *   setToolBase(toolId, base): Promise<void>
  *   currentToolsRoot(): Promise<{ noteId, title } | null>
  *   setToolsRoot(noteId): Promise<void>
@@ -154,6 +155,7 @@ function openPalette(controller, options) {
         values: {},
         edited: false,
         exampleLoaded: false,
+        editMode: false,
         optionRows: [],
         optionGroups: [],
         previewEl: null,
@@ -659,6 +661,9 @@ function openPalette(controller, options) {
 
     async function selectItem(item, selectOptions) {
         const preserve = Boolean(selectOptions && selectOptions.preserveValues);
+        if (!preserve) {
+            state.editMode = false;
+        }
         const previousValues = preserve ? state.values : null;
         const previousEdited = preserve ? state.edited : false;
         const previousPreview = preserve && state.previewEl ? state.previewEl.value : '';
@@ -772,10 +777,21 @@ function openPalette(controller, options) {
         row.appendChild(main);
         const control = optionControl(option);
         row.appendChild(control);
+        let editButton = null;
+        if (!inferred && option.noteId) {
+            editButton = button(I18n.t('ui.edit'), function (event) {
+                if (event && typeof event.stopPropagation === 'function') {
+                    event.stopPropagation();
+                }
+                openOptionModal(option);
+            }, 'cm-opt-edit');
+            editButton.setAttribute('aria-label', I18n.t('editOption.editLabel', { title: option.title }));
+            row.appendChild(editButton);
+        }
         if (option.type === 'boolean') {
             row.classList.add('cm-option-bool');
             row.addEventListener('click', function (event) {
-                if (event.target === control) {
+                if (event.target === control || event.target === editButton) {
                     return;
                 }
                 control.checked = !control.checked;
@@ -1198,7 +1214,21 @@ function openPalette(controller, options) {
         detail.appendChild(baseRow());
         detail.appendChild(presetBlock());
 
-        detail.appendChild(Dom.el('div', 'cm-section', I18n.t('ui.optionsCount', { count: definition.options.length })));
+        const optionsHead = Dom.el('div', 'cm-options-head');
+        optionsHead.appendChild(Dom.el(
+            'span',
+            'cm-section cm-options-title',
+            I18n.t('ui.optionsCount', { count: definition.options.length })
+        ));
+        const editToggle = button(I18n.t(state.editMode ? 'ui.done' : 'ui.editOptionsConfig'), function () {
+            state.editMode = !state.editMode;
+            form.classList.toggle('cm-edit-mode', state.editMode);
+            editToggle.textContent = I18n.t(state.editMode ? 'ui.done' : 'ui.editOptionsConfig');
+            editToggle.setAttribute('aria-pressed', state.editMode ? 'true' : 'false');
+        }, 'cm-options-edit');
+        editToggle.setAttribute('aria-pressed', state.editMode ? 'true' : 'false');
+        optionsHead.appendChild(editToggle);
+        detail.appendChild(optionsHead);
         const filter = document.createElement('input');
         filter.type = 'search';
         filter.className = 'cm-control cm-filter';
@@ -1220,6 +1250,7 @@ function openPalette(controller, options) {
         detail.appendChild(filter);
 
         const form = Dom.el('div', 'cm-form');
+        form.classList.toggle('cm-edit-mode', state.editMode);
         const requiredOptions = definition.options
             .filter(function (option) {
                 return option.required;
@@ -1756,12 +1787,13 @@ function openPalette(controller, options) {
         modalShell(I18n.t('export.title', { title: file.tool.title }), bodyNode, actionsNode);
     }
 
-    function openAddOption() {
+    function openOptionModal(existing) {
         if (!state.current) {
             notify(new Error(I18n.t('status.selectToolFirst')));
             return;
         }
         const tool = state.current;
+        const editing = Boolean(existing && existing.noteId);
 
         function field(labelText, control) {
             const wrapper = Dom.el('label', 'cm-field');
@@ -1852,9 +1884,26 @@ function openPalette(controller, options) {
         requiredRow.appendChild(Dom.el('span', 'cm-base-label', I18n.t('ui.required')));
         requiredRow.appendChild(requiredInput);
 
-        const add = Dom.el('button', 'cm-button', I18n.t('ui.add'));
-        add.type = 'button';
-        add.addEventListener('click', guarded(async function () {
+        if (editing) {
+            labelInput.value = existing.title;
+            flagInput.value = existing.flag || '';
+            helpInput.value = existing.help || '';
+            typeSelect.value = existing.type;
+            modeSelect.value = existing.mode === 'inline' ? 'inline' : 'flag';
+            placeholderInput.value = existing.placeholder || '';
+            defaultInput.value = existing.defaultValue === undefined || existing.defaultValue === null
+                ? ''
+                : String(existing.defaultValue);
+            valuesInput.value = (existing.enumValues || []).join(', ');
+            quoteSelect.value = existing.quote || 'none';
+            sepSelect.value = existing.sep === '=' ? '=' : ' ';
+            orderInput.value = typeof existing.order === 'number' ? String(existing.order) : '100';
+            requiredInput.checked = Boolean(existing.required);
+        }
+
+        const save = Dom.el('button', 'cm-button', I18n.t(editing ? 'ui.save' : 'ui.add'));
+        save.type = 'button';
+        save.addEventListener('click', guarded(async function () {
             const label = labelInput.value.trim();
             if (!label) {
                 throw new Error(I18n.t('status.optionLabelRequired'));
@@ -1866,8 +1915,9 @@ function openPalette(controller, options) {
                 .filter(function (entry) {
                     return entry !== '';
                 });
-            const order = Number(orderInput.value);
-            await controller.addOption(tool.noteId, {
+            const orderText = String(orderInput.value == null ? '' : orderInput.value).trim();
+            const order = orderText === '' ? 100 : Number(orderText);
+            const spec = {
                 label: label,
                 flag: flagInput.value.trim(),
                 help: helpInput.value.trim(),
@@ -1880,18 +1930,23 @@ function openPalette(controller, options) {
                 quote: Model.QUOTES.indexOf(quoteSelect.value) === -1 ? 'none' : quoteSelect.value,
                 separator: sepSelect.value === '=' ? '=' : ' ',
                 order: isFinite(order) ? order : 100
-            });
+            };
+            if (editing) {
+                await controller.updateOption(existing.noteId, spec);
+            } else {
+                await controller.addOption(tool.noteId, spec);
+            }
             closeModal();
             await controller.refresh();
             await runSearch();
             await selectItem(tool, { preserveValues: true });
-            setStatus(I18n.t('status.optionAdded'));
+            setStatus(I18n.t(editing ? 'status.optionUpdated' : 'status.optionAdded'));
         }, notify));
 
         const closeButton2 = modalCloseButton();
 
         const bodyNode = Dom.el('div', '');
-        bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('addOption.note')));
+        bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t(editing ? 'editOption.note' : 'addOption.note')));
         bodyNode.appendChild(field(I18n.t('addOption.fieldLabel'), labelInput));
         bodyNode.appendChild(field(I18n.t('addOption.fieldFlag'), flagInput));
         bodyNode.appendChild(field(I18n.t('addOption.fieldHelp'), helpInput));
@@ -1907,10 +1962,10 @@ function openPalette(controller, options) {
         bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('addOption.requiredNote')));
 
         const actionsNode = Dom.el('div', 'cm-inline');
-        actionsNode.appendChild(add);
+        actionsNode.appendChild(save);
         actionsNode.appendChild(closeButton2);
 
-        modalShell(I18n.t('addOption.title', { title: tool.title }), bodyNode, actionsNode);
+        modalShell(I18n.t(editing ? 'editOption.title' : 'addOption.title', { title: editing ? existing.title : tool.title }), bodyNode, actionsNode);
         labelInput.focus();
     }
 
@@ -2004,7 +2059,9 @@ function openPalette(controller, options) {
     importToolButton.addEventListener('click', openImportTool);
     exportToolButton.addEventListener('click', guarded(openExportTool, notify));
     importButton.addEventListener('click', openImport);
-    addOptionButton.addEventListener('click', openAddOption);
+    addOptionButton.addEventListener('click', function () {
+        openOptionModal();
+    });
     toolsButton.addEventListener('click', openToolsFolder);
     if (embedded) {
         shell.addEventListener('keydown', onKeyDown);

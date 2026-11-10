@@ -798,6 +798,70 @@ test('palette can add a single option with a help string', async () => {
     assert.deepEqual(env.calls.errors, []);
 });
 
+test('palette can edit an existing option and saves every attribute', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+
+    const form = find(dom.body, (node) => classed(node, 'cm-form'));
+    assert.equal(classed(form, 'cm-edit-mode'), false, 'per-row edit controls start hidden');
+
+    const optionsEdit = find(dom.body, (node) => classed(node, 'cm-options-edit'));
+    assert.equal(optionsEdit.textContent, 'Edit options configuration');
+    optionsEdit.click();
+    assert.equal(classed(form, 'cm-edit-mode'), true, 'the options toggle reveals every edit control');
+    assert.equal(optionsEdit.textContent, 'Done');
+    assert.equal(optionsEdit.getAttribute('aria-pressed'), 'true');
+
+    const editButtons = findAll(dom.body, (node) => classed(node, 'cm-opt-edit'));
+    assert.equal(editButtons.length, 3, 'every note-backed option offers an edit control');
+    editButtons[0].click();
+
+    const modal = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-modal')), 'edit option modal');
+    assert.equal(find(modal, (node) => node.placeholder === 'Option label, e.g. Output file').value, 'Input file');
+    assert.equal(find(modal, (node) => String(node.placeholder || '').indexOf('Flag, e.g.') === 0).value, '-i');
+    assert.equal(find(modal, (node) => node.placeholder === 'What is this option for?').value, 'Input file to read.');
+    assert.equal(find(modal, (node) => node.getAttribute('aria-label') === 'Type').value, 'path');
+    assert.equal(find(modal, (node) => String(node.placeholder || '').indexOf('Placeholder name') === 0).value, 'i');
+    assert.equal(find(modal, (node) => node.placeholder === 'Default value (optional)').value, 'in.mp4');
+    assert.equal(find(modal, (node) => node.getAttribute('aria-label') === 'Quoting').value, 'none');
+    assert.equal(find(modal, (node) => node.getAttribute('aria-label') === 'Separator').value, ' ');
+    assert.equal(find(modal, (node) => node.tagName === 'INPUT' && node.type === 'number').value, '10');
+    assert.equal(find(modal, (node) => node.tagName === 'INPUT' && node.type === 'checkbox').checked, true);
+
+    find(modal, (node) => node.placeholder === 'Option label, e.g. Output file').value = 'Source file';
+    find(modal, (node) => String(node.placeholder || '').indexOf('Flag, e.g.') === 0).value = '-src';
+    find(modal, (node) => node.tagName === 'INPUT' && node.type === 'number').value = '';
+    buttonWithText(modal, 'Save').click();
+    await waitFor(() => env.calls.backend.filter((call) => call.action === 'updateOption').length > 0, 'update option action');
+
+    const call = env.calls.backend.filter((entry) => entry.action === 'updateOption')[0];
+    assert.equal(call.noteId, 'o1');
+    assert.equal(call.option.label, 'Source file');
+    assert.equal(call.option.flag, '-src');
+    assert.equal(call.option.help, 'Input file to read.');
+    assert.equal(call.option.type, 'path');
+    assert.equal(call.option.defaultValue, 'in.mp4');
+    assert.equal(call.option.order, 100, 'a cleared order falls back to the documented default');
+    assert.equal(call.option.required, true);
+    await waitFor(
+        () => find(dom.body, (node) => classed(node, 'cm-status')).textContent === 'Option updated.',
+        'update status'
+    );
+    const reloadedForm = find(dom.body, (node) => classed(node, 'cm-form'));
+    assert.equal(classed(reloadedForm, 'cm-edit-mode'), true, 'edit mode survives the post-save reload');
+    const done = find(dom.body, (node) => classed(node, 'cm-options-edit'));
+    assert.equal(done.textContent, 'Done');
+    done.click();
+    assert.equal(classed(reloadedForm, 'cm-edit-mode'), false, 'Done hides the edit controls again');
+    assert.deepEqual(env.calls.errors, []);
+});
+
 test('importing options preserves the values already entered', async () => {
     const dom = createDom();
     const fixture = buildFixture();
