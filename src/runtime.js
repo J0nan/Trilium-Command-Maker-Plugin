@@ -751,21 +751,36 @@ function controller() {
         },
 
         categories() {
-            const seen = new Set();
+            const seen = new Map();
             for (const item of index) {
-                if (item.category) {
-                    seen.add(item.category);
+                if (item.categoryLabel && item.categoryPath && item.categoryPath.length) {
+                    if (!seen.has(item.categoryLabel)) {
+                        seen.set(item.categoryLabel, item.categoryPath.slice());
+                    }
                 }
             }
-            return Array.from(seen).sort();
+            return Array.from(seen.keys()).sort().map(function (label) {
+                return { label: label, path: seen.get(label) };
+            });
         },
 
         async createTool(spec) {
+            const safe = spec || {};
+            const categoryPath = Array.isArray(safe.categoryPath)
+                ? safe.categoryPath
+                    .map(function (segment) {
+                        return String(segment).trim();
+                    })
+                    .filter(function (segment) {
+                        return segment !== '';
+                    })
+                : [];
             const notes = Model.newToolNotes();
             const created = await backendAction('createTool', {
                 toolsRootId: toolsRootId(),
-                category: spec.category,
-                title: spec.title,
+                category: safe.category || (categoryPath.length ? categoryPath[categoryPath.length - 1] : ''),
+                categoryPath: categoryPath,
+                title: safe.title,
                 base: spec.base,
                 description: spec.description,
                 content: notes.content,

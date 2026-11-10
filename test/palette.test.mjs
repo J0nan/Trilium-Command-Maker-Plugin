@@ -635,7 +635,7 @@ test('new tool form creates a tool with a category and the three-H2 content', as
     assert.ok(categorySelect, 'category select offers a new category');
     categorySelect.value = '__new__';
     categorySelect.dispatch('change');
-    const categoryInput = find(dom.body, (node) => node.placeholder === 'New category name');
+    const categoryInput = find(dom.body, (node) => /New category or path/.test(String(node.placeholder || '')));
     categoryInput.value = 'Containers';
     const baseInput = find(dom.body, (node) => String(node.placeholder || '').indexOf('Base command') !== -1);
     baseInput.value = 'docker';
@@ -645,10 +645,66 @@ test('new tool form creates a tool with a category and the three-H2 content', as
     const call = env.calls.backend.filter((entry) => entry.action === 'createTool')[0];
     assert.equal(call.title, 'docker');
     assert.equal(call.category, 'Containers');
+    assert.deepEqual(Array.from(call.categoryPath), ['Containers'], 'a flat category is a one-entry path');
     assert.equal(call.base, 'docker');
     assert.match(call.content, /<h2>What is\?<\/h2>/);
     assert.match(call.content, /<h2>Official links<\/h2>/);
     assert.match(call.content, /<h2>Useful links<\/h2>/);
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('new tool form accepts a nested category path', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'New tool')[0].click();
+
+    const titleInput = find(dom.body, (node) => node.placeholder === 'Tool name (e.g. docker)');
+    titleInput.value = 'iwconfig';
+    const categorySelect = find(dom.body, (node) => {
+        return node.tagName === 'SELECT' && node.children.some((child) => child.value === '__new__');
+    });
+    categorySelect.value = '__new__';
+    categorySelect.dispatch('change');
+    const categoryInput = find(dom.body, (node) => /New category or path/.test(String(node.placeholder || '')));
+    categoryInput.value = 'Infrastructure/Wifi';
+    const baseInput = find(dom.body, (node) => String(node.placeholder || '').indexOf('Base command') !== -1);
+    baseInput.value = 'iwconfig';
+
+    findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'Create')[0].click();
+    await waitFor(() => env.calls.backend.filter((call) => call.action === 'createTool').length > 0, 'create tool');
+    const call = env.calls.backend.filter((entry) => entry.action === 'createTool')[0];
+    assert.deepEqual(Array.from(call.categoryPath), ['Infrastructure', 'Wifi'], 'the typed path reaches the backend');
+    assert.equal(call.category, 'Wifi', 'the leaf stays the category');
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('an existing nested category is offered with its whole path and reused', async () => {
+    const dom = createDom();
+    const infrastructure = note({ noteId: 'cat-infra', title: 'Infrastructure' });
+    const fixture = buildFixture({ mediaParents: [infrastructure] });
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'New tool')[0].click();
+
+    const categorySelect = find(dom.body, (node) => {
+        return node.tagName === 'SELECT' && node.children.some((child) => child.value === '__new__');
+    });
+    const nested = categorySelect.children.filter((child) => child.textContent === 'Infrastructure / Media')[0];
+    assert.ok(nested, 'the picker lists the whole path');
+    categorySelect.value = nested.value;
+
+    find(dom.body, (node) => node.placeholder === 'Tool name (e.g. docker)').value = 'ffprobe';
+    findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'Create')[0].click();
+    await waitFor(() => env.calls.backend.filter((call) => call.action === 'createTool').length > 0, 'create tool');
+    const call = env.calls.backend.filter((entry) => entry.action === 'createTool')[0];
+    assert.deepEqual(Array.from(call.categoryPath), ['Infrastructure', 'Media']);
+    assert.equal(call.category, 'Media');
     assert.deepEqual(env.calls.errors, []);
 });
 

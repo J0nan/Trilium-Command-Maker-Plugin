@@ -102,7 +102,7 @@ const EN = {
     'ui.toolNamePlaceholder': 'Tool name (e.g. docker)',
     'ui.category': 'Category',
     'ui.newCategory': 'New category…',
-    'ui.newCategoryPlaceholder': 'New category name',
+    'ui.newCategoryPlaceholder': 'New category or path, e.g. Infrastructure/Wifi',
     'ui.baseOptional': 'Base command (optional, defaults to the name)',
 
     // --- option types ------------------------------------------------------
@@ -515,7 +515,7 @@ const ES = {
     'ui.toolNamePlaceholder': 'Nombre de la herramienta (p. ej. docker)',
     'ui.category': 'Categoría',
     'ui.newCategory': 'Nueva categoría…',
-    'ui.newCategoryPlaceholder': 'Nombre de la nueva categoría',
+    'ui.newCategoryPlaceholder': 'Categoría o ruta nueva, p. ej. Infraestructura/Wifi',
     'ui.baseOptional': 'Comando base (opcional, por defecto el nombre)',
 
     // --- option types ------------------------------------------------------
@@ -4803,7 +4803,7 @@ __def("ui", function (module, exports, __require) {
  *   insert(text): void
  *   message(text): void            show a non-blocking Trilium message
  *   error(text): void              show a Trilium error message
- *   categories(): string[]
+ *   categories(): Array<{ label, path }>  // label = "Infrastructure / Wifi"
  *   createTool(spec): Promise<{ noteId }>
  *   importTool(tool): Promise<{ noteId }>
  *   exportTool(noteId): Promise<{ kind, version, tool }>
@@ -4857,6 +4857,18 @@ function categoryPreview(tool) {
 }
 
 let instance = null;
+
+/** "Infrastructure / Wifi" -> ['Infrastructure', 'Wifi']; blank segments drop. */
+function parseCategoryPath(value) {
+    return String(value == null ? '' : value)
+        .split('/')
+        .map(function (part) {
+            return part.trim();
+        })
+        .filter(function (part) {
+            return part !== '';
+        });
+}
 
 /**
  * Resolve after the handler, so a rejected promise becomes a status message.
@@ -6046,11 +6058,13 @@ function openPalette(controller, options) {
         categorySelect.className = 'cm-control cm-select';
         categorySelect.setAttribute('aria-label', I18n.t('ui.category'));
         const categories = controller.categories();
-        categories.forEach(function (name) {
+        const categoryPaths = [];
+        categories.forEach(function (entry) {
             const option = document.createElement('option');
-            option.value = name;
-            option.textContent = name;
+            option.value = String(categoryPaths.length);
+            option.textContent = entry.label;
             categorySelect.appendChild(option);
+            categoryPaths.push(entry.path);
         });
         const newCategoryOption = document.createElement('option');
         newCategoryOption.value = NEW_CATEGORY;
@@ -6083,14 +6097,17 @@ function openPalette(controller, options) {
                 return;
             }
             const isNewCategory = categorySelect.value === NEW_CATEGORY;
-            const category = isNewCategory ? newCategoryInput.value.trim() : categorySelect.value;
-            if (isNewCategory && !category) {
+            const categoryPath = isNewCategory
+                ? parseCategoryPath(newCategoryInput.value)
+                : (categoryPaths[Number(categorySelect.value)] || []).slice();
+            if (!categoryPath.length) {
                 notify(new Error(I18n.t('status.categoryRequired')));
                 return;
             }
             const created = await controller.createTool({
                 title: title,
-                category: category,
+                category: categoryPath[categoryPath.length - 1],
+                categoryPath: categoryPath,
                 base: baseInput.value.trim(),
                 description: ''
             });
@@ -7442,21 +7459,36 @@ function controller() {
         },
 
         categories() {
-            const seen = new Set();
+            const seen = new Map();
             for (const item of index) {
-                if (item.category) {
-                    seen.add(item.category);
+                if (item.categoryLabel && item.categoryPath && item.categoryPath.length) {
+                    if (!seen.has(item.categoryLabel)) {
+                        seen.set(item.categoryLabel, item.categoryPath.slice());
+                    }
                 }
             }
-            return Array.from(seen).sort();
+            return Array.from(seen.keys()).sort().map(function (label) {
+                return { label: label, path: seen.get(label) };
+            });
         },
 
         async createTool(spec) {
+            const safe = spec || {};
+            const categoryPath = Array.isArray(safe.categoryPath)
+                ? safe.categoryPath
+                    .map(function (segment) {
+                        return String(segment).trim();
+                    })
+                    .filter(function (segment) {
+                        return segment !== '';
+                    })
+                : [];
             const notes = Model.newToolNotes();
             const created = await backendAction('createTool', {
                 toolsRootId: toolsRootId(),
-                category: spec.category,
-                title: spec.title,
+                category: safe.category || (categoryPath.length ? categoryPath[categoryPath.length - 1] : ''),
+                categoryPath: categoryPath,
+                title: safe.title,
                 base: spec.base,
                 description: spec.description,
                 content: notes.content,

@@ -13,7 +13,7 @@
  *   insert(text): void
  *   message(text): void            show a non-blocking Trilium message
  *   error(text): void              show a Trilium error message
- *   categories(): string[]
+ *   categories(): Array<{ label, path }>  // label = "Infrastructure / Wifi"
  *   createTool(spec): Promise<{ noteId }>
  *   importTool(tool): Promise<{ noteId }>
  *   exportTool(noteId): Promise<{ kind, version, tool }>
@@ -67,6 +67,18 @@ function categoryPreview(tool) {
 }
 
 let instance = null;
+
+/** "Infrastructure / Wifi" -> ['Infrastructure', 'Wifi']; blank segments drop. */
+function parseCategoryPath(value) {
+    return String(value == null ? '' : value)
+        .split('/')
+        .map(function (part) {
+            return part.trim();
+        })
+        .filter(function (part) {
+            return part !== '';
+        });
+}
 
 /**
  * Resolve after the handler, so a rejected promise becomes a status message.
@@ -1256,11 +1268,13 @@ function openPalette(controller, options) {
         categorySelect.className = 'cm-control cm-select';
         categorySelect.setAttribute('aria-label', I18n.t('ui.category'));
         const categories = controller.categories();
-        categories.forEach(function (name) {
+        const categoryPaths = [];
+        categories.forEach(function (entry) {
             const option = document.createElement('option');
-            option.value = name;
-            option.textContent = name;
+            option.value = String(categoryPaths.length);
+            option.textContent = entry.label;
             categorySelect.appendChild(option);
+            categoryPaths.push(entry.path);
         });
         const newCategoryOption = document.createElement('option');
         newCategoryOption.value = NEW_CATEGORY;
@@ -1293,14 +1307,17 @@ function openPalette(controller, options) {
                 return;
             }
             const isNewCategory = categorySelect.value === NEW_CATEGORY;
-            const category = isNewCategory ? newCategoryInput.value.trim() : categorySelect.value;
-            if (isNewCategory && !category) {
+            const categoryPath = isNewCategory
+                ? parseCategoryPath(newCategoryInput.value)
+                : (categoryPaths[Number(categorySelect.value)] || []).slice();
+            if (!categoryPath.length) {
                 notify(new Error(I18n.t('status.categoryRequired')));
                 return;
             }
             const created = await controller.createTool({
                 title: title,
-                category: category,
+                category: categoryPath[categoryPath.length - 1],
+                categoryPath: categoryPath,
                 base: baseInput.value.trim(),
                 description: ''
             });

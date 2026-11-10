@@ -120,7 +120,7 @@ Tools/                              #cmTools  (move it anywhere, the label follo
         └── ...
 ```
 
-Folders can nest as deep as you like: a tool inside `Tools/Infrastructure/Wifi` is listed and shown as **Infrastructure / Wifi**, and every folder in the chain is searchable. The category picker in the new-tool form still creates one folder directly under `Tools`; create subcategories by hand in the note tree, or import a tool file that carries a category path (below).
+Folders can nest as deep as you like: a tool inside `Tools/Infrastructure/Wifi` is listed and shown as **Infrastructure / Wifi**, and every folder in the chain is searchable. The category picker in the new-tool form lists existing paths (`Infrastructure / Wifi`), and its new-category field accepts a path too: type `Infrastructure/Wifi` and the folders are created as needed.
 
 The `Tools` folder is found by its `#cmTools` label, so you can drag it to another path and the plugin keeps working. Use **Tools folder → Use the active note** in the palette (or the note-ID field there) to pick a different root: moving the root **moves the `#cmTools` label** from the old folder to the new one, and only one folder should carry the label; if you label a second folder by hand while another still holds it, the palette picks one of them unpredictably, so use the palette action instead of manual labelling.
 

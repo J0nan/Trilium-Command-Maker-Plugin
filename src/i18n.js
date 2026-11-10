@@ -85,7 +85,7 @@ const EN = {
     'ui.toolNamePlaceholder': 'Tool name (e.g. docker)',
     'ui.category': 'Category',
     'ui.newCategory': 'New category…',
-    'ui.newCategoryPlaceholder': 'New category name',
+    'ui.newCategoryPlaceholder': 'New category or path, e.g. Infrastructure/Wifi',
     'ui.baseOptional': 'Base command (optional, defaults to the name)',
 
     // --- option types ------------------------------------------------------
@@ -498,7 +498,7 @@ const ES = {
     'ui.toolNamePlaceholder': 'Nombre de la herramienta (p. ej. docker)',
     'ui.category': 'Categoría',
     'ui.newCategory': 'Nueva categoría…',
-    'ui.newCategoryPlaceholder': 'Nombre de la nueva categoría',
+    'ui.newCategoryPlaceholder': 'Categoría o ruta nueva, p. ej. Infraestructura/Wifi',
     'ui.baseOptional': 'Comando base (opcional, por defecto el nombre)',
 
     // --- option types ------------------------------------------------------

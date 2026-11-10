@@ -329,6 +329,33 @@ test('createTool sends the three-H2 template and the standard child content', as
     globalThis.api = undefined;
 });
 
+test('createTool forwards a nested category path and categories lists whole paths', async () => {
+    const built = makeTool();
+    const outer = makeNote({ noteId: 'cat-outer', title: 'Infrastructure' });
+    const inner = makeNote({ noteId: 'cat-inner', title: 'Wifi', parents: [outer] });
+    built.tool.getParentNotes = function () {
+        return [inner];
+    };
+    const calls = installApi(built.tool, {});
+    await Runtime.refresh();
+    const controller = Runtime.controller();
+
+    assert.deepEqual(controller.categories(), [
+        { path: ['Infrastructure', 'Wifi'], label: 'Infrastructure / Wifi' }
+    ]);
+
+    await controller.createTool({
+        title: 'iwconfig',
+        categoryPath: ['Infrastructure', 'Wifi'],
+        base: 'iwconfig',
+        description: ''
+    });
+    const create = calls.filter((call) => call.action === 'createTool')[0];
+    assert.deepEqual(create.categoryPath, ['Infrastructure', 'Wifi']);
+    assert.equal(create.category, 'Wifi', 'the leaf is derived from the path');
+    globalThis.api = undefined;
+});
+
 test('setToolBase forwards the tool id and the new base', async () => {
     const built = makeTool();
     const calls = installApi(built.tool, {});
