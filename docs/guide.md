@@ -128,7 +128,7 @@ If you installed the plugin runtime manually *before* ever running the installer
 
 ### Language
 
-The plugin ships English and Spain Spanish in one bundle. The version pill in the footer (`v1.0 ▾`) opens a small menu with the update check and the language: picking **English** or **Español** writes `#cmLang` (`en` or `es`) on the `Command Maker` settings note and rebuilds the palette in that language, including the titles of the notes the backend creates later (`Opciones`, `Instalación`, `Uso`, `Ayuda`).
+The plugin ships English and Spain Spanish in one bundle. The version pill in the footer (`v1.2 ▾`) opens a small menu with the update check and the language: picking **English** or **Español** writes `#cmLang` (`en` or `es`) on the `Command Maker` settings note and rebuilds the palette in that language, including the titles of the notes the backend creates later (`Opciones`, `Instalación`, `Uso`, `Ayuda`).
 
 Set `#cmLang=es` on the settings note by hand to start in Spanish. With no label, the plugin follows the browser/Trilium language and falls back to English; on the first bootstrap it records the language it picked, so the setting is always visible. The label is strictly a UI preference: tool files, labels, presets and rendered commands never change with it. Notes seeded before a language switch keep the language they were written in.
 
@@ -284,7 +284,7 @@ The model is told to return only the JSON object. If a markdown fence still slip
 
 ## Version check
 
-Current version: **1.0**. The palette footer shows `v1.0`; click it to check GitHub's latest release (falling back to the highest tag, then `package.json` on `main`). The settings note stores `#cmVersion`, and the installer log prints the version. A network/CORS failure is reported in the status and the **Repository** link opens the source.
+Current version: **1.2**. The palette footer shows `v1.2`; click it to check GitHub's latest release (falling back to the highest tag, then `package.json` on `main`). The settings note stores `#cmVersion`, and the installer log prints the version. A network/CORS failure is reported in the status and the **Repository** link opens the source.
 
 ## Design notes
 
