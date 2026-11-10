@@ -260,6 +260,18 @@ const EN = {
     'addOption.fieldFlag': 'Flag',
     'addOption.fieldHelp': 'Help',
     'addOption.fieldType': 'Type',
+    'addOption.fieldMode': 'Mode',
+    'addOption.modeFlag': 'Flag (appended to the command)',
+    'addOption.modeInline': 'Inline (referenced in the command base)',
+    'addOption.fieldPlaceholder': 'Placeholder',
+    'addOption.placeholderPlaceholder': 'Placeholder name, e.g. output (optional)',
+    'addOption.fieldQuote': 'Quoting',
+    'addOption.quoteNone': 'None',
+    'addOption.quoteSingle': "Single quotes ('value')",
+    'addOption.quoteDouble': 'Double quotes ("value")',
+    'addOption.fieldSeparator': 'Separator',
+    'addOption.sepSpace': 'Space (--flag value)',
+    'addOption.sepEquals': 'Equals (--flag=value)',
     'addOption.fieldDefault': 'Default',
     'addOption.fieldValues': 'Values',
     'addOption.fieldOrder': 'Order',
@@ -681,6 +693,18 @@ const ES = {
     'addOption.fieldFlag': 'Flag',
     'addOption.fieldHelp': 'Ayuda',
     'addOption.fieldType': 'Tipo',
+    'addOption.fieldMode': 'Modo',
+    'addOption.modeFlag': 'Flag (se añade al comando)',
+    'addOption.modeInline': 'Inline (se referencia en el comando base)',
+    'addOption.fieldPlaceholder': 'Marcador',
+    'addOption.placeholderPlaceholder': 'Nombre del marcador, p. ej. output (opcional)',
+    'addOption.fieldQuote': 'Comillas',
+    'addOption.quoteNone': 'Ninguna',
+    'addOption.quoteSingle': "Simples ('valor')",
+    'addOption.quoteDouble': 'Dobles ("valor")',
+    'addOption.fieldSeparator': 'Separador',
+    'addOption.sepSpace': 'Espacio (--flag valor)',
+    'addOption.sepEquals': 'Igual (--flag=valor)',
     'addOption.fieldDefault': 'Por defecto',
     'addOption.fieldValues': 'Valores',
     'addOption.fieldOrder': 'Orden',
@@ -6501,6 +6525,48 @@ function openPalette(controller, options) {
             entry.textContent = I18n.t('type.' + type);
             typeSelect.appendChild(entry);
         });
+        typeSelect.setAttribute('aria-label', I18n.t('addOption.fieldType'));
+
+        const modeSelect = document.createElement('select');
+        [
+            { value: 'flag', label: 'addOption.modeFlag' },
+            { value: 'inline', label: 'addOption.modeInline' }
+        ].forEach(function (mode) {
+            const entry = document.createElement('option');
+            entry.value = mode.value;
+            entry.textContent = I18n.t(mode.label);
+            modeSelect.appendChild(entry);
+        });
+        modeSelect.setAttribute('aria-label', I18n.t('addOption.fieldMode'));
+
+        const placeholderInput = document.createElement('input');
+        placeholderInput.type = 'text';
+        placeholderInput.placeholder = I18n.t('addOption.placeholderPlaceholder');
+
+        const quoteSelect = document.createElement('select');
+        [
+            { value: 'none', label: 'addOption.quoteNone' },
+            { value: 'single', label: 'addOption.quoteSingle' },
+            { value: 'double', label: 'addOption.quoteDouble' }
+        ].forEach(function (quote) {
+            const entry = document.createElement('option');
+            entry.value = quote.value;
+            entry.textContent = I18n.t(quote.label);
+            quoteSelect.appendChild(entry);
+        });
+        quoteSelect.setAttribute('aria-label', I18n.t('addOption.fieldQuote'));
+
+        const sepSelect = document.createElement('select');
+        [
+            { value: ' ', label: 'addOption.sepSpace' },
+            { value: '=', label: 'addOption.sepEquals' }
+        ].forEach(function (separator) {
+            const entry = document.createElement('option');
+            entry.value = separator.value;
+            entry.textContent = I18n.t(separator.label);
+            sepSelect.appendChild(entry);
+        });
+        sepSelect.setAttribute('aria-label', I18n.t('addOption.fieldSeparator'));
 
         const defaultInput = document.createElement('input');
         defaultInput.type = 'text';
@@ -6544,6 +6610,10 @@ function openPalette(controller, options) {
                 values: values,
                 defaultValue: defaultInput.value,
                 required: Boolean(requiredInput.checked),
+                mode: modeSelect.value === 'inline' ? 'inline' : 'flag',
+                placeholder: placeholderInput.value.trim(),
+                quote: Model.QUOTES.indexOf(quoteSelect.value) === -1 ? 'none' : quoteSelect.value,
+                separator: sepSelect.value === '=' ? '=' : ' ',
                 order: isFinite(order) ? order : 100
             });
             closeModal();
@@ -6561,8 +6631,12 @@ function openPalette(controller, options) {
         bodyNode.appendChild(field(I18n.t('addOption.fieldFlag'), flagInput));
         bodyNode.appendChild(field(I18n.t('addOption.fieldHelp'), helpInput));
         bodyNode.appendChild(field(I18n.t('addOption.fieldType'), typeSelect));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldMode'), modeSelect));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldPlaceholder'), placeholderInput));
         bodyNode.appendChild(field(I18n.t('addOption.fieldDefault'), defaultInput));
         bodyNode.appendChild(field(I18n.t('addOption.fieldValues'), valuesInput));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldQuote'), quoteSelect));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldSeparator'), sepSelect));
         bodyNode.appendChild(field(I18n.t('addOption.fieldOrder'), orderInput));
         bodyNode.appendChild(requiredRow);
         bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('addOption.requiredNote')));

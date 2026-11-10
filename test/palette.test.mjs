@@ -764,14 +764,18 @@ test('palette can add a single option with a help string', async () => {
     findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'Add option')[0].click();
     const modal = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-modal')), 'add option modal');
     const fields = findAll(modal, (node) => classed(node, 'cm-field'));
-    assert.ok(fields.length >= 7, 'every add-option field stacks its label above a full-width control');
+    assert.ok(fields.length >= 11, 'every add-option field stacks its label above a full-width control');
     assert.ok(fields.every((entry) => entry.children.length === 2), 'each field holds a label and a control');
 
     find(modal, (node) => node.placeholder === 'Option label, e.g. Output file').value = 'Output file';
     find(modal, (node) => String(node.placeholder || '').indexOf('Flag, e.g.') === 0).value = '-o';
     find(modal, (node) => node.placeholder === 'What is this option for?').value = 'Write output to a file.';
-    find(modal, (node) => node.tagName === 'SELECT').value = 'path';
+    find(modal, (node) => node.getAttribute('aria-label') === 'Type').value = 'path';
+    find(modal, (node) => node.getAttribute('aria-label') === 'Mode').value = 'inline';
+    find(modal, (node) => String(node.placeholder || '').indexOf('Placeholder name') === 0).value = 'output';
     find(modal, (node) => node.placeholder === 'Default value (optional)').value = 'out.mp4';
+    find(modal, (node) => node.getAttribute('aria-label') === 'Quoting').value = 'double';
+    find(modal, (node) => node.getAttribute('aria-label') === 'Separator').value = '=';
     find(modal, (node) => node.tagName === 'INPUT' && node.type === 'number').value = '70';
 
     findAll(modal, (node) => node.tagName === 'BUTTON' && node.textContent === 'Add')[0].click();
@@ -784,6 +788,10 @@ test('palette can add a single option with a help string', async () => {
     assert.equal(call.option.type, 'path');
     assert.equal(call.option.defaultValue, 'out.mp4');
     assert.equal(call.option.order, 70);
+    assert.equal(call.option.mode, 'inline');
+    assert.equal(call.option.placeholder, 'output');
+    assert.equal(call.option.quote, 'double');
+    assert.equal(call.option.separator, '=');
     assert.deepEqual(env.calls.errors, []);
 });
 

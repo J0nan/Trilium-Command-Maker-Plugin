@@ -219,10 +219,10 @@ A preset saves the current value map. Presets are stored in one JSON note inside
 **Import options** accepts three sources: pasted text, the currently open note, or a local file. It understands:
 
 1. **`--help` output**: GNU/POSIX style, including `-m, --message <message>`, `--output=FILE`, `--[no-]color`, ffmpeg-style single-dash flags, continuation lines, `(default: …)`, `{a,b,c}` / `one of: a, b` enums.
-2. **JSON**: an array, `{ "options": [...] }` or `{ "tool": { "options": [...] } }` with `flag`, `help`, `label`, `type`, `values`, `default`, `required`, `mode`, `placeholder`, `order`.
+2. **JSON**: an array, `{ "options": [...] }` or `{ "tool": { "options": [...] } }` with `flag`, `help`, `label`, `type`, `values`, `default`, `required`, `mode`, `placeholder`, `order`, `quote`, `sep`.
 3. **Markdown table**: `| Flag | Help | Type |` rows.
 
-Nothing is written until you parse and confirm: a preview lists every detected option with a checkbox. One import creates at most 200 option notes; when the source contains more, the status names how many were ignored (the same bound tool-file imports enforce). For a single option, use **Add option** in the palette footer; it writes the same option note with the label, flag and help string you type.
+Nothing is written until you parse and confirm: a preview lists every detected option with a checkbox. One import creates at most 200 option notes; when the source contains more, the status names how many were ignored (the same bound tool-file imports enforce). For a single option, use **Add option** in the palette footer; the modal sets every option property the note understands — label, flag, help, type, mode, placeholder, default, enum values, quoting, separator, order and required — so you never have to edit labels by hand.
 
 ## Importing and exporting whole tools
 
