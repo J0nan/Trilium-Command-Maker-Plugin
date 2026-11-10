@@ -477,6 +477,35 @@ test('bootstrap keeps the settings note version current', () => {
     assert.equal(root.getLabelValue(labels.version), Version.VERSION, 'no version param leaves it alone');
 });
 
+test('setPanelWidth stores a clamped percentage on the settings note', () => {
+    const api = createApi();
+    const beRun = serialise(Backend.beRun, api);
+    const { rootId } = boot(api, beRun);
+    const root = api.getNote(rootId);
+
+    const high = beRun({ action: 'setPanelWidth', labels, rootId, width: 140, min: 30, max: 100 });
+    assert.equal(high.width, 100);
+    assert.equal(root.getLabelValue(labels.panelWidth), '100');
+
+    beRun({ action: 'setPanelWidth', labels, rootId, width: 12, min: 30, max: 100 });
+    assert.equal(root.getLabelValue(labels.panelWidth), '30');
+
+    beRun({ action: 'setPanelWidth', labels, rootId, width: 75, min: 30, max: 100 });
+    assert.equal(root.getLabelValue(labels.panelWidth), '75');
+});
+
+test('bootstrap records the default panel width only when the label is missing', () => {
+    const api = createApi();
+    const beRun = serialise(Backend.beRun, api);
+    const first = boot(api, beRun, { panelWidth: 70 });
+    const root = api.getNote(first.rootId);
+    assert.equal(root.getLabelValue(labels.panelWidth), '70');
+
+    root.setLabel(labels.panelWidth, '55');
+    boot(api, beRun, { panelWidth: 70 });
+    assert.equal(root.getLabelValue(labels.panelWidth), '55', 'an existing choice wins');
+});
+
 test('tools created in one category reuse it, and an unknown Tools root is refused', () => {
     // The old createCategory backend action was unreachable production code;
     // category reuse is what callers actually depend on, so it is pinned here.
@@ -645,6 +674,85 @@ test('addOption writes every option label including the help string', () => {
     assert.equal(plainNote.hasLabel(labels.separator), false);
 });
 
+test('updateOption rewrites an option in place and refuses notes that are not options', () => {
+    const api = createApi();
+    const beRun = serialise(Backend.beRun, api);
+    const { toolsRootId, rootId } = boot(api, beRun);
+    const created = beRun({ action: 'createTool', labels, toolsRootId, title: 'curl', base: 'curl' });
+
+    const added = beRun({
+        action: 'addOption',
+        labels,
+        toolId: created.noteId,
+        option: {
+            label: 'Old label',
+            flag: '-o',
+            type: 'string',
+            help: 'Old help.',
+            values: ['a', 'b'],
+            default: 'out.bin',
+            required: true,
+            mode: 'inline',
+            placeholder: 'output',
+            order: 7,
+            quote: 'single',
+            separator: '=',
+            content: 'Body kept.'
+        }
+    });
+
+    const updated = beRun({
+        action: 'updateOption',
+        labels,
+        noteId: added.noteId,
+        option: {
+            label: 'New label',
+            flag: '',
+            type: 'boolean',
+            help: 'New help.',
+            values: [],
+            defaultValue: '',
+            required: false,
+            mode: 'flag',
+            placeholder: '',
+            order: '',
+            quote: '',
+            separator: ' '
+        }
+    });
+    assert.equal(updated.noteId, added.noteId);
+    assert.equal(updated.title, 'New label');
+    assert.equal(updated.labels[labels.type], 'boolean');
+    assert.equal(updated.labels[labels.doc], 'New help.');
+    assert.equal(Object.prototype.hasOwnProperty.call(updated.labels, labels.flag), false, 'cleared labels are absent from the snapshot');
+
+    const note = api.getNote(added.noteId);
+    assert.equal(note.title, 'New label');
+    assert.equal(note.getContent(), 'Body kept.');
+    assert.equal(note.getLabelValue(labels.option), '');
+    assert.equal(note.hasLabel(labels.flag), false, 'a cleared flag removes the label');
+    assert.equal(note.getLabelValue(labels.type), 'boolean');
+    assert.equal(note.getLabelValue(labels.doc), 'New help.');
+    assert.equal(note.hasLabel(labels.enumValues), false, 'cleared enum values remove the label');
+    assert.equal(note.getLabelValue(labels.defaultValue), '', 'an explicit empty default is kept');
+    assert.equal(note.hasLabel(labels.required), false);
+    assert.equal(note.hasLabel(labels.mode), false);
+    assert.equal(note.hasLabel(labels.placeholder), false);
+    assert.equal(note.hasLabel(labels.order), false);
+    assert.equal(note.hasLabel(labels.quote), false);
+    assert.equal(note.hasLabel(labels.separator), false);
+
+    const category = api.getNote(toolsRootId).getChildNotes()[0];
+    for (const noteId of [toolsRootId, created.noteId, category.noteId, rootId]) {
+        assert.throws(
+            () => beRun({ action: 'updateOption', labels, noteId, option: { label: 'Hijack' } }),
+            /not an option/,
+            'a non-option note is protected'
+        );
+    }
+    assert.throws(() => beRun({ action: 'updateOption', labels, noteId: 'nope', option: {} }), /Option note not found/);
+});
+
 test('importOptions creates options and deleteOption removes one', () => {
     const api = createApi();
     const beRun = serialise(Backend.beRun, api);
@@ -690,6 +798,44 @@ test('deleteOption refuses any note that is not an option', () => {
         );
         assert.equal(api.getNote(noteId).deleted, false, 'the note is left untouched');
     }
+});
+
+test('reorderOptions writes every #cmOrder in one action and refuses non-options', () => {
+    const api = createApi();
+    const beRun = serialise(Backend.beRun, api);
+    const { toolsRootId, rootId } = boot(api, beRun);
+    const created = beRun({ action: 'createTool', labels, toolsRootId, title: 'git', base: 'git' });
+    const first = beRun({ action: 'addOption', labels, toolId: created.noteId, option: { label: 'A', flag: '-a', order: 10 } });
+    const second = beRun({ action: 'addOption', labels, toolId: created.noteId, option: { label: 'B', flag: '-b', order: 20 } });
+
+    const result = beRun({
+        action: 'reorderOptions',
+        labels,
+        order: [
+            { noteId: second.noteId, order: 10 },
+            { noteId: first.noteId, order: 20 }
+        ]
+    });
+    assert.deepEqual(Array.from(result.noteIds), [second.noteId, first.noteId]);
+    assert.equal(api.getNote(second.noteId).getLabelValue(labels.order), '10');
+    assert.equal(api.getNote(first.noteId).getLabelValue(labels.order), '20');
+
+    const category = api.getNote(toolsRootId).getChildNotes()[0];
+    for (const noteId of [toolsRootId, created.noteId, category.noteId, rootId]) {
+        assert.throws(
+            () => beRun({ action: 'reorderOptions', labels, order: [{ noteId, order: 10 }] }),
+            /not an option/,
+            'a non-option note is protected'
+        );
+    }
+    assert.throws(
+        () => beRun({ action: 'reorderOptions', labels, order: [{ noteId: first.noteId, order: 'nope' }] }),
+        /must be a number/
+    );
+    assert.throws(
+        () => beRun({ action: 'reorderOptions', labels, order: [{ noteId: 'nope', order: 10 }] }),
+        /Option note not found/
+    );
 });
 
 test('importOptions skips flags that already exist on the tool', () => {
@@ -1118,6 +1264,37 @@ test('ensureTab creates one render note, one HTML wrapper and one plugin clone',
         htmls[0].getChildNotes().filter((child) => child.noteId === plugin.noteId).length,
         1,
         'the plugin clone is not duplicated'
+    );
+});
+
+test('applyBundle rewrites the plugin script and records the new version', () => {
+    const { api, beRun, result } = seedApi();
+    const plugin = api.createNewNote({
+        parentNoteId: result.rootId,
+        title: 'Command Maker.js',
+        type: 'code',
+        mime: 'application/javascript;env=frontend',
+        content: 'old bundle'
+    }).note;
+    plugin.setLabel(labels.plugin, '');
+
+    const applied = beRun({ action: 'applyBundle', labels, bundle: 'new bundle', version: '9.9.9' });
+
+    assert.equal(applied.noteId, plugin.noteId);
+    assert.equal(applied.version, '9.9.9');
+    assert.equal(plugin.getContent(), 'new bundle');
+    assert.equal(api.getNote(result.rootId).getLabelValue(labels.version), '9.9.9');
+});
+
+test('applyBundle refuses an empty bundle or a missing plugin note', () => {
+    const { beRun } = seedApi();
+    assert.throws(
+        () => beRun({ action: 'applyBundle', labels, bundle: '', version: '9.9.9' }),
+        /empty/i
+    );
+    assert.throws(
+        () => beRun({ action: 'applyBundle', labels, bundle: 'bundle', version: '9.9.9' }),
+        /plugin/i
     );
 });
 

@@ -57,15 +57,37 @@ const LABELS = {
     seeded: 'cmSeeded',
     managed: 'cmManaged',
     version: 'cmVersion',
+    plugin: 'cmPlugin',
     // note presentation
     icon: 'iconClass',
     // settings
     lang: 'cmLang',
+    panelWidth: 'cmPanelWidth',
 };
 
 const LABEL_NAMES = Object.keys(LABELS).map(function (key) {
     return LABELS[key];
 });
+
+// Overlay panel width, stored as a percentage of the window. Shared by the
+// runtime (read/write), the palette menu (slider) and the backend (clamp).
+const PANEL_WIDTH_MIN = 30;
+const PANEL_WIDTH_MAX = 100;
+const PANEL_WIDTH_DEFAULT = 70;
+
+function normalizePanelWidth(value) {
+    const parsed = Math.round(Number(value));
+    if (!isFinite(parsed)) {
+        return PANEL_WIDTH_DEFAULT;
+    }
+    if (parsed < PANEL_WIDTH_MIN) {
+        return PANEL_WIDTH_MIN;
+    }
+    if (parsed > PANEL_WIDTH_MAX) {
+        return PANEL_WIDTH_MAX;
+    }
+    return parsed;
+}
 
 const TYPES = ['string', 'path', 'number', 'boolean', 'enum'];
 const QUOTES = ['none', 'single', 'double'];
@@ -173,6 +195,40 @@ function optionFromNote(note) {
 
 function sortOptions(left, right) {
     return Render.compareOptions(left, right);
+}
+
+/**
+ * Sequential #cmOrder values for an option list already in command order.
+ * Only note-backed options can be persisted; inferred placeholders have no
+ * note to label. Ten-point gaps leave room for a manual #cmOrder later.
+ */
+function orderPlan(options) {
+    const plan = [];
+    (Array.isArray(options) ? options : []).forEach(function (option) {
+        if (option && option.noteId) {
+            plan.push({ noteId: option.noteId, order: (plan.length + 1) * 10 });
+        }
+    });
+    return plan;
+}
+
+/** New order plan after moving one option to a position in command order. */
+function reorderPlan(options, noteId, targetIndex) {
+    const noteOptions = (Array.isArray(options) ? options : []).filter(function (option) {
+        return option && option.noteId;
+    });
+    const from = noteOptions.findIndex(function (option) {
+        return option.noteId === noteId;
+    });
+    if (from === -1) {
+        return [];
+    }
+    const ordered = noteOptions.slice();
+    const moved = ordered.splice(from, 1)[0];
+    const parsed = Number(targetIndex);
+    const target = isFinite(parsed) ? Math.max(0, Math.min(ordered.length, parsed)) : ordered.length;
+    ordered.splice(target, 0, moved);
+    return orderPlan(ordered);
 }
 
 function buildTool(note) {
@@ -605,10 +661,16 @@ module.exports = {
     TYPES,
     QUOTES,
     ICONS,
+    PANEL_WIDTH_MIN,
+    PANEL_WIDTH_MAX,
+    PANEL_WIDTH_DEFAULT,
+    normalizePanelWidth,
     EXTRA_KEY: Render.EXTRA_KEY,
     deriveBase,
     optionFromNote,
     sortOptions,
+    orderPlan,
+    reorderPlan,
     buildTool,
     defaultValueMap,
     valuesFromExample,

@@ -10,9 +10,9 @@
  * being duplicated here. Consequently `beRun` must never reference a
  * module-scope binding and dispatches on literal action strings only.
  *
- * Actions: bootstrap | setLanguage | createTool | importTool | addOption |
- * importOptions | deleteOption | setToolBase | setToolsRoot | savePreset |
- * deletePreset | ensureTab
+ * Actions: bootstrap | setLanguage | setPanelWidth | createTool | importTool |
+ * addOption | updateOption | reorderOptions | importOptions | deleteOption |
+ * setToolBase | setToolsRoot | savePreset | deletePreset | ensureTab | applyBundle
  */
 
 function beRun(params) {
@@ -349,6 +349,62 @@ function beRun(params) {
         return note;
     }
 
+    /**
+     * Write one label, removing it when the value is empty so an edited option
+     * never keeps a stale attribute the user just cleared.
+     */
+    function setOrRemoveLabel(note, name, value) {
+        if (!name) {
+            return;
+        }
+        if (nonEmpty(value)) {
+            note.setLabel(name, String(value));
+        } else if (typeof note.removeLabel === 'function') {
+            note.removeLabel(name);
+        } else {
+            note.setLabel(name, '');
+        }
+    }
+
+    /** Apply every option attribute to an existing option note. */
+    function applyOptionLabels(note, spec) {
+        const safe = spec || {};
+        note.setLabel(labels.option, '');
+        setOrRemoveLabel(note, labels.flag, safe.flag);
+        const doc = safe.help || safe.doc;
+        setOrRemoveLabel(note, labels.doc, doc);
+        setOrRemoveLabel(note, labels.type, safe.type);
+        const enumValues = safe.values !== undefined && safe.values !== null ? safe.values : safe.enumValues;
+        if (Array.isArray(enumValues)) {
+            setOrRemoveLabel(note, labels.enumValues, enumValues.length > 0 ? enumValues.join(',') : '');
+        } else {
+            setOrRemoveLabel(note, labels.enumValues, enumValues);
+        }
+        let rawDefault = undefined;
+        if (safe.default !== undefined && safe.default !== null) {
+            rawDefault = safe.default;
+        } else if (safe.defaultValue !== undefined && safe.defaultValue !== null) {
+            rawDefault = safe.defaultValue;
+        }
+        // A provided default is kept even when it is the empty string, which is
+        // how a boolean default of `false` and an explicit empty default persist.
+        if (rawDefault !== undefined) {
+            note.setLabel(labels.defaultValue, String(rawDefault));
+        } else if (typeof note.removeLabel === 'function') {
+            note.removeLabel(labels.defaultValue);
+        }
+        setOrRemoveLabel(note, labels.required, safe.required ? 'true' : '');
+        setOrRemoveLabel(note, labels.mode, safe.mode === 'inline' ? 'inline' : '');
+        setOrRemoveLabel(note, labels.placeholder, safe.placeholder);
+        setOrRemoveLabel(
+            note,
+            labels.order,
+            safe.order !== undefined && safe.order !== null && String(safe.order).trim() !== '' ? safe.order : ''
+        );
+        setOrRemoveLabel(note, labels.quote, safe.quote);
+        setOrRemoveLabel(note, labels.separator, safe.sep === '=' || safe.separator === '=' ? '=' : '');
+    }
+
     /** Create one option note under a tool's Options folder. */
     function createOptionNote(folder, spec) {
         const safe = spec || {};
@@ -359,53 +415,46 @@ function beRun(params) {
             type: 'text',
             content: safe.content == null ? '' : String(safe.content)
         }).note);
-        note.setLabel(labels.option, '');
-        if (nonEmpty(safe.flag)) {
-            note.setLabel(labels.flag, String(safe.flag));
-        }
-        const doc = safe.help || safe.doc;
-        if (nonEmpty(doc)) {
-            note.setLabel(labels.doc, String(doc));
-        }
-        if (nonEmpty(safe.type)) {
-            note.setLabel(labels.type, String(safe.type));
-        }
-        const enumValues = safe.values !== undefined && safe.values !== null ? safe.values : safe.enumValues;
-        if (Array.isArray(enumValues)) {
-            if (enumValues.length > 0) {
-                note.setLabel(labels.enumValues, enumValues.join(','));
-            }
-        } else if (nonEmpty(enumValues)) {
-            note.setLabel(labels.enumValues, String(enumValues));
-        }
-        let rawDefault = undefined;
-        if (safe.default !== undefined && safe.default !== null) {
-            rawDefault = safe.default;
-        } else if (safe.defaultValue !== undefined && safe.defaultValue !== null) {
-            rawDefault = safe.defaultValue;
-        }
-        if (rawDefault !== undefined) {
-            note.setLabel(labels.defaultValue, String(rawDefault));
-        }
-        if (safe.required) {
-            note.setLabel(labels.required, 'true');
-        }
-        if (safe.mode === 'inline') {
-            note.setLabel(labels.mode, 'inline');
-        }
-        if (nonEmpty(safe.placeholder)) {
-            note.setLabel(labels.placeholder, String(safe.placeholder));
-        }
-        if (safe.order !== undefined && safe.order !== null && String(safe.order).trim() !== '') {
-            note.setLabel(labels.order, String(safe.order));
-        }
-        if (nonEmpty(safe.quote)) {
-            note.setLabel(labels.quote, String(safe.quote));
-        }
-        if (safe.sep === '=' || safe.separator === '=') {
-            note.setLabel(labels.separator, '=');
-        }
+        applyOptionLabels(note, safe);
         return note;
+    }
+
+    /** Current label map of an option note, keyed by attribute name. */
+    function optionLabelSnapshot(note) {
+        const snapshot = {};
+        const keys = Object.keys(labels);
+        for (let index = 0; index < keys.length; index += 1) {
+            const name = labels[keys[index]];
+            if (hasLabel(note, name)) {
+                const value = note.getLabelValue(name);
+                if (value !== null && value !== undefined) {
+                    snapshot[name] = String(value);
+                }
+            }
+        }
+        return snapshot;
+    }
+
+    /**
+     * Rewrite one existing option note in place. The target must carry the
+     * option label, so a wrong or hostile note id can never edit an unrelated
+     * note, and the note body is left untouched.
+     */
+    function updateOption() {
+        const note = requireNote(options.noteId, text('back.errorOptionNote', 'Option note not found'));
+        if (!hasLabel(note, labels.option)) {
+            throw new Error(text('back.errorNotAnOptionPrefix', 'Note is not an option of a tool: ') + note.noteId);
+        }
+        const spec = options.option || {};
+        note.title = nonEmpty(spec.label) ? String(spec.label) : text('back.noteOption', 'Option');
+        applyOptionLabels(note, spec);
+        // Return the saved attributes so the frontend can update its cached
+        // entity before Trilium's entity-change event reaches the UI.
+        return {
+            noteId: note.noteId,
+            title: note.title,
+            labels: optionLabelSnapshot(note)
+        };
     }
 
     function parentForRoot() {
@@ -456,6 +505,15 @@ function beRun(params) {
             const configured = root.getLabelValue(labels.lang);
             if (configured === null || configured === undefined || String(configured).trim() === '') {
                 root.setLabel(labels.lang, String(options.lang));
+            }
+        }
+
+        // Same treatment for the overlay width: record the active percentage
+        // once so the setting is discoverable and the menu has a value to show.
+        if (nonEmpty(options.panelWidth) && labels.panelWidth) {
+            const configured = root.getLabelValue(labels.panelWidth);
+            if (configured === null || configured === undefined || String(configured).trim() === '') {
+                root.setLabel(labels.panelWidth, String(options.panelWidth));
             }
         }
 
@@ -597,6 +655,29 @@ function beRun(params) {
         return { ok: true };
     }
 
+    /**
+     * Persist a whole option ordering in one round-trip. Each target must be an
+     * option note; the caller already computed the sequential `#cmOrder` values.
+     */
+    function reorderOptions() {
+        const entries = Array.isArray(options.order) ? options.order : [];
+        const noteIds = [];
+        for (let index = 0; index < entries.length; index += 1) {
+            const entry = entries[index] || {};
+            const note = requireNote(entry.noteId, text('back.errorOptionNote', 'Option note not found'));
+            if (!hasLabel(note, labels.option)) {
+                throw new Error(text('back.errorNotAnOptionPrefix', 'Note is not an option of a tool: ') + note.noteId);
+            }
+            const order = Number(entry.order);
+            if (!isFinite(order)) {
+                throw new Error(text('back.errorInvalidOrder', 'Option order must be a number: ') + note.noteId);
+            }
+            note.setLabel(labels.order, String(order));
+            noteIds.push(note.noteId);
+        }
+        return { noteIds: noteIds };
+    }
+
     function setToolBase() {
         const tool = requireNote(options.toolId, text('back.errorToolNote', 'Tool note not found'));
         if (nonEmpty(options.base)) {
@@ -730,6 +811,33 @@ function beRun(params) {
         return { tabNoteId: tab.noteId, htmlNoteId: html.noteId };
     }
 
+    /**
+     * Rewrite the frontend plugin note with a downloaded release bundle. The
+     * note is found through its `#cmPlugin` label, so a wrong id can never
+     * overwrite an unrelated note; the version label records what is installed.
+     */
+    function applyBundle() {
+        if (!labels.plugin) {
+            throw new Error(text('back.errorUnknownActionPrefix', 'Unknown action: ') + 'applyBundle');
+        }
+        if (!nonEmpty(options.bundle)) {
+            throw new Error(text('back.errorEmptyBundle', 'The downloaded update is empty'));
+        }
+        const root = api.getNoteWithLabel(labels.root);
+        if (!root) {
+            throw new Error(text('back.errorSettingsNote', 'Command Maker settings note not found'));
+        }
+        const plugin = api.getNoteWithLabel(labels.plugin) || findChildWithLabel(root, labels.plugin);
+        if (!plugin) {
+            throw new Error(text('back.errorPluginNote', 'Command Maker plugin script note not found'));
+        }
+        plugin.setContent(String(options.bundle));
+        if (nonEmpty(options.version)) {
+            root.setLabel(labels.version, String(options.version));
+        }
+        return { noteId: plugin.noteId, version: nonEmpty(options.version) ? String(options.version) : '' };
+    }
+
     function setLanguage() {
         const root = requireNote(options.rootId, text('back.errorSettingsNote', 'Command Maker settings note not found'));
         if (!labels.lang) {
@@ -739,17 +847,37 @@ function beRun(params) {
         return { ok: true, lang: String(options.lang == null ? '' : options.lang) };
     }
 
+    /** Store the overlay width as a percentage, clamped to the allowed range. */
+    function setPanelWidth() {
+        const root = requireNote(options.rootId, text('back.errorSettingsNote', 'Command Maker settings note not found'));
+        if (!labels.panelWidth) {
+            throw new Error(text('back.errorUnknownActionPrefix', 'Unknown action: ') + 'setPanelWidth');
+        }
+        const min = options.min === undefined ? 30 : Number(options.min);
+        const max = options.max === undefined ? 100 : Number(options.max);
+        const parsed = Math.round(Number(options.width));
+        const width = isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : 70;
+        root.setLabel(labels.panelWidth, String(width));
+        return { ok: true, width: width };
+    }
+
     switch (options.action) {
         case 'bootstrap':
             return bootstrap();
         case 'setLanguage':
             return setLanguage();
+        case 'setPanelWidth':
+            return setPanelWidth();
         case 'createTool':
             return createTool();
         case 'importTool':
             return importTool();
         case 'addOption':
             return addOption();
+        case 'updateOption':
+            return updateOption();
+        case 'reorderOptions':
+            return reorderOptions();
         case 'importOptions':
             return importOptions();
         case 'deleteOption':
@@ -764,6 +892,8 @@ function beRun(params) {
             return deletePreset();
         case 'ensureTab':
             return ensureTab();
+        case 'applyBundle':
+            return applyBundle();
         default:
             throw new Error(text('back.errorUnknownActionPrefix', 'Unknown action: ') + options.action);
     }

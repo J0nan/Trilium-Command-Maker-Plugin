@@ -216,14 +216,50 @@ test('matches searches title, category, flags, help strings and examples', () =>
     assert.equal(matches(''), true);
 });
 
-test('sortOptions orders by cmOrder then title', () => {
+test('sortOptions orders by cmOrder then flag alphabetically ignoring dashes', () => {
     const list = [
-        { title: 'zeta', order: 10, noteId: 'b' },
-        { title: 'alpha', order: 10, noteId: 'c' },
-        { title: 'first', order: 5, noteId: 'a' }
+        { title: 'zeta', flag: '--zulu', order: 10, noteId: 'b' },
+        { title: 'alpha', flag: '--alpha', order: 10, noteId: 'c' },
+        { title: 'first', flag: '--first', order: 5, noteId: 'a' }
     ];
     list.sort(Model.sortOptions);
     assert.deepEqual(list.map((entry) => entry.title), ['first', 'alpha', 'zeta']);
+});
+
+test('sortOptions ignores leading dashes when comparing flags', () => {
+    const list = [
+        { title: 'yellow', flag: '-b', order: 10, noteId: 'b' },
+        { title: 'aardvark', flag: '--a', order: 10, noteId: 'a' }
+    ];
+    list.sort(Model.sortOptions);
+    assert.deepEqual(list.map((entry) => entry.title), ['aardvark', 'yellow']);
+});
+
+test('orderPlan assigns sequential orders and skips note-less options', () => {
+    const plan = Model.orderPlan([
+        { noteId: 'a' },
+        { noteId: null },
+        { noteId: 'b' }
+    ]);
+    assert.deepEqual(plan, [
+        { noteId: 'a', order: 10 },
+        { noteId: 'b', order: 20 }
+    ]);
+});
+
+test('reorderPlan moves one option and renumbers the whole list', () => {
+    const options = [{ noteId: 'a' }, { noteId: 'b' }, { noteId: 'c' }];
+    assert.deepEqual(Model.reorderPlan(options, 'c', 0), [
+        { noteId: 'c', order: 10 },
+        { noteId: 'a', order: 20 },
+        { noteId: 'b', order: 30 }
+    ]);
+    assert.deepEqual(Model.reorderPlan(options, 'a', 99), [
+        { noteId: 'b', order: 10 },
+        { noteId: 'c', order: 20 },
+        { noteId: 'a', order: 30 }
+    ]);
+    assert.deepEqual(Model.reorderPlan(options, 'missing', 0), []);
 });
 
 test('toolTemplate contains exactly the three required H2 sections', () => {

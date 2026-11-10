@@ -50,6 +50,9 @@ function installApi(tool, extraNotes) {
             if (params[0].action === 'ensureTab') {
                 return { tabNoteId: 'tab-note' };
             }
+            if (params[0].action === 'applyBundle') {
+                return { noteId: 'plugin-note', version: params[0].version };
+            }
             return {};
         },
         async searchForNote(query) {
@@ -145,6 +148,44 @@ test('refresh indexes tool title, category, base, option help and What is? text'
     globalThis.api = undefined;
 });
 
+test('updateOption applies the backend snapshot without waiting for a refresh', async () => {
+    const built = makeTool();
+    const calls = installApi(built.tool, {});
+    await Runtime.refresh();
+
+    const api = globalThis.api;
+    const originalRun = api.runOnBackend;
+    api.runOnBackend = async function (fn, params) {
+        calls.push(params[0]);
+        if (params[0].action === 'updateOption') {
+            return {
+                noteId: 'o1',
+                title: 'Source file',
+                labels: {
+                    cmOption: '',
+                    cmFlag: '--src',
+                    cmType: 'string',
+                    cmDoc: 'Where to read.',
+                    cmDefault: 'in.mp4',
+                    cmOrder: '5'
+                }
+            };
+        }
+        return originalRun(fn, params);
+    };
+
+    await Runtime.controller().updateOption('o1', { label: 'Source file', flag: '--src', type: 'string' });
+    const loaded = await Runtime.load('t1');
+    const option = loaded.definition.options.filter((entry) => entry.noteId === 'o1')[0];
+    assert.equal(option.title, 'Source file');
+    assert.equal(option.flag, '--src');
+    assert.equal(option.help, 'Where to read.');
+    assert.equal(option.order, 5);
+    assert.equal(Runtime.search('where to read').length, 1, 'the edited help is searchable immediately');
+    assert.equal(Runtime.search('input file to read').length, 0, 'the old help is not searchable');
+    globalThis.api = undefined;
+});
+
 test('a tool nested under two folders exposes its whole category path', async () => {
     const built = makeTool();
     const outer = makeNote({ noteId: 'cat-outer', title: 'Infrastructure' });
@@ -178,7 +219,8 @@ test('load returns options with help, examples, links, help output, install and 
     assert.equal(loaded.definition.base, 'ffmpeg');
     assert.equal(loaded.definition.category, 'Media');
     assert.equal(loaded.definition.options.length, 2);
-    assert.equal(loaded.definition.options[0].help, 'Input file to read.');
+    assert.equal(loaded.definition.options[0].flag, '-c:v', 'options are ordered by flag when #cmOrder ties');
+    assert.equal(loaded.definition.options[0].help, 'Video encoder.');
     assert.match(loaded.whatIs, /Encode and process video/);
     assert.deepEqual(loaded.links.map((link) => link.href), ['https://ffmpeg.org', 'https://ffmpeg.org/ffmpeg.html']);
     assert.deepEqual(loaded.usageExamples, ['ffmpeg -i in.mp4 out.mp4']);
@@ -257,12 +299,15 @@ test('exportTool builds a portable file with raw contents and every option', asy
     assert.match(file.tool.usage, /<pre><code>ffmpeg -i in.mp4 out.mp4<\/code><\/pre>/);
     assert.match(file.tool.help, /Usage: ffmpeg/);
     assert.equal(file.tool.options.length, 2);
-    assert.equal(file.tool.options[0].label, 'Input file');
-    assert.equal(file.tool.options[0].flag, '-i');
-    assert.equal(file.tool.options[0].type, 'path');
-    assert.equal(file.tool.options[0].content, '<p>Read the input file.</p>', 'option note bodies are in the backup');
-    assert.equal(file.tool.options[1].content, '', 'options without a body export as empty, not undefined');
-    assert.deepEqual(file.tool.options[1].values, ['libx264', 'libx265']);
+    assert.equal(file.tool.options[0].label, 'Video codec');
+    assert.equal(file.tool.options[0].flag, '-c:v');
+    assert.equal(file.tool.options[0].type, 'enum');
+    assert.equal(file.tool.options[0].content, '', 'options without a body export as empty, not undefined');
+    assert.deepEqual(file.tool.options[0].values, ['libx264', 'libx265']);
+    assert.equal(file.tool.options[1].label, 'Input file');
+    assert.equal(file.tool.options[1].flag, '-i');
+    assert.equal(file.tool.options[1].type, 'path');
+    assert.equal(file.tool.options[1].content, '<p>Read the input file.</p>', 'option note bodies are in the backup');
     assert.deepEqual(
         file.tool.presets,
         [{ name: 'web', values: { 'note:o1': 'web.mp4' } }],
@@ -397,4 +442,157 @@ test('openInTab ensures the tab structure and opens the render note', async () =
     assert.deepEqual(opened, [{ noteId: 'tab-note', activate: true }]);
 
     globalThis.api = undefined;
+});
+
+test('the update check runs once a day and installUpdate writes the downloaded bundle', async () => {
+    const built = makeTool();
+    const calls = installApi(built.tool, {});
+    const realFetch = globalThis.fetch;
+    const fetched = [];
+    const bundle = [
+        '/* Command Maker - generated by tools/build.mjs. Do not edit by hand. */',
+        '(function () {',
+        '    function __def(name, factory) {}',
+        "    const VERSION = '9.9.9';",
+        '})();'
+    ].join('\n');
+
+    globalThis.fetch = async function (url) {
+        fetched.push(url);
+        if (url.indexOf('/releases/latest') !== -1) {
+            return {
+                ok: true,
+                async json() {
+                    return { tag_name: 'v9.9.9' };
+                },
+                async text() {
+                    return '';
+                }
+            };
+        }
+        return {
+            ok: true,
+            async json() {
+                return {};
+            },
+            async text() {
+                return bundle;
+            }
+        };
+    };
+
+    try {
+        const controller = Runtime.controller();
+        const first = await controller.checkUpdatesIfDue();
+        assert.equal(first.current, Version.VERSION, 'the running version is the installed one');
+        assert.equal(first.latest, '9.9.9');
+        assert.equal(first.outdated, true);
+        assert.equal(
+            fetched.filter((url) => url.indexOf('/releases/latest') !== -1).length,
+            1,
+            'the first check of the day hits the network'
+        );
+
+        const again = await controller.checkUpdatesIfDue();
+        assert.equal(again, first, 'a second call the same day reuses the result');
+        assert.equal(
+            fetched.filter((url) => url.indexOf('/releases/latest') !== -1).length,
+            1,
+            'the daily throttle skips a second network request'
+        );
+
+        const manual = await controller.checkLatestVersion();
+        assert.equal(manual.latest, '9.9.9');
+        assert.equal(
+            fetched.filter((url) => url.indexOf('/releases/latest') !== -1).length,
+            2,
+            'the manual check always looks again'
+        );
+
+        const installed = await controller.installUpdate();
+        assert.equal(installed.version, '9.9.9');
+        const apply = calls.filter((entry) => entry.action === 'applyBundle')[0];
+        assert.ok(apply, 'the downloaded bundle reaches the backend');
+        assert.equal(apply.version, '9.9.9');
+        assert.equal(apply.bundle, bundle);
+        assert.ok(
+            fetched.some((url) => url.indexOf('/v9.9.9/dist/command-maker.js') !== -1),
+            'the bundle is downloaded from the matching version tag'
+        );
+        await assert.rejects(controller.installUpdate(), /no update/i, 'a second press has nothing left to install');
+    } finally {
+        globalThis.fetch = realFetch;
+        globalThis.api = undefined;
+    }
+});
+
+test('installUpdate falls back to the main bundle when the version has no tag', async () => {
+    const built = makeTool();
+    const calls = installApi(built.tool, {});
+    const realFetch = globalThis.fetch;
+    const fetched = [];
+    const bundle = [
+        '/* Command Maker - generated by tools/build.mjs. Do not edit by hand. */',
+        '(function () {',
+        '    function __def(name, factory) {}',
+        "    const VERSION = '9.9.8';",
+        '})();'
+    ].join('\n');
+
+    globalThis.fetch = async function (url) {
+        fetched.push(url);
+        if (url === Version.LATEST_RAW) {
+            return {
+                ok: true,
+                async json() {
+                    return {};
+                },
+                async text() {
+                    return '{"version":"9.9.8"}';
+                }
+            };
+        }
+        if (url === Version.BUNDLE_MAIN) {
+            return {
+                ok: true,
+                async json() {
+                    return {};
+                },
+                async text() {
+                    return bundle;
+                }
+            };
+        }
+        if (url.indexOf('/v9.9.8/') !== -1) {
+            throw new Error('HTTP 404');
+        }
+        return {
+            ok: false,
+            status: 404,
+            async json() {
+                return {};
+            },
+            async text() {
+                return '';
+            }
+        };
+    };
+
+    try {
+        const controller = Runtime.controller();
+        const info = await controller.checkLatestVersion();
+        assert.equal(info.latest, '9.9.8', 'the default branch version is read when no release or tag exists');
+        const installed = await controller.installUpdate();
+        assert.equal(installed.version, '9.9.8');
+        assert.ok(
+            fetched.indexOf(Version.BUNDLE_MAIN) !== -1,
+            'the main bundle is the fallback for a version without a tag'
+        );
+        const apply = calls.filter((entry) => entry.action === 'applyBundle')[0];
+        assert.ok(apply, 'the fallback bundle still reaches the backend');
+        assert.equal(apply.bundle, bundle);
+    } finally {
+        globalThis.fetch = realFetch;
+        globalThis.api = undefined;
+    }
 });

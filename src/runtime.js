@@ -33,6 +33,10 @@ let bootstrapPromise = null;
 let bootstrapApi = null;
 let bootstrapInfo = null;
 
+// Overlay width, as a percentage of the window. Resolved from the settings
+// note before the first mount and updated by the palette's width slider.
+let panelWidth = Model.PANEL_WIDTH_DEFAULT;
+
 function getApi() {
     return typeof api !== 'undefined' ? api : null;
 }
@@ -143,6 +147,30 @@ async function resolveLocale() {
     return I18n.setLocale(I18n.normalizeLocale(configured) || I18n.detectLocale(navigatorLanguages()));
 }
 
+/**
+ * The `cmPanelWidth` label on the settings note sets the overlay width as a
+ * percentage. Missing or unreadable values fall back to the default.
+ */
+async function resolvePanelWidth() {
+    let configured = '';
+    const apiRef = getApi();
+    if (apiRef) {
+        try {
+            const root = await apiRef.searchForNote('#' + Model.LABELS.root);
+            if (root) {
+                const value = root.getLabelValue(Model.LABELS.panelWidth);
+                configured = value === null || value === undefined ? '' : String(value);
+            }
+        } catch (error) {
+            configured = '';
+        }
+    }
+    panelWidth = configured.trim() === ''
+        ? Model.PANEL_WIDTH_DEFAULT
+        : Model.normalizePanelWidth(configured);
+    return panelWidth;
+}
+
 function ensureBootstrap() {
     const apiRef = getApi();
     if (bootstrapPromise && bootstrapApi === apiRef) {
@@ -159,6 +187,7 @@ function ensureBootstrap() {
             icons: Model.ICONS,
             version: Version.VERSION,
             lang: locale,
+            panelWidth: panelWidth,
             strings: I18n.backendStrings(),
             seed: true,
             seedTools: Model.seedTools(),
@@ -285,6 +314,7 @@ async function refresh() {
             categoryLabel: categoryLabel,
             labels: labels,
             note: note,
+            whatIs: whatIs,
             optionSnapshots: optionSnapshots
         };
 
@@ -320,6 +350,45 @@ async function refresh() {
 function search(query) {
     return index.filter(function (item) {
         return Model.matchesText(item.searchable, query);
+    });
+}
+
+/**
+ * Apply an option snapshot returned by the backend to the cached entry, so the
+ * detail pane reflects a saved edit immediately instead of waiting for the
+ * frontend entity cache to receive the backend change (or an F5 reload).
+ */
+function patchOptionSnapshot(noteId, saved) {
+    if (!saved || saved.noteId !== noteId) {
+        return;
+    }
+    entriesById.forEach(function (entry, entryId) {
+        const snapshots = entry.optionSnapshots || [];
+        let touched = false;
+        for (let snapshotIndex = 0; snapshotIndex < snapshots.length; snapshotIndex += 1) {
+            if (snapshots[snapshotIndex].noteId === noteId) {
+                snapshots[snapshotIndex].title = saved.title;
+                snapshots[snapshotIndex].labels = saved.labels || {};
+                touched = true;
+            }
+        }
+        if (!touched) {
+            return;
+        }
+        const item = index.find(function (candidate) {
+            return candidate.noteId === entryId;
+        });
+        if (item) {
+            item.searchable = Model.searchableText({
+                title: entry.title,
+                category: entry.categoryLabel,
+                description: entry.labels[Model.LABELS.description] || '',
+                tags: entry.labels[Model.LABELS.tags],
+                base: entry.labels[Model.LABELS.base] || Model.deriveBase(entry.title),
+                whatIs: entry.whatIs,
+                optionText: Model.optionNotesText(snapshots)
+            });
+        }
     });
 }
 
@@ -578,6 +647,33 @@ function compareVersions(left, right) {
 }
 
 /**
+ * One HTTP read with a bounded wait. `fetch` is absent on some Trilium builds,
+ * and the callers turn that into a readable status instead of an exception.
+ */
+async function readUrl(url, kind) {
+    const options = { headers: { Accept: kind === 'json' ? 'application/json' : 'text/plain' } };
+    let timer = null;
+    if (typeof AbortController === 'function') {
+        const controller = new AbortController();
+        options.signal = controller.signal;
+        timer = setTimeout(function () {
+            controller.abort();
+        }, 10000);
+    }
+    try {
+        const response = await fetch(url, options);
+        if (!response || !response.ok) {
+            throw new Error('HTTP ' + (response ? response.status : 'unknown'));
+        }
+        return kind === 'json' ? response.json() : response.text();
+    } finally {
+        if (timer) {
+            clearTimeout(timer);
+        }
+    }
+}
+
+/**
  * Best-effort update check: the latest GitHub release, else the highest tag,
  * else the package.json version on the default branch. A private or unreachable
  * repository becomes a readable error.
@@ -589,31 +685,8 @@ async function checkLatestVersion() {
         return result;
     }
 
-    async function read(url, kind) {
-        const options = { headers: { Accept: kind === 'json' ? 'application/json' : 'text/plain' } };
-        let timer = null;
-        if (typeof AbortController === 'function') {
-            const controller = new AbortController();
-            options.signal = controller.signal;
-            timer = setTimeout(function () {
-                controller.abort();
-            }, 10000);
-        }
-        try {
-            const response = await fetch(url, options);
-            if (!response || !response.ok) {
-                throw new Error('HTTP ' + (response ? response.status : 'unknown'));
-            }
-            return kind === 'json' ? response.json() : response.text();
-        } finally {
-            if (timer) {
-                clearTimeout(timer);
-            }
-        }
-    }
-
     try {
-        const release = await read(Version.LATEST_RELEASE_API, 'json');
+        const release = await readUrl(Version.LATEST_RELEASE_API, 'json');
         const tag = release && (release.tag_name || release.name);
         if (tag) {
             result.latest = String(tag).replace(/^v/i, '');
@@ -625,7 +698,7 @@ async function checkLatestVersion() {
     }
 
     try {
-        const tags = await read(Version.LATEST_TAGS_API, 'json');
+        const tags = await readUrl(Version.LATEST_TAGS_API, 'json');
         if (Array.isArray(tags) && tags.length) {
             const names = tags
                 .map(function (tag) {
@@ -646,7 +719,7 @@ async function checkLatestVersion() {
     }
 
     try {
-        const text = String(await read(Version.LATEST_RAW, 'text') || '');
+        const text = String(await readUrl(Version.LATEST_RAW, 'text') || '');
         const match = /"version"\s*:\s*"([^"]+)"/.exec(text);
         if (match) {
             result.latest = match[1];
@@ -660,6 +733,231 @@ async function checkLatestVersion() {
         });
     }
     return result;
+}
+
+// --- automatic update check ------------------------------------------------
+// The palette opens from the launcher, so that is when Trilium can look for
+// updates without a background timer. The attempt and its result are remembered
+// for a day (localStorage when the webview allows it), so a page reload keeps
+// the banner without a second request, and the manual menu entry always
+// bypasses the throttle.
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const UPDATE_CHECKED_KEY = 'cmUpdateCheckedAt';
+const MAX_BUNDLE_CHARS = 4 * 1024 * 1024;
+const BUNDLE_MARKER = 'Command Maker - generated by tools/build.mjs';
+
+let updateInfo = null;
+let updateCheckedAt = 0;
+let storedUpdate;
+let updateCheckPromise = null;
+
+/** Last stored check, or null when missing, unreadable or from another build. */
+function readStoredUpdate() {
+    try {
+        if (typeof localStorage === 'undefined' || !localStorage) {
+            return null;
+        }
+        const raw = localStorage.getItem(UPDATE_CHECKED_KEY);
+        if (!raw) {
+            return null;
+        }
+        const parsed = JSON.parse(raw);
+        const at = Number(parsed && parsed.at);
+        if (!isFinite(at) || at <= 0) {
+            return null;
+        }
+        return {
+            at: at,
+            info: {
+                current: String(parsed.current == null ? '' : parsed.current),
+                latest: String(parsed.latest == null ? '' : parsed.latest),
+                outdated: Boolean(parsed.outdated),
+                error: String(parsed.error == null ? '' : parsed.error)
+            }
+        };
+    } catch (error) {
+        return null;
+    }
+}
+
+function rememberUpdateCheck(info) {
+    updateInfo = info;
+    updateCheckedAt = Date.now();
+    try {
+        if (typeof localStorage !== 'undefined' && localStorage) {
+            localStorage.setItem(UPDATE_CHECKED_KEY, JSON.stringify({
+                at: updateCheckedAt,
+                current: info.current,
+                latest: info.latest,
+                outdated: info.outdated,
+                error: info.error || ''
+            }));
+        }
+    } catch (error) {
+        // A private window may refuse storage; the in-memory cache still holds.
+    }
+}
+
+/** The manual check always looks again and refreshes the cached status. */
+async function checkLatestVersionNow() {
+    const info = await checkLatestVersion();
+    rememberUpdateCheck(info);
+    return info;
+}
+
+/** The stored result while it is under a day old and belongs to this build. */
+function cachedUpdate() {
+    let at = updateCheckedAt;
+    let info = updateInfo;
+    if (!info) {
+        if (storedUpdate === undefined) {
+            storedUpdate = readStoredUpdate();
+        }
+        if (!storedUpdate || storedUpdate.info.current !== Version.VERSION) {
+            return null;
+        }
+        at = storedUpdate.at;
+        info = storedUpdate.info;
+        updateInfo = info;
+        updateCheckedAt = at;
+    }
+    if (info.current !== Version.VERSION) {
+        return null;
+    }
+    if (!at || (Date.now() - at) >= UPDATE_CHECK_INTERVAL_MS) {
+        return null;
+    }
+    return info;
+}
+
+/**
+ * Run the network check only when the last result is a day old. Startup and
+ * every palette open call this; the first caller performs the request and the
+ * others share the same promise.
+ */
+function checkUpdatesIfDue() {
+    if (updateCheckPromise) {
+        return updateCheckPromise;
+    }
+    const cached = cachedUpdate();
+    if (cached) {
+        return Promise.resolve(cached);
+    }
+    updateCheckPromise = checkLatestVersionNow().then(function (info) {
+        updateCheckPromise = null;
+        return info;
+    }, function (error) {
+        updateCheckPromise = null;
+        throw error;
+    });
+    return updateCheckPromise;
+}
+
+function bundleVersion(text) {
+    const match = /const VERSION = '([^']+)';/.exec(String(text || ''));
+    return match ? match[1] : '';
+}
+
+/**
+ * Download the bundle published for `version` and refuse anything that is not
+ * that exact build: the file is about to replace the running plugin note, so a
+ * stale, truncated or unrelated response must never be written.
+ */
+async function downloadBundle(version) {
+    if (typeof fetch !== 'function') {
+        throw new Error(I18n.t('error.updateCheckUnavailable'));
+    }
+    const tagUrl = Version.bundleUrl(version);
+    let text = '';
+    try {
+        text = String(await readUrl(tagUrl, 'text') || '');
+    } catch (error) {
+        // The fallback only exists for a version announced through package.json
+        // on the default branch, where no tag exists yet. The version marker is
+        // still checked, so a newer branch can never slip in unannounced.
+        if (tagUrl === Version.BUNDLE_MAIN) {
+            throw error;
+        }
+        text = String(await readUrl(Version.BUNDLE_MAIN, 'text') || '');
+    }
+    if (text === '') {
+        throw new Error(I18n.t('error.updateNotABundle'));
+    }
+    if (text.length > MAX_BUNDLE_CHARS) {
+        throw new Error(I18n.t('error.updateBundleTooLarge'));
+    }
+    if (text.indexOf(BUNDLE_MARKER) === -1 || text.indexOf('function __def(') === -1) {
+        throw new Error(I18n.t('error.updateNotABundle'));
+    }
+    const found = bundleVersion(text);
+    if (compareVersions(found, version) !== 0) {
+        throw new Error(I18n.t('error.updateBundleMismatch', {
+            expected: String(version).replace(/^v/i, ''),
+            found: found || '?'
+        }));
+    }
+    return text;
+}
+
+function canReloadPage() {
+    try {
+        if (typeof window !== 'undefined' && window && window.location && typeof window.location.reload === 'function') {
+            return true;
+        }
+    } catch (error) {
+        // fall through to the Trilium api
+    }
+    try {
+        const apiRef = getApi();
+        return Boolean(apiRef && typeof apiRef.reload === 'function');
+    } catch (error) {
+        return false;
+    }
+}
+
+function reloadPage() {
+    try {
+        if (typeof window !== 'undefined' && window && window.location && typeof window.location.reload === 'function') {
+            window.location.reload();
+            return true;
+        }
+    } catch (error) {
+        // fall through to the Trilium api
+    }
+    try {
+        const apiRef = getApi();
+        if (apiRef && typeof apiRef.reload === 'function') {
+            apiRef.reload();
+            return true;
+        }
+    } catch (error) {
+        // the caller tells the user to reload by hand
+    }
+    return false;
+}
+
+/**
+ * Install the update the last check found: fetch the matching bundle, write it
+ * into the plugin note through the backend and refresh the page so the new
+ * script runs. Nothing here runs unless the user presses the update button.
+ */
+async function installUpdate() {
+    const info = updateInfo;
+    if (!info || !info.outdated || !info.latest) {
+        throw new Error(I18n.t('error.noUpdateAvailable'));
+    }
+    const bundle = await downloadBundle(info.latest);
+    const installed = await backendAction('applyBundle', {
+        bundle: bundle,
+        version: info.latest
+    });
+    const version = installed && installed.version ? installed.version : info.latest;
+    rememberUpdateCheck({ current: version, latest: version, outdated: false, error: '' });
+    const reloading = canReloadPage();
+    if (reloading) {
+        setTimeout(reloadPage, 1500);
+    }
+    return { noteId: installed ? installed.noteId : '', version: version, reloading: reloading };
 }
 
 /**
@@ -725,7 +1023,11 @@ function controller() {
         repository() {
             return Version.REPOSITORY;
         },
-        checkLatestVersion: checkLatestVersion,
+        checkLatestVersion: checkLatestVersionNow,
+        /** Run the throttled daily check; resolves to the cached status. */
+        checkUpdatesIfDue: checkUpdatesIfDue,
+        /** Download and write the bundle the last check found. */
+        installUpdate: installUpdate,
 
         /** Surface a message in the Trilium UI; the footer keeps its own copy. */
         message(text) {
@@ -796,6 +1098,16 @@ function controller() {
             return backendAction('addOption', { toolId: toolId, option: option });
         },
 
+        async updateOption(noteId, option) {
+            const saved = await backendAction('updateOption', { noteId: noteId, option: option });
+            patchOptionSnapshot(noteId, saved);
+            return saved;
+        },
+
+        reorderOptions(order) {
+            return backendAction('reorderOptions', { order: order || [] });
+        },
+
         exportTool(noteId) {
             return exportTool(noteId);
         },
@@ -863,6 +1175,28 @@ function controller() {
             return I18n.getLocale();
         },
 
+        /** Active overlay width percentage; the palette applies it on mount. */
+        panelWidth() {
+            return panelWidth;
+        },
+
+        /**
+         * Persist the overlay width on the settings note and remember it, so a
+         * remount (language switch) keeps the chosen percentage.
+         */
+        async setPanelWidth(percent) {
+            const value = Model.normalizePanelWidth(percent);
+            const info = await ensureBootstrap();
+            await backendAction('setPanelWidth', {
+                rootId: info.rootId,
+                width: value,
+                min: Model.PANEL_WIDTH_MIN,
+                max: Model.PANEL_WIDTH_MAX
+            });
+            panelWidth = value;
+            return value;
+        },
+
         async useActiveNoteAsToolsRoot() {
             const apiRef = getApi();
             const active = apiRef.getActiveContextNote();
@@ -919,12 +1253,18 @@ function start() {
         }
     }
 
-    // The locale comes from a note label, so it is resolved before the first
-    // mount: every label the palette builds is already in the right language.
-    // A failed lookup still opens the palette with the detected language.
-    resolveLocale().catch(function () {
-        return I18n.getLocale();
-    }).then(mount);
+    // The locale and the panel width come from note labels, so both are resolved
+    // before the first mount: every label the palette builds is already in the
+    // right language and the overlay opens at the saved width. A failed lookup
+    // still opens the palette with the detected language and default width.
+    Promise.all([
+        resolveLocale().catch(function () {
+            return I18n.getLocale();
+        }),
+        resolvePanelWidth().catch(function () {
+            return panelWidth;
+        })
+    ]).then(mount);
 }
 
 module.exports = { start, controller, refresh, search, load };

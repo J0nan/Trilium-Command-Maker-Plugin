@@ -83,6 +83,24 @@ function createDom() {
                 node.children.push(child);
                 return child;
             },
+            insertBefore(child, reference) {
+                const existing = node.children.indexOf(child);
+                if (existing !== -1) {
+                    node.children.splice(existing, 1);
+                }
+                if (!reference) {
+                    node.children.push(child);
+                } else {
+                    const index = node.children.indexOf(reference);
+                    if (index === -1) {
+                        node.children.push(child);
+                    } else {
+                        node.children.splice(index, 0, child);
+                    }
+                }
+                child.parentNode = node;
+                return child;
+            },
             append() {
                 for (const child of arguments) {
                     node.children.push(child);
@@ -307,6 +325,25 @@ function makeApi(fixture) {
             if (params[0].action === 'ensureTab') {
                 return { tabNoteId: 'tab-note', htmlNoteId: 'tab-html' };
             }
+            if (params[0].action === 'applyBundle') {
+                return { noteId: 'plugin-note', version: params[0].version };
+            }
+            if (params[0].action === 'updateOption') {
+                const option = params[0].option || {};
+                const saved = { cmOption: '' };
+                if (option.flag) { saved.cmFlag = option.flag; }
+                if (option.help) { saved.cmDoc = option.help; }
+                if (option.type) { saved.cmType = option.type; }
+                if (option.defaultValue !== undefined) { saved.cmDefault = String(option.defaultValue); }
+                if (option.order !== undefined) { saved.cmOrder = String(option.order); }
+                if (option.required) { saved.cmRequired = 'true'; }
+                if (option.placeholder) { saved.cmPlaceholder = option.placeholder; }
+                if (option.quote) { saved.cmQuote = option.quote; }
+                if (option.separator === '=') { saved.cmSep = '='; }
+                if (option.mode === 'inline') { saved.cmMode = 'inline'; }
+                if (option.values && option.values.length) { saved.cmValues = option.values.join(','); }
+                return { noteId: params[0].noteId, title: option.label, labels: saved };
+            }
             return {};
         },
         async searchForNote(query) {
@@ -398,6 +435,9 @@ test('palette lists tools, shows option help, examples, help, copy/insert and pr
     assert.match(style.textContent, /\.cm-danger-armed\{[^}]*background:#dc2626/);
     assert.match(style.textContent, /\.cm-install pre\{[^}]*box-shadow:var\(--code-block-box-shadow/);
     assert.match(style.textContent, /@media \(hover:none\)\{\.cm-code-copy\{opacity:1;\}\}/);
+    assert.match(style.textContent, /\.cm-width-range\{/);
+    assert.match(style.textContent, /\.cm-width-value\{/);
+    assert.match(style.textContent, /@media \(max-width:720px\)\{\.cm-panel\{width:100% !important;\}/);
     assert.equal(style.textContent.includes('#f4f4f4'), false, 'no hard-coded light code background');
 
     const versionButton = find(dom.body, (node) => classed(node, 'cm-version'));
@@ -764,14 +804,18 @@ test('palette can add a single option with a help string', async () => {
     findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'Add option')[0].click();
     const modal = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-modal')), 'add option modal');
     const fields = findAll(modal, (node) => classed(node, 'cm-field'));
-    assert.ok(fields.length >= 7, 'every add-option field stacks its label above a full-width control');
+    assert.ok(fields.length >= 11, 'every add-option field stacks its label above a full-width control');
     assert.ok(fields.every((entry) => entry.children.length === 2), 'each field holds a label and a control');
 
     find(modal, (node) => node.placeholder === 'Option label, e.g. Output file').value = 'Output file';
     find(modal, (node) => String(node.placeholder || '').indexOf('Flag, e.g.') === 0).value = '-o';
     find(modal, (node) => node.placeholder === 'What is this option for?').value = 'Write output to a file.';
-    find(modal, (node) => node.tagName === 'SELECT').value = 'path';
+    find(modal, (node) => node.getAttribute('aria-label') === 'Type').value = 'path';
+    find(modal, (node) => node.getAttribute('aria-label') === 'Mode').value = 'inline';
+    find(modal, (node) => String(node.placeholder || '').indexOf('Placeholder name') === 0).value = 'output';
     find(modal, (node) => node.placeholder === 'Default value (optional)').value = 'out.mp4';
+    find(modal, (node) => node.getAttribute('aria-label') === 'Quoting').value = 'double';
+    find(modal, (node) => node.getAttribute('aria-label') === 'Separator').value = '=';
     find(modal, (node) => node.tagName === 'INPUT' && node.type === 'number').value = '70';
 
     findAll(modal, (node) => node.tagName === 'BUTTON' && node.textContent === 'Add')[0].click();
@@ -784,6 +828,82 @@ test('palette can add a single option with a help string', async () => {
     assert.equal(call.option.type, 'path');
     assert.equal(call.option.defaultValue, 'out.mp4');
     assert.equal(call.option.order, 70);
+    assert.equal(call.option.mode, 'inline');
+    assert.equal(call.option.placeholder, 'output');
+    assert.equal(call.option.quote, 'double');
+    assert.equal(call.option.separator, '=');
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('palette can edit an existing option and saves every attribute', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+
+    const form = find(dom.body, (node) => classed(node, 'cm-form'));
+    assert.equal(classed(form, 'cm-edit-mode'), false, 'per-row edit controls start hidden');
+
+    const optionsEdit = find(dom.body, (node) => classed(node, 'cm-options-edit'));
+    assert.equal(optionsEdit.textContent, 'Edit options configuration');
+    optionsEdit.click();
+    assert.equal(classed(form, 'cm-edit-mode'), true, 'the options toggle reveals every edit control');
+    assert.equal(optionsEdit.textContent, 'Done');
+    assert.equal(optionsEdit.getAttribute('aria-pressed'), 'true');
+
+    const editButtons = findAll(dom.body, (node) => classed(node, 'cm-opt-edit'));
+    assert.equal(editButtons.length, 3, 'every note-backed option offers an edit control');
+    editButtons[0].click();
+
+    const modal = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-modal')), 'edit option modal');
+    assert.equal(find(modal, (node) => node.placeholder === 'Option label, e.g. Output file').value, 'Input file');
+    assert.equal(find(modal, (node) => String(node.placeholder || '').indexOf('Flag, e.g.') === 0).value, '-i');
+    assert.equal(find(modal, (node) => node.placeholder === 'What is this option for?').value, 'Input file to read.');
+    assert.equal(find(modal, (node) => node.getAttribute('aria-label') === 'Type').value, 'path');
+    assert.equal(find(modal, (node) => String(node.placeholder || '').indexOf('Placeholder name') === 0).value, 'i');
+    assert.equal(find(modal, (node) => node.placeholder === 'Default value (optional)').value, 'in.mp4');
+    assert.equal(find(modal, (node) => node.getAttribute('aria-label') === 'Quoting').value, 'none');
+    assert.equal(find(modal, (node) => node.getAttribute('aria-label') === 'Separator').value, ' ');
+    assert.equal(find(modal, (node) => node.tagName === 'INPUT' && node.type === 'number').value, '10');
+    assert.equal(find(modal, (node) => node.tagName === 'INPUT' && node.type === 'checkbox').checked, true);
+
+    find(modal, (node) => node.placeholder === 'Option label, e.g. Output file').value = 'Source file';
+    find(modal, (node) => String(node.placeholder || '').indexOf('Flag, e.g.') === 0).value = '-src';
+    find(modal, (node) => node.tagName === 'INPUT' && node.type === 'number').value = '';
+    buttonWithText(modal, 'Save').click();
+    await waitFor(() => env.calls.backend.filter((call) => call.action === 'updateOption').length > 0, 'update option action');
+
+    const call = env.calls.backend.filter((entry) => entry.action === 'updateOption')[0];
+    assert.equal(call.noteId, 'o1');
+    assert.equal(call.option.label, 'Source file');
+    assert.equal(call.option.flag, '-src');
+    assert.equal(call.option.help, 'Input file to read.');
+    assert.equal(call.option.type, 'path');
+    assert.equal(call.option.defaultValue, 'in.mp4');
+    assert.equal(call.option.order, 100, 'a cleared order falls back to the documented default');
+    assert.equal(call.option.required, true);
+    await waitFor(
+        () => find(dom.body, (node) => classed(node, 'cm-status')).textContent === 'Option updated.',
+        'update status'
+    );
+    const reloadedForm = find(dom.body, (node) => classed(node, 'cm-form'));
+    assert.equal(classed(reloadedForm, 'cm-edit-mode'), true, 'edit mode survives the post-save reload');
+    assert.ok(
+        find(dom.body, (node) => classed(node, 'cm-opt-title') && node.textContent === 'Source file'),
+        'the saved label is visible without a refresh'
+    );
+    assert.ok(
+        find(dom.body, (node) => classed(node, 'cm-opt-flag') && node.textContent === '-src'),
+        'the saved flag is visible without a refresh'
+    );
+    const done = find(dom.body, (node) => classed(node, 'cm-options-edit'));
+    assert.equal(done.textContent, 'Done');
+    done.click();
+    assert.equal(classed(reloadedForm, 'cm-edit-mode'), false, 'Done hides the edit controls again');
     assert.deepEqual(env.calls.errors, []);
 });
 
@@ -1137,7 +1257,9 @@ test('a render-note host mounts the palette inside its tab container', async () 
     await waitFor(() => find(marker, (node) => classed(node, 'cm-result')), 'embedded search results');
     assert.equal(find(dom.body, (node) => classed(node, 'cm-overlay')), null, 'no overlay is created');
     assert.ok(find(marker, (node) => classed(node, 'cm-tab-view')), 'the tab view wraps the panel');
-    assert.ok(find(marker, (node) => classed(node, 'cm-panel')), 'the palette panel is inside the tab');
+    const embeddedPanel = find(marker, (node) => classed(node, 'cm-panel'));
+    assert.ok(embeddedPanel, 'the palette panel is inside the tab');
+    assert.ok(!embeddedPanel.style.width, 'the tab view keeps the full width instead of the overlay percentage');
     assert.equal(find(marker, (node) => classed(node, 'cm-open-tab')), null, 'no Open in tab button inside a tab');
     assert.equal(find(marker, (node) => classed(node, 'cm-close')), null, 'no overlay close button inside a tab');
 
@@ -1716,6 +1838,76 @@ test('an existing cmLang setting starts the palette in that language', async () 
     assert.deepEqual(env.calls.errors, []);
 });
 
+test('the version menu changes the overlay panel width and persists it', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    const panel = find(dom.body, (node) => classed(node, 'cm-panel'));
+    assert.equal(panel.style.width, '70%', 'the overlay starts at the default percentage width');
+
+    const trigger = find(dom.body, (node) => classed(node, 'cm-version'));
+    trigger.click();
+    const menu = await waitFor(
+        () => findAll(dom.body, (node) => classed(node, 'cm-menu')).pop(),
+        'settings menu'
+    );
+    const range = find(menu, (node) => classed(node, 'cm-width-range'));
+    assert.ok(range, 'the menu holds the width slider');
+    assert.equal(range.value, '70');
+    assert.equal(find(menu, (node) => classed(node, 'cm-width-value')).textContent, '70%');
+    const apply = buttonWithText(menu, 'Apply');
+    assert.ok(apply, 'the menu holds an Apply button');
+    assert.equal(apply.disabled, true, 'Apply waits until the slider value changes');
+
+    range.value = '95';
+    range.dispatch('input');
+    assert.equal(panel.style.width, '70%', 'the panel stays put while the slider moves');
+    assert.equal(find(menu, (node) => classed(node, 'cm-width-value')).textContent, '95%');
+    assert.equal(apply.disabled, false, 'Apply becomes available for the pending value');
+
+    apply.click();
+    await waitFor(
+        () => env.calls.backend.some((entry) => entry.action === 'setPanelWidth'),
+        'width persistence'
+    );
+    await waitFor(() => panel.style.width === '95%', 'applied width');
+    const call = env.calls.backend.filter((entry) => entry.action === 'setPanelWidth')[0];
+    assert.equal(call.rootId, 'root');
+    assert.equal(call.width, 95);
+    assert.equal(apply.disabled, true, 'Apply goes idle again after the write');
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('a saved cmPanelWidth label sets the overlay width before the menu opens', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    const searchForNote = env.api.searchForNote.bind(env.api);
+    env.api.searchForNote = async (query) => {
+        if (query === '#cmRoot') {
+            return {
+                noteId: 'root',
+                title: 'Command Maker',
+                getLabelValue(name) {
+                    return name === 'cmPanelWidth' ? '55' : null;
+                }
+            };
+        }
+        return searchForNote(query);
+    };
+    run(dom, env.api, env.navigator);
+
+    const panel = await waitFor(
+        () => find(dom.body, (node) => classed(node, 'cm-panel')),
+        'panel'
+    );
+    assert.equal(panel.style.width, '55%');
+    assert.deepEqual(env.calls.errors, []);
+});
+
 test('a tool inside a subcategory shows the whole folder path in the list and the detail', async () => {
     const dom = createDom();
     const infrastructure = note({ noteId: 'cat-infra', title: 'Infrastructure' });
@@ -1731,5 +1923,186 @@ test('a tool inside a subcategory shows the whole folder path in the list and th
     await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
     const title = find(dom.body, (node) => classed(node, 'cm-title'));
     assert.equal(find(title, (node) => classed(node, 'cm-cat')).textContent, 'Infrastructure / Media');
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('reorder options modal saves the command insertion order in one action', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+
+    const reorder = find(dom.body, (node) => classed(node, 'cm-options-reorder'));
+    assert.ok(reorder, 'the options header offers a reorder control');
+    reorder.click();
+
+    const modal = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-modal')), 'reorder modal');
+    let items = findAll(modal, (node) => classed(node, 'cm-reorder-item'));
+    assert.equal(items.length, 3, 'every note-backed option is listed');
+    assert.equal(find(items[0], (node) => classed(node, 'cm-opt-title')).textContent, 'Input file');
+    const beforeMove = items.slice();
+
+    const down = find(items[0], (node) => node.getAttribute('aria-label') === 'Move "Input file" down');
+    assert.ok(down, 'each row has a move-down control');
+    down.click();
+
+    items = findAll(modal, (node) => classed(node, 'cm-reorder-item'));
+    assert.deepEqual(
+        items.map((node) => find(node, (entry) => classed(entry, 'cm-opt-title')).textContent),
+        ['Video codec', 'Input file', 'Verbose']
+    );
+    assert.equal(items[0], beforeMove[1], 'rows move instead of being rebuilt');
+    assert.equal(items[1], beforeMove[0]);
+    assert.equal(items[2], beforeMove[2]);
+
+    buttonWithText(modal, 'Save').click();
+    await waitFor(
+        () => env.calls.backend.filter((call) => call.action === 'reorderOptions').length > 0,
+        'reorder options action'
+    );
+    const call = env.calls.backend.filter((entry) => entry.action === 'reorderOptions')[0];
+    assert.deepEqual(JSON.parse(JSON.stringify(call.order)), [
+        { noteId: 'o2', order: 10 },
+        { noteId: 'o1', order: 20 },
+        { noteId: 'o3', order: 30 }
+    ]);
+});
+
+test('reorder options modal supports drag and drop', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+
+    find(dom.body, (node) => classed(node, 'cm-options-reorder')).click();
+    const modal = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-modal')), 'reorder modal');
+    let items = findAll(modal, (node) => classed(node, 'cm-reorder-item'));
+    const previewFlags = () => findAll(modal, (node) => classed(node, 'cm-reorder-flag'))
+        .map((node) => node.textContent);
+    assert.deepEqual(previewFlags(), ['-i', '-c:v', '-v'], 'the flag strip starts in command order');
+
+    items[2].dispatch('dragstart');
+    assert.equal(classed(items[2], 'is-dragging'), true, 'the dragged row is marked');
+    items[0].dispatch('dragover');
+    assert.equal(classed(items[0], 'is-drop-before'), true, 'the hovered row shows the drop line');
+    items[0].dispatch('drop');
+
+    items = findAll(modal, (node) => classed(node, 'cm-reorder-item'));
+    assert.deepEqual(
+        items.map((node) => find(node, (entry) => classed(entry, 'cm-opt-title')).textContent),
+        ['Verbose', 'Input file', 'Video codec']
+    );
+    assert.deepEqual(previewFlags(), ['-v', '-i', '-c:v'], 'the flag strip follows the drop');
+
+    buttonWithText(modal, 'Save').click();
+    await waitFor(
+        () => env.calls.backend.filter((call) => call.action === 'reorderOptions').length > 0,
+        'reorder options action'
+    );
+    const call = env.calls.backend.filter((entry) => entry.action === 'reorderOptions')[0];
+    assert.deepEqual(JSON.parse(JSON.stringify(call.order)), [
+        { noteId: 'o3', order: 10 },
+        { noteId: 'o1', order: 20 },
+        { noteId: 'o2', order: 30 }
+    ]);
+});
+
+test('closing the reorder modal discards the changed order', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+
+    find(dom.body, (node) => classed(node, 'cm-options-reorder')).click();
+    const modal = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-modal')), 'reorder modal');
+    const items = findAll(modal, (node) => classed(node, 'cm-reorder-item'));
+
+    find(items[0], (node) => node.getAttribute('aria-label') === 'Move "Input file" down').click();
+    assert.deepEqual(
+        findAll(modal, (node) => classed(node, 'cm-reorder-flag')).map((node) => node.textContent),
+        ['-c:v', '-i', '-v'],
+        'the strip reflects the pending move'
+    );
+
+    buttonWithText(modal, 'Close').click();
+    assert.deepEqual(
+        env.calls.backend.filter((call) => call.action === 'reorderOptions'),
+        [],
+        'closing without Save writes nothing'
+    );
+    assert.deepEqual(env.calls.backend.filter((call) => call.action === 'updateOption'), []);
+});
+
+
+test('the daily check shows an update bar whose button installs the published bundle', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    const bundle = buildBundle().replace(
+        "const VERSION = '" + Version.VERSION + "'",
+        "const VERSION = '9.9.9'"
+    );
+    assert.ok(bundle.indexOf("const VERSION = '9.9.9'") !== -1, 'the fake bundle declares the new version');
+    const fetchCalls = [];
+    const fakeFetch = async function (url) {
+        fetchCalls.push(url);
+        if (url.indexOf('/releases/latest') !== -1) {
+            return {
+                ok: true,
+                async json() {
+                    return { tag_name: 'v9.9.9' };
+                },
+                async text() {
+                    return '';
+                }
+            };
+        }
+        return {
+            ok: true,
+            async json() {
+                return {};
+            },
+            async text() {
+                return bundle;
+            }
+        };
+    };
+    run(dom, env.api, env.navigator, { fetch: fakeFetch });
+
+    const bar = await waitFor(() => {
+        const node = find(dom.body, (entry) => classed(entry, 'cm-update'));
+        return node && node.style.display === '' ? node : null;
+    }, 'update bar');
+    assert.match(
+        find(bar, (node) => classed(node, 'cm-update-text')).textContent,
+        /v9\.9\.9/,
+        'the bar names the published version'
+    );
+
+    find(bar, (node) => classed(node, 'cm-update-apply')).click();
+    await waitFor(
+        () => env.calls.backend.filter((call) => call.action === 'applyBundle').length > 0,
+        'applyBundle action'
+    );
+    const apply = env.calls.backend.filter((call) => call.action === 'applyBundle')[0];
+    assert.equal(apply.version, '9.9.9');
+    assert.equal(apply.bundle, bundle, 'the downloaded bundle is written as-is');
+    await waitFor(() => {
+        const status = find(dom.body, (node) => classed(node, 'cm-status'));
+        return status && status.textContent.indexOf('9.9.9') !== -1;
+    }, 'updated status');
+    assert.equal(bar.style.display, 'none', 'the bar disappears once the update lands');
     assert.deepEqual(env.calls.errors, []);
 });

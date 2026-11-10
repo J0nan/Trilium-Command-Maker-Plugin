@@ -17,6 +17,7 @@ Ctrl+Shift+Space  →  search a tool  →  read help  →  fill options  →  co
   - [Manual install (no installer script)](#manual-install-no-installer-script)
 - [Structure](#structure)
   - [Language](#language)
+  - [Panel width](#panel-width)
   - [Tool notes](#tool-notes)
   - [The three standard children](#the-three-standard-children)
   - [Option notes](#option-notes)
@@ -132,6 +133,12 @@ The plugin ships English and Spain Spanish in one bundle. The version pill in th
 
 Set `#cmLang=es` on the settings note by hand to start in Spanish. With no label, the plugin follows the browser/Trilium language and falls back to English; on the first bootstrap it records the language it picked, so the setting is always visible. The label is strictly a UI preference: tool files, labels, presets and rendered commands never change with it. Notes seeded before a language switch keep the language they were written in.
 
+### Panel width
+
+The palette that opens over Trilium is percentage-based. The version menu holds a **Panel width** slider from 30% to 100% of the window (70% by default): the overlay resizes when you click **Apply**, so the menu stays put while you drag, and applying writes `#cmPanelWidth` on the `Command Maker` settings note. The same menu item is hidden in the tab view, because a tab always fills its container.
+
+Set `#cmPanelWidth=85` on the settings note by hand to open at that width before the first open. Values outside 30–100 are clamped, and a missing or unreadable label opens at 70%. The setting only affects the floating overlay; import dialogs inside the palette keep their own size.
+
 ### Tool notes
 
 A tool note is a normal **text** note. Its content is meant to be read and edited by you, with exactly three H2 sections:
@@ -188,11 +195,11 @@ Options live under the tool's `Options` folder. Each option is a note whose titl
 | `#cmValues` | enum values, comma separated | none |
 | `#cmDefault` | initial value | empty / `false` |
 | `#cmRequired` | `true` marks the option required | `false` |
-| `#cmOrder` | numeric ordering of emitted segments | `100` |
+| `#cmOrder` | numeric ordering of emitted segments; options sharing a value are sorted alphabetically by flag, ignoring the leading `-`/`--` | `100` |
 | `#cmQuote` | `none`, `single`, `double` (emitted segments) | `none` |
 | `#cmSep` | `space` or `=` (`--flag=value`) | `space` |
 
-Required options are grouped under a **Required** heading before the **Optional** ones, and produce a warning until they have a value. Set one with `#cmRequired=true`; the **Add option** modal and the import preview can set it for you.
+Required options are grouped under a **Required** heading before the **Optional** ones, and produce a warning until they have a value. Inside each group, options are listed in the order they are inserted into the command: `#cmOrder`, then the flag alphabetically ignoring its leading dashes. Set one with `#cmRequired=true`; the **Add option** modal and the import preview can set it for you. Every option row can be edited without touching note labels: press **Edit options configuration** next to the **Options (n)** heading, then use the **Edit** button that appears on each row. The same form opens with the option's current attributes; **Done** hides the row buttons again. **Reorder options** opens a flat list in command order with a live flag strip; use the arrows or drag a row (a drop line previews the landing spot) and **Save** to write the new `#cmOrder` values in one step. **Close** discards the changes.
 
 Clicking anywhere on a boolean option row toggles its checkbox.
 
@@ -203,7 +210,7 @@ The option note's content is a good place for a longer explanation; the palette 
 The command is:
 
 ```
-<base> <extra arguments> <selected option flags, ordered by #cmOrder>
+<base> <extra arguments> <selected option flags, ordered by #cmOrder, then by flag alphabetically (leading dashes ignored)>
 ```
 
 - The base comes from `#cmBase` on the tool note. If it is empty, the tool title is lowercased (`Git commit` → `git commit`). You can edit it from the palette and it is saved back to the tool note.
@@ -219,10 +226,10 @@ A preset saves the current value map. Presets are stored in one JSON note inside
 **Import options** accepts three sources: pasted text, the currently open note, or a local file. It understands:
 
 1. **`--help` output**: GNU/POSIX style, including `-m, --message <message>`, `--output=FILE`, `--[no-]color`, ffmpeg-style single-dash flags, continuation lines, `(default: …)`, `{a,b,c}` / `one of: a, b` enums.
-2. **JSON**: an array, `{ "options": [...] }` or `{ "tool": { "options": [...] } }` with `flag`, `help`, `label`, `type`, `values`, `default`, `required`, `mode`, `placeholder`, `order`.
+2. **JSON**: an array, `{ "options": [...] }` or `{ "tool": { "options": [...] } }` with `flag`, `help`, `label`, `type`, `values`, `default`, `required`, `mode`, `placeholder`, `order`, `quote`, `sep`.
 3. **Markdown table**: `| Flag | Help | Type |` rows.
 
-Nothing is written until you parse and confirm: a preview lists every detected option with a checkbox. One import creates at most 200 option notes; when the source contains more, the status names how many were ignored (the same bound tool-file imports enforce). For a single option, use **Add option** in the palette footer; it writes the same option note with the label, flag and help string you type.
+Nothing is written until you parse and confirm: a preview lists every detected option with a checkbox. One import creates at most 200 option notes; when the source contains more, the status names how many were ignored (the same bound tool-file imports enforce). For a single option, use **Add option** in the palette footer; the modal sets every option property the note understands — label, flag, help, type, mode, placeholder, default, enum values, quoting, separator, order and required — so you never have to edit labels by hand. To change an existing option, press **Edit options configuration** next to **Options (n)**, then **Edit** on the row: the same form opens with that option's current attributes and saves them back to its note.
 
 ## Importing and exporting whole tools
 
@@ -286,6 +293,8 @@ The model is told to return only the JSON object. If a markdown fence still slip
 
 Current version: **1.2**. The palette footer shows `v1.2`; click it to check GitHub's latest release (falling back to the highest tag, then `package.json` on `main`). The settings note stores `#cmVersion`, and the installer log prints the version. A network/CORS failure is reported in the status and the **Repository** link opens the source.
 
+Opening the palette also checks at most once a day: when a newer release exists, a bar above the list reads **Update available: v1.2 → vX.Y** and offers **Update now**. That button downloads `dist/command-maker.js` from the matching version tag, refuses the file unless it declares that exact version, writes it into the plugin script note (found through `#cmPlugin`), records `#cmVersion` and reloads the page. The time and result of the check are kept in the browser's `localStorage` (`cmUpdateCheckedAt`), so reloading the page does not hit the network again during the same day; the manual **Check for updates** entry always bypasses that throttle. An update never runs without pressing the button.
+
 ## Design notes
 
 - `src/model.js`, `src/render.js`, `src/parse.js`, `src/sections.js`, `src/toolfile.js`, `src/prompt.js` and `src/styles.js` are pure and unit tested. `src/dom.js` holds the shared DOM helpers (elements, styles, clipboard, download, file reads); it has no Trilium API dependency and is exercised through the palette tests. `src/ui.js` and `src/sourcePicker.js` build their own elements directly on the `document`. UI code reads everything it needs from the runtime controller, so it never touches the Trilium `api` global itself.
@@ -313,7 +322,7 @@ npm test          # unit tests for model, parser, sections, renderer, backend, U
 npm run check     # both
 ```
 
-No dependencies, Node 20+. Network access is only used when you click the version in the palette to check for updates.
+No dependencies, Node 20+. Network access is only used when the palette checks for updates (once a day, or on demand from the version menu).
 
 CI (`.github/workflows/ci.yml`) runs `npm run check` on Node 20, 22 and 24, plus once on Windows, and fails when the committed `dist/` no longer matches a fresh build.
 

@@ -52,9 +52,24 @@ const EN = {
     'ui.exportTool': 'Export tool',
     'ui.importOptions': 'Import options',
     'ui.addOption': 'Add option',
+    'ui.reorderOptions': 'Reorder options',
+    'reorder.title': 'Reorder options for "{title}"',
+    'reorder.note': 'This list follows the order the options are inserted into the command. Use the arrows or drag a row to move one, then save.',
+    'reorder.moveUp': 'Move up',
+    'reorder.moveDown': 'Move down',
+    'reorder.moveUpLabel': 'Move "{title}" up',
+    'reorder.moveDownLabel': 'Move "{title}" down',
+    'reorder.preview': 'Command order',
+    'reorder.previewHint': 'Muted flags have no value yet.',
+    'ui.edit': 'Edit',
+    'ui.editOptionsConfig': 'Edit options configuration',
+    'ui.done': 'Done',
+    'ui.save': 'Save',
     'ui.toolsFolder': 'Tools folder',
     'ui.repository': 'Repository',
     'ui.language': 'Language',
+    'ui.panelWidth': 'Panel width',
+    'ui.apply': 'Apply',
     'lang.en': 'English',
     'lang.es': 'Español',
     'ui.checkUpdates': 'Check for updates',
@@ -121,6 +136,11 @@ const EN = {
     'status.outdated': 'v{current} installed · latest is v{latest}.',
     'status.ahead': 'v{current} is newer than the latest published tag (v{latest}).',
     'status.noPublished': 'v{version}: no published version found.',
+    'update.available': 'Update available: v{current} → v{latest}',
+    'update.install': 'Update now',
+    'update.installing': 'Updating…',
+    'update.dismiss': 'Hide this update',
+    'update.done': 'Updated to v{version}. Reload the page if it does not refresh.',
     'status.nothingToCopy': 'Nothing to copy.',
     'status.copied': 'Copied to the clipboard.',
     'status.clipboardFailed': 'Could not write to the clipboard.',
@@ -143,6 +163,8 @@ const EN = {
     'status.downloaded': 'Downloaded {name}.',
     'status.optionLabelRequired': 'Option label is required.',
     'status.optionAdded': 'Option added.',
+    'status.optionUpdated': 'Option updated.',
+    'status.optionsReordered': 'Options reordered.',
     'status.toolsRootActive': 'Tools folder updated to the active note.',
     'status.enterNoteId': 'Enter a note ID.',
     'status.toolsRootUpdated': 'Tools folder updated.',
@@ -260,10 +282,27 @@ const EN = {
     'addOption.fieldFlag': 'Flag',
     'addOption.fieldHelp': 'Help',
     'addOption.fieldType': 'Type',
+    'addOption.fieldMode': 'Mode',
+    'addOption.modeFlag': 'Flag (appended to the command)',
+    'addOption.modeInline': 'Inline (referenced in the command base)',
+    'addOption.fieldPlaceholder': 'Placeholder',
+    'addOption.placeholderPlaceholder': 'Placeholder name, e.g. output (optional)',
+    'addOption.fieldQuote': 'Quoting',
+    'addOption.quoteNone': 'None',
+    'addOption.quoteSingle': "Single quotes ('value')",
+    'addOption.quoteDouble': 'Double quotes ("value")',
+    'addOption.fieldSeparator': 'Separator',
+    'addOption.sepSpace': 'Space (--flag value)',
+    'addOption.sepEquals': 'Equals (--flag=value)',
     'addOption.fieldDefault': 'Default',
     'addOption.fieldValues': 'Values',
     'addOption.fieldOrder': 'Order',
     'addOption.title': 'Add an option to "{title}"',
+
+    // --- edit option dialog ------------------------------------------------
+    'editOption.title': 'Edit "{title}"',
+    'editOption.editLabel': 'Edit option "{title}"',
+    'editOption.note': "Saving rewrites this option note's attributes; the note body is left untouched.",
 
     // --- tools folder dialog ----------------------------------------------
     'toolsFolder.useActive': 'Use the active note',
@@ -301,6 +340,10 @@ const EN = {
     'error.updateCheckUnavailable': 'This environment cannot check for updates.',
     'error.noPublishedVersion': 'No published version found.',
     'error.updateCheckFailed': 'Could not check for updates: {error}',
+    'error.noUpdateAvailable': 'There is no update to install.',
+    'error.updateNotABundle': 'The downloaded file is not a Command Maker build.',
+    'error.updateBundleMismatch': 'The downloaded file is version {found}, not v{expected}.',
+    'error.updateBundleTooLarge': 'The downloaded update is too large.',
 
     // --- AI prompt ---------------------------------------------------------
     'prompt.intro': 'You convert command-line tool documentation into a Command Maker tool file.',
@@ -378,8 +421,11 @@ const EN = {
     'back.errorToolNote': 'Tool note not found',
     'back.errorOptionNote': 'Option note not found',
     'back.errorSettingsNote': 'Command Maker settings note not found',
+    'back.errorPluginNote': 'Command Maker plugin script note not found',
+    'back.errorEmptyBundle': 'The downloaded update is empty',
     'back.errorNotAnOptionPrefix': 'Note is not an option of a tool: ',
     'back.errorNoteNotFound': 'Note not found',
+    'back.errorInvalidOrder': 'Option order must be a number: ',
     'back.errorPresetsSave': 'The Presets note is not valid JSON. Fix or delete it before saving a preset.',
     'back.errorPresetsDelete': 'The Presets note is not valid JSON. Fix or delete it before deleting a preset.',
     'back.errorUnknownActionPrefix': 'Unknown action: ',
@@ -465,9 +511,24 @@ const ES = {
     'ui.exportTool': 'Exportar herramienta',
     'ui.importOptions': 'Importar opciones',
     'ui.addOption': 'Añadir opción',
+    'ui.reorderOptions': 'Reordenar opciones',
+    'reorder.title': 'Reordenar opciones de "{title}"',
+    'reorder.note': 'La lista sigue el orden en que las opciones se insertan en el comando. Usa las flechas o arrastra una fila para moverla y guarda.',
+    'reorder.moveUp': 'Subir',
+    'reorder.moveDown': 'Bajar',
+    'reorder.moveUpLabel': 'Subir "{title}"',
+    'reorder.moveDownLabel': 'Bajar "{title}"',
+    'reorder.preview': 'Orden del comando',
+    'reorder.previewHint': 'Los flags atenuados aún no tienen valor.',
+    'ui.edit': 'Editar',
+    'ui.editOptionsConfig': 'Editar configuración de opciones',
+    'ui.done': 'Listo',
+    'ui.save': 'Guardar',
     'ui.toolsFolder': 'Carpeta de herramientas',
     'ui.repository': 'Repositorio',
     'ui.language': 'Idioma',
+    'ui.panelWidth': 'Ancho del panel',
+    'ui.apply': 'Aplicar',
     'lang.en': 'English',
     'lang.es': 'Español',
     'ui.checkUpdates': 'Buscar actualizaciones',
@@ -534,6 +595,11 @@ const ES = {
     'status.outdated': 'Instalada la v{current} · la última es la v{latest}.',
     'status.ahead': 'La v{current} es más reciente que la última etiqueta publicada (v{latest}).',
     'status.noPublished': 'v{version}: no se encontró ninguna versión publicada.',
+    'update.available': 'Actualización disponible: v{current} → v{latest}',
+    'update.install': 'Actualizar ahora',
+    'update.installing': 'Actualizando…',
+    'update.dismiss': 'Ocultar esta actualización',
+    'update.done': 'Actualizado a la v{version}. Recarga la página si no se actualiza sola.',
     'status.nothingToCopy': 'No hay nada que copiar.',
     'status.copied': 'Copiado al portapapeles.',
     'status.clipboardFailed': 'No se pudo escribir en el portapapeles.',
@@ -556,6 +622,8 @@ const ES = {
     'status.downloaded': 'Se descargó {name}.',
     'status.optionLabelRequired': 'La etiqueta de la opción es obligatoria.',
     'status.optionAdded': 'Opción añadida.',
+    'status.optionUpdated': 'Opción actualizada.',
+    'status.optionsReordered': 'Opciones reordenadas.',
     'status.toolsRootActive': 'Carpeta de herramientas actualizada a la nota activa.',
     'status.enterNoteId': 'Introduce un ID de nota.',
     'status.toolsRootUpdated': 'Carpeta de herramientas actualizada.',
@@ -681,10 +749,27 @@ const ES = {
     'addOption.fieldFlag': 'Flag',
     'addOption.fieldHelp': 'Ayuda',
     'addOption.fieldType': 'Tipo',
+    'addOption.fieldMode': 'Modo',
+    'addOption.modeFlag': 'Flag (se añade al comando)',
+    'addOption.modeInline': 'Inline (se referencia en el comando base)',
+    'addOption.fieldPlaceholder': 'Marcador',
+    'addOption.placeholderPlaceholder': 'Nombre del marcador, p. ej. output (opcional)',
+    'addOption.fieldQuote': 'Comillas',
+    'addOption.quoteNone': 'Ninguna',
+    'addOption.quoteSingle': "Simples ('valor')",
+    'addOption.quoteDouble': 'Dobles ("valor")',
+    'addOption.fieldSeparator': 'Separador',
+    'addOption.sepSpace': 'Espacio (--flag valor)',
+    'addOption.sepEquals': 'Igual (--flag=valor)',
     'addOption.fieldDefault': 'Por defecto',
     'addOption.fieldValues': 'Valores',
     'addOption.fieldOrder': 'Orden',
     'addOption.title': 'Añadir una opción a "{title}"',
+
+    // --- edit option dialog ------------------------------------------------
+    'editOption.title': 'Editar "{title}"',
+    'editOption.editLabel': 'Editar la opción "{title}"',
+    'editOption.note': 'Al guardar se reescriben los atributos de esta nota de opción; el cuerpo de la nota no se toca.',
 
     // --- tools folder dialog ----------------------------------------------
     'toolsFolder.useActive': 'Usar la nota activa',
@@ -722,6 +807,10 @@ const ES = {
     'error.updateCheckUnavailable': 'Este entorno no puede comprobar actualizaciones.',
     'error.noPublishedVersion': 'No se encontró ninguna versión publicada.',
     'error.updateCheckFailed': 'No se pudieron comprobar las actualizaciones: {error}',
+    'error.noUpdateAvailable': 'No hay ninguna actualización para instalar.',
+    'error.updateNotABundle': 'El archivo descargado no es una compilación de Command Maker.',
+    'error.updateBundleMismatch': 'El archivo descargado es la versión {found}, no la v{expected}.',
+    'error.updateBundleTooLarge': 'La actualización descargada es demasiado grande.',
 
     // --- AI prompt ---------------------------------------------------------
     'prompt.intro': 'Conviertes la documentación de herramientas de línea de comandos en un archivo de herramienta de Command Maker.',
@@ -799,8 +888,11 @@ const ES = {
     'back.errorToolNote': 'No se encontró la nota de la herramienta',
     'back.errorOptionNote': 'No se encontró la nota de la opción',
     'back.errorSettingsNote': 'No se encontró la nota de ajustes de Command Maker',
+    'back.errorPluginNote': 'No se encontró la nota del script del plugin Command Maker',
+    'back.errorEmptyBundle': 'La actualización descargada está vacía',
     'back.errorNotAnOptionPrefix': 'La nota no es una opción de ninguna herramienta: ',
     'back.errorNoteNotFound': 'Nota no encontrada',
+    'back.errorInvalidOrder': 'El orden de la opción debe ser un número: ',
     'back.errorPresetsSave': 'La nota de presets no es JSON válido. Arréglala o bórrala antes de guardar un preset.',
     'back.errorPresetsDelete': 'La nota de presets no es JSON válido. Arréglala o bórrala antes de borrar un preset.',
     'back.errorUnknownActionPrefix': 'Acción desconocida: ',
@@ -937,8 +1029,10 @@ const BACKEND_KEYS = [
     'back.noteToolsContent', 'back.noteTabTitle', 'back.noteTabRenderTitle',
     'back.toolContent',
     'back.errorToolsRoot', 'back.errorToolNote', 'back.errorOptionNote',
-    'back.errorSettingsNote', 'back.errorNotAnOptionPrefix',
+    'back.errorSettingsNote', 'back.errorPluginNote', 'back.errorEmptyBundle',
+    'back.errorNotAnOptionPrefix',
     'back.errorNoteNotFound',
+    'back.errorInvalidOrder',
     'back.errorPresetsSave', 'back.errorPresetsDelete',
     'back.errorUnknownActionPrefix'
 ];
@@ -1061,12 +1155,27 @@ function valueKey(option) {
     return 'ph:' + (option.placeholder || option.name || '');
 }
 
-/** Same precedence as Model.sortOptions: cmOrder, then title, then note id. */
+/** Flag text without its leading dashes; the alphabetical tie-break below. */
+function flagSortKey(option) {
+    return String(option && option.flag != null ? option.flag : '').trim().replace(/^-+/, '');
+}
+
+/**
+ * Command insertion order, shared by the renderer and the palette so the GUI
+ * lists options exactly as they will be emitted: cmOrder, then the flag
+ * alphabetically ignoring its leading dashes, then title and note id for
+ * stability.
+ */
 function compareOptions(left, right) {
     const leftOrder = typeof left.order === 'number' ? left.order : 100;
     const rightOrder = typeof right.order === 'number' ? right.order : 100;
     if (leftOrder !== rightOrder) {
         return leftOrder - rightOrder;
+    }
+    const leftFlag = flagSortKey(left).toLowerCase();
+    const rightFlag = flagSortKey(right).toLowerCase();
+    if (leftFlag && rightFlag && leftFlag !== rightFlag) {
+        return leftFlag < rightFlag ? -1 : 1;
     }
     if (left.title !== right.title) {
         return String(left.title) < String(right.title) ? -1 : 1;
@@ -2971,15 +3080,37 @@ const LABELS = {
     seeded: 'cmSeeded',
     managed: 'cmManaged',
     version: 'cmVersion',
+    plugin: 'cmPlugin',
     // note presentation
     icon: 'iconClass',
     // settings
     lang: 'cmLang',
+    panelWidth: 'cmPanelWidth',
 };
 
 const LABEL_NAMES = Object.keys(LABELS).map(function (key) {
     return LABELS[key];
 });
+
+// Overlay panel width, stored as a percentage of the window. Shared by the
+// runtime (read/write), the palette menu (slider) and the backend (clamp).
+const PANEL_WIDTH_MIN = 30;
+const PANEL_WIDTH_MAX = 100;
+const PANEL_WIDTH_DEFAULT = 70;
+
+function normalizePanelWidth(value) {
+    const parsed = Math.round(Number(value));
+    if (!isFinite(parsed)) {
+        return PANEL_WIDTH_DEFAULT;
+    }
+    if (parsed < PANEL_WIDTH_MIN) {
+        return PANEL_WIDTH_MIN;
+    }
+    if (parsed > PANEL_WIDTH_MAX) {
+        return PANEL_WIDTH_MAX;
+    }
+    return parsed;
+}
 
 const TYPES = ['string', 'path', 'number', 'boolean', 'enum'];
 const QUOTES = ['none', 'single', 'double'];
@@ -3087,6 +3218,40 @@ function optionFromNote(note) {
 
 function sortOptions(left, right) {
     return Render.compareOptions(left, right);
+}
+
+/**
+ * Sequential #cmOrder values for an option list already in command order.
+ * Only note-backed options can be persisted; inferred placeholders have no
+ * note to label. Ten-point gaps leave room for a manual #cmOrder later.
+ */
+function orderPlan(options) {
+    const plan = [];
+    (Array.isArray(options) ? options : []).forEach(function (option) {
+        if (option && option.noteId) {
+            plan.push({ noteId: option.noteId, order: (plan.length + 1) * 10 });
+        }
+    });
+    return plan;
+}
+
+/** New order plan after moving one option to a position in command order. */
+function reorderPlan(options, noteId, targetIndex) {
+    const noteOptions = (Array.isArray(options) ? options : []).filter(function (option) {
+        return option && option.noteId;
+    });
+    const from = noteOptions.findIndex(function (option) {
+        return option.noteId === noteId;
+    });
+    if (from === -1) {
+        return [];
+    }
+    const ordered = noteOptions.slice();
+    const moved = ordered.splice(from, 1)[0];
+    const parsed = Number(targetIndex);
+    const target = isFinite(parsed) ? Math.max(0, Math.min(ordered.length, parsed)) : ordered.length;
+    ordered.splice(target, 0, moved);
+    return orderPlan(ordered);
 }
 
 function buildTool(note) {
@@ -3519,10 +3684,16 @@ module.exports = {
     TYPES,
     QUOTES,
     ICONS,
+    PANEL_WIDTH_MIN,
+    PANEL_WIDTH_MAX,
+    PANEL_WIDTH_DEFAULT,
+    normalizePanelWidth,
     EXTRA_KEY: Render.EXTRA_KEY,
     deriveBase,
     optionFromNote,
     sortOptions,
+    orderPlan,
+    reorderPlan,
     buildTool,
     defaultValueMap,
     valuesFromExample,
@@ -3548,13 +3719,27 @@ const REPOSITORY = 'https://github.com/J0nan/Trilium-Command-Maker-Plugin';
 const LATEST_RELEASE_API = 'https://api.github.com/repos/J0nan/Trilium-Command-Maker-Plugin/releases/latest';
 const LATEST_TAGS_API = 'https://api.github.com/repos/J0nan/Trilium-Command-Maker-Plugin/tags?per_page=50';
 const LATEST_RAW = 'https://raw.githubusercontent.com/J0nan/Trilium-Command-Maker-Plugin/main/package.json';
+const RAW_PREFIX = 'https://raw.githubusercontent.com/J0nan/Trilium-Command-Maker-Plugin';
+const BUNDLE_MAIN = RAW_PREFIX + '/main/dist/command-maker.js';
+
+/**
+ * Where the built runtime for one version tag lives. The release workflow
+ * commits `dist/` with every tag, so a raw URL serves exactly the bytes a
+ * release shipped without depending on an asset redirect.
+ */
+function bundleUrl(version) {
+    const tag = String(version == null ? '' : version).replace(/^v/i, '').trim();
+    return tag === '' ? BUNDLE_MAIN : RAW_PREFIX + '/v' + tag + '/dist/command-maker.js';
+}
 
 module.exports = {
     VERSION,
     REPOSITORY,
     LATEST_RELEASE_API,
     LATEST_TAGS_API,
-    LATEST_RAW
+    LATEST_RAW,
+    BUNDLE_MAIN,
+    bundleUrl
 };
 });
 __def("styles", function (module, exports, __require) {
@@ -3576,6 +3761,10 @@ const CSS = [
     '.cm-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--main-border-color,#ddd);}',
     '.cm-search{flex:1;padding:8px 10px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--input-background-color,#fafafa);color:inherit;font-size:15px;}',
     '.cm-close{border:0;background:transparent;color:inherit;font-size:16px;cursor:pointer;padding:4px 8px;}',
+    '.cm-update{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--main-border-color,#ddd);background:var(--accented-background-color,#eef2ff);font-size:12px;}',
+    '.cm-update-text{flex:1;min-width:0;overflow-wrap:anywhere;}',
+    '.cm-button.cm-update-apply{padding:3px 10px;font-size:12px;white-space:nowrap;}',
+    '.cm-update .cm-update-dismiss{border:0;background:transparent;color:inherit;font-size:13px;cursor:pointer;padding:2px 6px;}',
     '.cm-open-tab{border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer;padding:4px 10px;white-space:nowrap;}',
     '.cm-open-tab:hover{background:var(--accented-background-color,#eef2ff);}',
     '.cm-open-tab:disabled{opacity:.5;cursor:default;}',
@@ -3614,7 +3803,30 @@ const CSS = [
     '.cm-opt-help{font-size:12px;opacity:.7;margin-top:2px;line-height:1.4;}',
     '.cm-opt-control{flex:0 0 210px;max-width:45%;}',
     '.cm-opt-check{flex:0 0 auto;margin-left:auto;align-self:center;}',
+    '.cm-button.cm-opt-edit{display:none;flex:0 0 auto;align-self:flex-start;padding:6px 12px;font-size:13px;}',
+    '.cm-edit-mode .cm-opt-edit{display:inline-block;}',
+    '.cm-options-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:14px 0 6px;}',
+    '.cm-options-title{margin:0;}',
+    '.cm-options-actions{display:flex;align-items:center;gap:6px;}',
+    '.cm-button.cm-options-reorder{padding:2px 10px;font-size:12px;}',
+    '.cm-button.cm-options-edit{padding:2px 10px;font-size:12px;}',
     '.cm-filter{width:100%;box-sizing:border-box;margin-bottom:4px;}',
+    '.cm-reorder-body{display:flex;flex-direction:column;gap:8px;}',
+    '.cm-reorder-preview{position:sticky;top:0;z-index:1;display:flex;flex-direction:column;gap:4px;padding:6px 0;background:var(--main-background-color,#fff);border-bottom:1px solid var(--main-border-color,#ddd);}',
+    '.cm-reorder-preview-label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;opacity:.65;}',
+    '.cm-reorder-flags{display:flex;flex-wrap:wrap;gap:4px;}',
+    '.cm-reorder-flag{font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;padding:1px 6px;border-radius:4px;border:1px solid transparent;background:var(--accented-background-color,#eef2ff);opacity:.4;}',
+    '.cm-reorder-flag.is-emitted{opacity:1;border-color:var(--link-color,#4f8cff);}',
+    '.cm-reorder-list{display:flex;flex-direction:column;gap:4px;}',
+    '.cm-reorder-item{display:flex;align-items:center;gap:8px;padding:4px 6px;border:1px solid var(--main-border-color,#ddd);border-radius:6px;transition:box-shadow .12s ease,opacity .12s ease;}',
+    '.cm-reorder-item.is-dragging{opacity:.45;}',
+    '.cm-reorder-item.is-drop-before{box-shadow:inset 0 2px 0 0 var(--link-color,#4f8cff);}',
+    '.cm-reorder-item.is-drop-after{box-shadow:inset 0 -2px 0 0 var(--link-color,#4f8cff);}',
+    '.cm-reorder-handle{opacity:.45;cursor:grab;user-select:none;font-size:14px;line-height:1;}',
+    '.cm-reorder-pos{width:2em;text-align:end;opacity:.6;font-variant-numeric:tabular-nums;}',
+    '.cm-reorder-info{flex:1;min-width:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}',
+    '.cm-reorder-buttons{display:flex;gap:4px;}',
+    '.cm-button.cm-reorder-move{padding:2px 8px;font-size:12px;}',
     '.cm-form{display:flex;flex-direction:column;gap:6px;margin-bottom:10px;}',
     '.cm-control{padding:6px 8px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--input-background-color,#fafafa);color:inherit;font:inherit;box-sizing:border-box;}',
     ':root .cm-control.cm-select{appearance:none;-webkit-appearance:none;background-color:var(--input-background-color,#fafafa);background-image:var(--select-arrow-svg,url(\'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="none" stroke="%23888888" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m2 5 6 6 6-6"/></svg>\'));background-position:right 0.75rem center;background-size:15px 20px;background-repeat:no-repeat;padding-inline-end:calc(15px + 1.5rem);}',
@@ -3648,13 +3860,19 @@ const CSS = [
     '.cm-version-link{font-size:11px;opacity:.6;color:inherit;text-decoration:none;padding:2px 4px;}',
     '.cm-menu-host{position:relative;display:inline-flex;}',
     '.cm-version-chevron{font-size:9px;margin-left:4px;opacity:.8;}',
-    '.cm-menu{position:absolute;right:0;bottom:calc(100% + 6px);z-index:2;min-width:190px;padding:4px;border-radius:8px;background:var(--main-background-color,#fff);color:inherit;border:1px solid var(--main-border-color,#ccc);box-shadow:0 10px 28px rgba(0,0,0,.28);display:flex;flex-direction:column;gap:2px;}',
+    '.cm-menu{position:absolute;right:0;bottom:calc(100% + 6px);z-index:2;min-width:240px;padding:4px;border-radius:8px;background:var(--main-background-color,#fff);color:inherit;border:1px solid var(--main-border-color,#ccc);box-shadow:0 10px 28px rgba(0,0,0,.28);display:flex;flex-direction:column;gap:2px;}',
     '.cm-menu-item{display:flex;align-items:center;gap:6px;width:100%;padding:6px 8px;border:0;border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:13px;text-align:left;cursor:pointer;}',
     '.cm-menu-item:hover,.cm-menu-item:focus-visible{background:var(--hover-item-background-color,#00000010);color:var(--hover-item-text-color,inherit);}',
     '.cm-menu-item.is-checked{font-weight:600;}',
     '.cm-menu-check{order:-1;width:1em;flex-shrink:0;opacity:.85;}',
     '.cm-menu-sep{height:1px;margin:4px 2px;background:var(--main-border-color,#ddd);opacity:.6;}',
     '.cm-menu-title{padding:2px 8px 4px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;opacity:.6;}',
+    '.cm-menu-row{display:flex;align-items:center;gap:8px;padding:2px 8px 6px;}',
+    '.cm-width-range{flex:1;min-width:0;margin:0;accent-color:var(--link-color,#4f8cff);cursor:pointer;}',
+    '.cm-width-value{font-size:12px;opacity:.75;min-width:3.2em;text-align:end;}',
+    '.cm-width-apply{padding:3px 8px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--button-background-color,#fff);color:inherit;cursor:pointer;font:inherit;font-size:12px;white-space:nowrap;}',
+    '.cm-width-apply:hover{background:var(--accented-background-color,#eef2ff);}',
+    '.cm-width-apply:disabled{opacity:.5;cursor:default;}',
     '.cm-version-link:hover{opacity:1;text-decoration:underline;}',
     '.cm-badge{font-size:11px;padding:1px 6px;border-radius:999px;background:var(--accented-background-color,#eef2ff);opacity:.8;}',
     '.cm-example{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:6px;}',
@@ -3698,7 +3916,7 @@ const CSS = [
     '.cm-import-flag{font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;}',
     '.cm-import-help{font-size:12px;opacity:.7;}',
     '.cm-note{font-size:12px;opacity:.7;}',
-    '@media (max-width:720px){.cm-body{flex-direction:column;}.cm-list{width:auto;max-height:180px;border-right:0;border-bottom:1px solid var(--main-border-color,#ddd);}.cm-opt-control{flex-basis:150px;}}'
+    '@media (max-width:720px){.cm-panel{width:100% !important;}.cm-body{flex-direction:column;}.cm-list{width:auto;max-height:180px;border-right:0;border-bottom:1px solid var(--main-border-color,#ddd);}.cm-opt-control{flex-basis:150px;}}'
 ].join('\n');
 
 module.exports = { STYLE_ID, CSS };
@@ -4025,9 +4243,9 @@ __def("backend", function (module, exports, __require) {
  * being duplicated here. Consequently `beRun` must never reference a
  * module-scope binding and dispatches on literal action strings only.
  *
- * Actions: bootstrap | setLanguage | createTool | importTool | addOption |
- * importOptions | deleteOption | setToolBase | setToolsRoot | savePreset |
- * deletePreset | ensureTab
+ * Actions: bootstrap | setLanguage | setPanelWidth | createTool | importTool |
+ * addOption | updateOption | reorderOptions | importOptions | deleteOption |
+ * setToolBase | setToolsRoot | savePreset | deletePreset | ensureTab | applyBundle
  */
 
 function beRun(params) {
@@ -4364,6 +4582,62 @@ function beRun(params) {
         return note;
     }
 
+    /**
+     * Write one label, removing it when the value is empty so an edited option
+     * never keeps a stale attribute the user just cleared.
+     */
+    function setOrRemoveLabel(note, name, value) {
+        if (!name) {
+            return;
+        }
+        if (nonEmpty(value)) {
+            note.setLabel(name, String(value));
+        } else if (typeof note.removeLabel === 'function') {
+            note.removeLabel(name);
+        } else {
+            note.setLabel(name, '');
+        }
+    }
+
+    /** Apply every option attribute to an existing option note. */
+    function applyOptionLabels(note, spec) {
+        const safe = spec || {};
+        note.setLabel(labels.option, '');
+        setOrRemoveLabel(note, labels.flag, safe.flag);
+        const doc = safe.help || safe.doc;
+        setOrRemoveLabel(note, labels.doc, doc);
+        setOrRemoveLabel(note, labels.type, safe.type);
+        const enumValues = safe.values !== undefined && safe.values !== null ? safe.values : safe.enumValues;
+        if (Array.isArray(enumValues)) {
+            setOrRemoveLabel(note, labels.enumValues, enumValues.length > 0 ? enumValues.join(',') : '');
+        } else {
+            setOrRemoveLabel(note, labels.enumValues, enumValues);
+        }
+        let rawDefault = undefined;
+        if (safe.default !== undefined && safe.default !== null) {
+            rawDefault = safe.default;
+        } else if (safe.defaultValue !== undefined && safe.defaultValue !== null) {
+            rawDefault = safe.defaultValue;
+        }
+        // A provided default is kept even when it is the empty string, which is
+        // how a boolean default of `false` and an explicit empty default persist.
+        if (rawDefault !== undefined) {
+            note.setLabel(labels.defaultValue, String(rawDefault));
+        } else if (typeof note.removeLabel === 'function') {
+            note.removeLabel(labels.defaultValue);
+        }
+        setOrRemoveLabel(note, labels.required, safe.required ? 'true' : '');
+        setOrRemoveLabel(note, labels.mode, safe.mode === 'inline' ? 'inline' : '');
+        setOrRemoveLabel(note, labels.placeholder, safe.placeholder);
+        setOrRemoveLabel(
+            note,
+            labels.order,
+            safe.order !== undefined && safe.order !== null && String(safe.order).trim() !== '' ? safe.order : ''
+        );
+        setOrRemoveLabel(note, labels.quote, safe.quote);
+        setOrRemoveLabel(note, labels.separator, safe.sep === '=' || safe.separator === '=' ? '=' : '');
+    }
+
     /** Create one option note under a tool's Options folder. */
     function createOptionNote(folder, spec) {
         const safe = spec || {};
@@ -4374,53 +4648,46 @@ function beRun(params) {
             type: 'text',
             content: safe.content == null ? '' : String(safe.content)
         }).note);
-        note.setLabel(labels.option, '');
-        if (nonEmpty(safe.flag)) {
-            note.setLabel(labels.flag, String(safe.flag));
-        }
-        const doc = safe.help || safe.doc;
-        if (nonEmpty(doc)) {
-            note.setLabel(labels.doc, String(doc));
-        }
-        if (nonEmpty(safe.type)) {
-            note.setLabel(labels.type, String(safe.type));
-        }
-        const enumValues = safe.values !== undefined && safe.values !== null ? safe.values : safe.enumValues;
-        if (Array.isArray(enumValues)) {
-            if (enumValues.length > 0) {
-                note.setLabel(labels.enumValues, enumValues.join(','));
-            }
-        } else if (nonEmpty(enumValues)) {
-            note.setLabel(labels.enumValues, String(enumValues));
-        }
-        let rawDefault = undefined;
-        if (safe.default !== undefined && safe.default !== null) {
-            rawDefault = safe.default;
-        } else if (safe.defaultValue !== undefined && safe.defaultValue !== null) {
-            rawDefault = safe.defaultValue;
-        }
-        if (rawDefault !== undefined) {
-            note.setLabel(labels.defaultValue, String(rawDefault));
-        }
-        if (safe.required) {
-            note.setLabel(labels.required, 'true');
-        }
-        if (safe.mode === 'inline') {
-            note.setLabel(labels.mode, 'inline');
-        }
-        if (nonEmpty(safe.placeholder)) {
-            note.setLabel(labels.placeholder, String(safe.placeholder));
-        }
-        if (safe.order !== undefined && safe.order !== null && String(safe.order).trim() !== '') {
-            note.setLabel(labels.order, String(safe.order));
-        }
-        if (nonEmpty(safe.quote)) {
-            note.setLabel(labels.quote, String(safe.quote));
-        }
-        if (safe.sep === '=' || safe.separator === '=') {
-            note.setLabel(labels.separator, '=');
-        }
+        applyOptionLabels(note, safe);
         return note;
+    }
+
+    /** Current label map of an option note, keyed by attribute name. */
+    function optionLabelSnapshot(note) {
+        const snapshot = {};
+        const keys = Object.keys(labels);
+        for (let index = 0; index < keys.length; index += 1) {
+            const name = labels[keys[index]];
+            if (hasLabel(note, name)) {
+                const value = note.getLabelValue(name);
+                if (value !== null && value !== undefined) {
+                    snapshot[name] = String(value);
+                }
+            }
+        }
+        return snapshot;
+    }
+
+    /**
+     * Rewrite one existing option note in place. The target must carry the
+     * option label, so a wrong or hostile note id can never edit an unrelated
+     * note, and the note body is left untouched.
+     */
+    function updateOption() {
+        const note = requireNote(options.noteId, text('back.errorOptionNote', 'Option note not found'));
+        if (!hasLabel(note, labels.option)) {
+            throw new Error(text('back.errorNotAnOptionPrefix', 'Note is not an option of a tool: ') + note.noteId);
+        }
+        const spec = options.option || {};
+        note.title = nonEmpty(spec.label) ? String(spec.label) : text('back.noteOption', 'Option');
+        applyOptionLabels(note, spec);
+        // Return the saved attributes so the frontend can update its cached
+        // entity before Trilium's entity-change event reaches the UI.
+        return {
+            noteId: note.noteId,
+            title: note.title,
+            labels: optionLabelSnapshot(note)
+        };
     }
 
     function parentForRoot() {
@@ -4471,6 +4738,15 @@ function beRun(params) {
             const configured = root.getLabelValue(labels.lang);
             if (configured === null || configured === undefined || String(configured).trim() === '') {
                 root.setLabel(labels.lang, String(options.lang));
+            }
+        }
+
+        // Same treatment for the overlay width: record the active percentage
+        // once so the setting is discoverable and the menu has a value to show.
+        if (nonEmpty(options.panelWidth) && labels.panelWidth) {
+            const configured = root.getLabelValue(labels.panelWidth);
+            if (configured === null || configured === undefined || String(configured).trim() === '') {
+                root.setLabel(labels.panelWidth, String(options.panelWidth));
             }
         }
 
@@ -4612,6 +4888,29 @@ function beRun(params) {
         return { ok: true };
     }
 
+    /**
+     * Persist a whole option ordering in one round-trip. Each target must be an
+     * option note; the caller already computed the sequential `#cmOrder` values.
+     */
+    function reorderOptions() {
+        const entries = Array.isArray(options.order) ? options.order : [];
+        const noteIds = [];
+        for (let index = 0; index < entries.length; index += 1) {
+            const entry = entries[index] || {};
+            const note = requireNote(entry.noteId, text('back.errorOptionNote', 'Option note not found'));
+            if (!hasLabel(note, labels.option)) {
+                throw new Error(text('back.errorNotAnOptionPrefix', 'Note is not an option of a tool: ') + note.noteId);
+            }
+            const order = Number(entry.order);
+            if (!isFinite(order)) {
+                throw new Error(text('back.errorInvalidOrder', 'Option order must be a number: ') + note.noteId);
+            }
+            note.setLabel(labels.order, String(order));
+            noteIds.push(note.noteId);
+        }
+        return { noteIds: noteIds };
+    }
+
     function setToolBase() {
         const tool = requireNote(options.toolId, text('back.errorToolNote', 'Tool note not found'));
         if (nonEmpty(options.base)) {
@@ -4745,6 +5044,33 @@ function beRun(params) {
         return { tabNoteId: tab.noteId, htmlNoteId: html.noteId };
     }
 
+    /**
+     * Rewrite the frontend plugin note with a downloaded release bundle. The
+     * note is found through its `#cmPlugin` label, so a wrong id can never
+     * overwrite an unrelated note; the version label records what is installed.
+     */
+    function applyBundle() {
+        if (!labels.plugin) {
+            throw new Error(text('back.errorUnknownActionPrefix', 'Unknown action: ') + 'applyBundle');
+        }
+        if (!nonEmpty(options.bundle)) {
+            throw new Error(text('back.errorEmptyBundle', 'The downloaded update is empty'));
+        }
+        const root = api.getNoteWithLabel(labels.root);
+        if (!root) {
+            throw new Error(text('back.errorSettingsNote', 'Command Maker settings note not found'));
+        }
+        const plugin = api.getNoteWithLabel(labels.plugin) || findChildWithLabel(root, labels.plugin);
+        if (!plugin) {
+            throw new Error(text('back.errorPluginNote', 'Command Maker plugin script note not found'));
+        }
+        plugin.setContent(String(options.bundle));
+        if (nonEmpty(options.version)) {
+            root.setLabel(labels.version, String(options.version));
+        }
+        return { noteId: plugin.noteId, version: nonEmpty(options.version) ? String(options.version) : '' };
+    }
+
     function setLanguage() {
         const root = requireNote(options.rootId, text('back.errorSettingsNote', 'Command Maker settings note not found'));
         if (!labels.lang) {
@@ -4754,17 +5080,37 @@ function beRun(params) {
         return { ok: true, lang: String(options.lang == null ? '' : options.lang) };
     }
 
+    /** Store the overlay width as a percentage, clamped to the allowed range. */
+    function setPanelWidth() {
+        const root = requireNote(options.rootId, text('back.errorSettingsNote', 'Command Maker settings note not found'));
+        if (!labels.panelWidth) {
+            throw new Error(text('back.errorUnknownActionPrefix', 'Unknown action: ') + 'setPanelWidth');
+        }
+        const min = options.min === undefined ? 30 : Number(options.min);
+        const max = options.max === undefined ? 100 : Number(options.max);
+        const parsed = Math.round(Number(options.width));
+        const width = isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : 70;
+        root.setLabel(labels.panelWidth, String(width));
+        return { ok: true, width: width };
+    }
+
     switch (options.action) {
         case 'bootstrap':
             return bootstrap();
         case 'setLanguage':
             return setLanguage();
+        case 'setPanelWidth':
+            return setPanelWidth();
         case 'createTool':
             return createTool();
         case 'importTool':
             return importTool();
         case 'addOption':
             return addOption();
+        case 'updateOption':
+            return updateOption();
+        case 'reorderOptions':
+            return reorderOptions();
         case 'importOptions':
             return importOptions();
         case 'deleteOption':
@@ -4779,6 +5125,8 @@ function beRun(params) {
             return deletePreset();
         case 'ensureTab':
             return ensureTab();
+        case 'applyBundle':
+            return applyBundle();
         default:
             throw new Error(text('back.errorUnknownActionPrefix', 'Unknown action: ') + options.action);
     }
@@ -4811,6 +5159,7 @@ __def("ui", function (module, exports, __require) {
  *   savePreset(toolId, name, values): Promise<void>
  *   deletePreset(toolId, name): Promise<void>
  *   addOption(toolId, option): Promise<void>
+ *   updateOption(noteId, option): Promise<void>
  *   setToolBase(toolId, base): Promise<void>
  *   currentToolsRoot(): Promise<{ noteId, title } | null>
  *   setToolsRoot(noteId): Promise<void>
@@ -4821,6 +5170,8 @@ __def("ui", function (module, exports, __require) {
  *   version(): string
  *   repository(): string
  *   checkLatestVersion(): Promise<{ current, latest, outdated, error }>
+ *   checkUpdatesIfDue(): Promise<{ current, latest, outdated, error }>
+ *   installUpdate(): Promise<{ noteId, version, reloading }>
  *
  * This module never touches the Trilium `api` global: everything goes through
  * the controller, which keeps the DOM code testable with a plain DOM.
@@ -4944,6 +5295,7 @@ function openPalette(controller, options) {
         values: {},
         edited: false,
         exampleLoaded: false,
+        editMode: false,
         optionRows: [],
         optionGroups: [],
         previewEl: null,
@@ -4960,6 +5312,22 @@ function openPalette(controller, options) {
     const overlay = embedded ? null : Dom.el('div', 'cm-overlay');
     const shell = embedded ? Dom.el('div', 'cm-tab-view') : overlay;
     const panel = Dom.el('div', 'cm-panel');
+
+    /** Overlay width percentage the settings note currently holds. */
+    function currentPanelWidth() {
+        const value = typeof controller.panelWidth === 'function' ? controller.panelWidth() : undefined;
+        return Model.normalizePanelWidth(value);
+    }
+
+    /** Apply the percentage to the floating panel; a tab view stays full width. */
+    function applyPanelWidth(percent) {
+        if (embedded) {
+            return;
+        }
+        panel.style.width = Model.normalizePanelWidth(percent) + '%';
+    }
+
+    applyPanelWidth(currentPanelWidth());
 
     const head = Dom.el('div', 'cm-head');
     const searchInput = document.createElement('input');
@@ -5036,7 +5404,24 @@ function openPalette(controller, options) {
 
     const modalHost = Dom.el('div', 'cm-modal-host');
 
+    // Update banner: the daily check fills it when a newer release exists, and
+    // its button downloads that release and rewrites the plugin note.
+    const updateBar = Dom.el('div', 'cm-update');
+    updateBar.setAttribute('role', 'status');
+    updateBar.style.display = 'none';
+    const updateText = Dom.el('span', 'cm-update-text', '');
+    const updateApply = Dom.el('button', 'cm-button cm-update-apply', I18n.t('update.install'));
+    updateApply.type = 'button';
+    const updateDismiss = Dom.el('button', 'cm-update-dismiss', '✕');
+    updateDismiss.type = 'button';
+    updateDismiss.title = I18n.t('update.dismiss');
+    updateDismiss.setAttribute('aria-label', I18n.t('update.dismiss'));
+    updateBar.appendChild(updateText);
+    updateBar.appendChild(updateApply);
+    updateBar.appendChild(updateDismiss);
+
     panel.appendChild(head);
+    panel.appendChild(updateBar);
     panel.appendChild(body);
     panel.appendChild(footer);
     if (embedded) {
@@ -5090,6 +5475,69 @@ function openPalette(controller, options) {
         const menu = Dom.el('div', 'cm-menu');
         menu.setAttribute('role', 'menu');
         menu.setAttribute('aria-label', I18n.t('ui.versionMenu'));
+
+        if (!embedded) {
+            menu.appendChild(Dom.el('div', 'cm-menu-title', I18n.t('ui.panelWidth')));
+            const widthRow = Dom.el('div', 'cm-menu-row');
+            const widthInput = document.createElement('input');
+            widthInput.type = 'range';
+            widthInput.className = 'cm-width-range';
+            widthInput.min = String(Model.PANEL_WIDTH_MIN);
+            widthInput.max = String(Model.PANEL_WIDTH_MAX);
+            widthInput.step = '5';
+            widthInput.value = String(currentPanelWidth());
+            widthInput.setAttribute('aria-label', I18n.t('ui.panelWidth'));
+            const widthValue = Dom.el('span', 'cm-width-value', widthInput.value + '%');
+            const applyButton = Dom.el('button', 'cm-width-apply', I18n.t('ui.apply'));
+            applyButton.type = 'button';
+            const canSave = typeof controller.setPanelWidth === 'function';
+            // The panel is resized only on Apply: changing it while the pointer
+            // is on the slider moves the whole menu out from under the drag.
+            function pendingWidth() {
+                return Model.normalizePanelWidth(widthInput.value);
+            }
+            function syncApplyState() {
+                applyButton.disabled = !canSave || pendingWidth() === currentPanelWidth();
+            }
+            widthInput.addEventListener('input', function () {
+                const percent = pendingWidth();
+                widthInput.value = String(percent);
+                widthValue.textContent = percent + '%';
+                syncApplyState();
+            });
+            applyButton.addEventListener('click', function (event) {
+                event.preventDefault();
+                if (applyButton.disabled || !canSave) {
+                    return;
+                }
+                const percent = pendingWidth();
+                applyButton.disabled = true;
+                (async function () {
+                    try {
+                        await controller.setPanelWidth(percent);
+                    } catch (error) {
+                        // A failed write must not leave the slider promising a
+                        // width the settings note never stored.
+                        const saved = currentPanelWidth();
+                        widthInput.value = String(saved);
+                        widthValue.textContent = saved + '%';
+                        syncApplyState();
+                        notify(error);
+                        return;
+                    }
+                    applyPanelWidth(percent);
+                    widthInput.value = String(percent);
+                    widthValue.textContent = percent + '%';
+                    syncApplyState();
+                })();
+            });
+            widthRow.appendChild(widthInput);
+            widthRow.appendChild(widthValue);
+            widthRow.appendChild(applyButton);
+            menu.appendChild(widthRow);
+            syncApplyState();
+            menu.appendChild(Dom.el('div', 'cm-menu-sep'));
+        }
 
         const updates = Dom.el('button', 'cm-menu-item', I18n.t('ui.checkUpdates'));
         updates.type = 'button';
@@ -5167,6 +5615,65 @@ function openPalette(controller, options) {
         setStatus(error && error.message ? error.message : String(error), true);
     }
 
+    // Version the user hid, and the one the bar currently offers, so a dismiss
+    // and a later check never resurrect the banner for the same release.
+    let dismissedUpdate = '';
+    let shownUpdate = '';
+
+    function hideUpdateBar() {
+        updateBar.style.display = 'none';
+    }
+
+    /** Fill the banner for an outdated status; hide it for anything else. */
+    function showUpdateBar(info) {
+        const outdated = Boolean(info && info.outdated && info.latest && !info.error);
+        if (!outdated || info.latest === dismissedUpdate) {
+            hideUpdateBar();
+            return;
+        }
+        shownUpdate = info.latest;
+        updateText.textContent = I18n.t('update.available', {
+            current: info.current,
+            latest: info.latest
+        });
+        updateApply.textContent = I18n.t('update.install');
+        versionLabel.textContent = 'v' + info.current + ' → v' + info.latest;
+        versionButton.title = I18n.t('status.installedLatest', {
+            current: info.current,
+            latest: info.latest
+        });
+        updateBar.style.display = '';
+    }
+
+    /**
+     * The daily check stays silent on failure: it only ever raises the banner
+     * for a published update, and the manual menu entry reports the errors.
+     */
+    function checkUpdatesIfDue() {
+        if (typeof controller.checkUpdatesIfDue !== 'function') {
+            return;
+        }
+        Promise.resolve(controller.checkUpdatesIfDue()).then(showUpdateBar, function () {
+            // Invisible on purpose; the menu can retry on demand.
+        });
+    }
+
+    async function installUpdate() {
+        updateApply.textContent = I18n.t('update.installing');
+        let installed;
+        try {
+            installed = await controller.installUpdate();
+        } catch (error) {
+            updateApply.textContent = I18n.t('update.install');
+            throw error;
+        }
+        dismissedUpdate = '';
+        hideUpdateBar();
+        versionLabel.textContent = 'v' + installed.version;
+        versionButton.title = I18n.t('status.latest', { version: installed.version });
+        setStatus(I18n.t('update.done', { version: installed.version }));
+    }
+
     async function checkForUpdates() {
         if (typeof controller.checkLatestVersion !== 'function') {
             setStatus(I18n.t('status.updateUnavailable'), true);
@@ -5178,10 +5685,7 @@ function openPalette(controller, options) {
             setStatus(I18n.t('status.updateError', { version: info.current, error: info.error }), true);
             return;
         }
-        if (info.outdated && info.latest) {
-            versionLabel.textContent = 'v' + info.current + ' → v' + info.latest;
-            versionButton.title = I18n.t('status.installedLatest', { current: info.current, latest: info.latest });
-        }
+        showUpdateBar(info);
 
         if (info.latest && info.latest === info.current) {
             setStatus(I18n.t('status.latest', { version: info.current }));
@@ -5370,6 +5874,9 @@ function openPalette(controller, options) {
 
     async function selectItem(item, selectOptions) {
         const preserve = Boolean(selectOptions && selectOptions.preserveValues);
+        if (!preserve) {
+            state.editMode = false;
+        }
         const previousValues = preserve ? state.values : null;
         const previousEdited = preserve ? state.edited : false;
         const previousPreview = preserve && state.previewEl ? state.previewEl.value : '';
@@ -5483,10 +5990,21 @@ function openPalette(controller, options) {
         row.appendChild(main);
         const control = optionControl(option);
         row.appendChild(control);
+        let editButton = null;
+        if (!inferred && option.noteId) {
+            editButton = button(I18n.t('ui.edit'), function (event) {
+                if (event && typeof event.stopPropagation === 'function') {
+                    event.stopPropagation();
+                }
+                openOptionModal(option);
+            }, 'cm-opt-edit');
+            editButton.setAttribute('aria-label', I18n.t('editOption.editLabel', { title: option.title }));
+            row.appendChild(editButton);
+        }
         if (option.type === 'boolean') {
             row.classList.add('cm-option-bool');
             row.addEventListener('click', function (event) {
-                if (event.target === control) {
+                if (event.target === control || event.target === editButton) {
                     return;
                 }
                 control.checked = !control.checked;
@@ -5909,7 +6427,28 @@ function openPalette(controller, options) {
         detail.appendChild(baseRow());
         detail.appendChild(presetBlock());
 
-        detail.appendChild(Dom.el('div', 'cm-section', I18n.t('ui.optionsCount', { count: definition.options.length })));
+        const optionsHead = Dom.el('div', 'cm-options-head');
+        optionsHead.appendChild(Dom.el(
+            'span',
+            'cm-section cm-options-title',
+            I18n.t('ui.optionsCount', { count: definition.options.length })
+        ));
+        const editToggle = button(I18n.t(state.editMode ? 'ui.done' : 'ui.editOptionsConfig'), function () {
+            state.editMode = !state.editMode;
+            form.classList.toggle('cm-edit-mode', state.editMode);
+            editToggle.textContent = I18n.t(state.editMode ? 'ui.done' : 'ui.editOptionsConfig');
+            editToggle.setAttribute('aria-pressed', state.editMode ? 'true' : 'false');
+        }, 'cm-options-edit');
+        editToggle.setAttribute('aria-pressed', state.editMode ? 'true' : 'false');
+        const optionsActions = Dom.el('div', 'cm-options-actions');
+        if (definition.options.length > 1) {
+            optionsActions.appendChild(button(I18n.t('ui.reorderOptions'), function () {
+                openReorderModal();
+            }, 'cm-options-reorder'));
+        }
+        optionsActions.appendChild(editToggle);
+        optionsHead.appendChild(optionsActions);
+        detail.appendChild(optionsHead);
         const filter = document.createElement('input');
         filter.type = 'search';
         filter.className = 'cm-control cm-filter';
@@ -5931,6 +6470,7 @@ function openPalette(controller, options) {
         detail.appendChild(filter);
 
         const form = Dom.el('div', 'cm-form');
+        form.classList.toggle('cm-edit-mode', state.editMode);
         const requiredOptions = definition.options
             .filter(function (option) {
                 return option.required;
@@ -6467,12 +7007,368 @@ function openPalette(controller, options) {
         modalShell(I18n.t('export.title', { title: file.tool.title }), bodyNode, actionsNode);
     }
 
-    function openAddOption() {
+    /**
+     * Reorder every option in the tool. The list is the command insertion
+     * order (definition.options is already sorted), so the Required/Optional
+     * grouping in the palette cannot hide where a flag really lands.
+     */
+    function openReorderModal() {
+        if (!state.current || !state.definition) {
+            notify(new Error(I18n.t('status.selectToolFirst')));
+            return;
+        }
+        const tool = state.current;
+        const items = state.definition.options.filter(function (option) {
+            return option && option.noteId;
+        });
+        if (items.length < 2) {
+            return;
+        }
+
+        const inlineNames = Render.placeholderNames(state.definition.base);
+        const bodyNode = Dom.el('div', 'cm-reorder-body');
+        bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('reorder.note')));
+        const previewNode = Dom.el('div', 'cm-reorder-preview');
+        previewNode.setAttribute('title', I18n.t('reorder.previewHint'));
+        previewNode.appendChild(Dom.el('div', 'cm-reorder-preview-label', I18n.t('reorder.preview')));
+        const stripNode = Dom.el('div', 'cm-reorder-flags');
+        previewNode.appendChild(stripNode);
+        bodyNode.appendChild(previewNode);
+        const listNode = Dom.el('div', 'cm-reorder-list');
+        bodyNode.appendChild(listNode);
+
+        let scrollBody = null;
+        let dragIndex = null;
+        let dropRow = null;
+        let scrollFrame = null;
+        let scrollVelocity = 0;
+
+        function flagLabel(option) {
+            if (option.mode === 'inline') {
+                return option.placeholder ? '{{' + option.placeholder + '}}' : option.title;
+            }
+            if (option.flag) {
+                return option.flag;
+            }
+            if (option.placeholder) {
+                return '{{' + option.placeholder + '}}';
+            }
+            return option.title;
+        }
+
+        function isEmitted(option) {
+            if (option.mode === 'inline') {
+                return false;
+            }
+            if (option.placeholder && inlineNames.indexOf(option.placeholder) !== -1) {
+                return false;
+            }
+            const value = state.values[Render.valueKey(option)];
+            if (Render.isEmpty(value)) {
+                return false;
+            }
+            if (option.type === 'boolean' && !Render.isTruthyFlag(value)) {
+                return false;
+            }
+            if (option.type === 'number' && !isFinite(Number(value))) {
+                return false;
+            }
+            return true;
+        }
+
+        function buildChip(option) {
+            const chip = Dom.el('code', 'cm-reorder-flag' + (isEmitted(option) ? ' is-emitted' : ''), flagLabel(option));
+            chip.setAttribute('title', option.title);
+            return chip;
+        }
+
+        function indexOfRow(row) {
+            return Array.prototype.indexOf.call(listNode.children, row);
+        }
+
+        function captureTops() {
+            const tops = new Map();
+            Array.prototype.forEach.call(listNode.children, function (node) {
+                if (node.cmNoteId && typeof node.getBoundingClientRect === 'function') {
+                    tops.set(node.cmNoteId, node.getBoundingClientRect().top);
+                }
+            });
+            return tops;
+        }
+
+        function animateRows(previousTops) {
+            if (!previousTops || !previousTops.size) {
+                return;
+            }
+            Array.prototype.forEach.call(listNode.children, function (node) {
+                if (!node.cmNoteId || typeof node.animate !== 'function' || typeof node.getBoundingClientRect !== 'function') {
+                    return;
+                }
+                const before = previousTops.get(node.cmNoteId);
+                if (before === undefined) {
+                    return;
+                }
+                const delta = before - node.getBoundingClientRect().top;
+                if (!isFinite(delta) || Math.abs(delta) < 1) {
+                    return;
+                }
+                node.animate(
+                    [{ transform: 'translateY(' + delta + 'px)' }, { transform: 'translateY(0)' }],
+                    { duration: 140, easing: 'ease-out' }
+                );
+            });
+        }
+
+        function insertNodeAt(container, node, from, to) {
+            const reference = to > from
+                ? container.children[to + 1] || null
+                : container.children[to] || null;
+            container.insertBefore(node, reference);
+        }
+
+        function updateRowStates() {
+            const rows = listNode.children;
+            for (let index = 0; index < rows.length; index += 1) {
+                const row = rows[index];
+                if (row.cmPosNode) {
+                    row.cmPosNode.textContent = String(index + 1);
+                }
+                if (row.cmUpButton) {
+                    row.cmUpButton.disabled = index === 0;
+                }
+                if (row.cmDownButton) {
+                    row.cmDownButton.disabled = index === rows.length - 1;
+                }
+            }
+        }
+
+        /** Move one row and its preview chip without rebuilding the list. */
+        function reorderTo(from, to) {
+            if (from === to || from < 0 || to < 0 || from >= items.length || to >= items.length) {
+                return;
+            }
+            const previousTops = captureTops();
+            insertNodeAt(listNode, listNode.children[from], from, to);
+            insertNodeAt(stripNode, stripNode.children[from], from, to);
+            const moved = items.splice(from, 1)[0];
+            items.splice(to, 0, moved);
+            updateRowStates();
+            animateRows(previousTops);
+        }
+
+        function dropAfter(row, event) {
+            if (typeof row.getBoundingClientRect !== 'function' || !event || typeof event.clientY !== 'number') {
+                return false;
+            }
+            const rect = row.getBoundingClientRect();
+            return Boolean(rect) && event.clientY > rect.top + rect.height / 2;
+        }
+
+        function clearDropMarker() {
+            if (!dropRow) {
+                return;
+            }
+            dropRow.classList.remove('is-drop-before');
+            dropRow.classList.remove('is-drop-after');
+            dropRow = null;
+        }
+
+        function markDrop(row, after) {
+            if (dropRow !== row) {
+                clearDropMarker();
+                dropRow = row;
+            }
+            row.classList.toggle('is-drop-before', !after);
+            row.classList.toggle('is-drop-after', after);
+        }
+
+        function stopAutoScroll() {
+            scrollVelocity = 0;
+            if (scrollFrame && typeof cancelAnimationFrame === 'function') {
+                cancelAnimationFrame(scrollFrame);
+            }
+            scrollFrame = null;
+        }
+
+        function scrollTick() {
+            scrollFrame = null;
+            if (!scrollVelocity) {
+                return;
+            }
+            const current = Number(scrollBody && scrollBody.scrollTop) || 0;
+            if (scrollBody) {
+                scrollBody.scrollTop = Math.max(0, current + scrollVelocity);
+            }
+            scrollFrame = requestAnimationFrame(scrollTick);
+        }
+
+        function updateAutoScroll(event) {
+            if (!scrollBody || typeof scrollBody.getBoundingClientRect !== 'function' || !event || typeof event.clientY !== 'number') {
+                stopAutoScroll();
+                return;
+            }
+            const rect = scrollBody.getBoundingClientRect();
+            if (!rect) {
+                stopAutoScroll();
+                return;
+            }
+            const threshold = 56;
+            const maxSpeed = 14;
+            let velocity = 0;
+            if (event.clientY < rect.top + threshold) {
+                velocity = -maxSpeed * (1 - Math.max(0, event.clientY - rect.top) / threshold);
+            } else if (event.clientY > rect.bottom - threshold) {
+                velocity = maxSpeed * (1 - Math.max(0, rect.bottom - event.clientY) / threshold);
+            }
+            scrollVelocity = Math.round(velocity);
+            if (!scrollVelocity) {
+                stopAutoScroll();
+                return;
+            }
+            if (typeof requestAnimationFrame !== 'function') {
+                const current = Number(scrollBody.scrollTop) || 0;
+                scrollBody.scrollTop = Math.max(0, current + scrollVelocity);
+                return;
+            }
+            if (!scrollFrame) {
+                scrollFrame = requestAnimationFrame(scrollTick);
+            }
+        }
+
+        function move(index, delta) {
+            reorderTo(index, index + delta);
+        }
+
+        function buildRow(option) {
+            const row = Dom.el('div', 'cm-reorder-item');
+            row.cmNoteId = option.noteId;
+            row.draggable = true;
+            row.setAttribute('draggable', 'true');
+            const handle = Dom.el('span', 'cm-reorder-handle', '⠿');
+            handle.setAttribute('aria-hidden', 'true');
+            row.appendChild(handle);
+            row.cmPosNode = Dom.el('span', 'cm-reorder-pos', '');
+            row.appendChild(row.cmPosNode);
+            const info = Dom.el('div', 'cm-reorder-info');
+            info.appendChild(Dom.el('span', 'cm-opt-title', option.title));
+            if (option.flag) {
+                info.appendChild(Dom.el('code', 'cm-opt-flag', option.flag));
+            }
+            row.appendChild(info);
+
+            const buttons = Dom.el('div', 'cm-reorder-buttons');
+            row.cmUpButton = button('↑', function () {
+                move(indexOfRow(row), -1);
+            }, 'cm-reorder-move');
+            row.cmUpButton.setAttribute('aria-label', I18n.t('reorder.moveUpLabel', { title: option.title }));
+            buttons.appendChild(row.cmUpButton);
+            row.cmDownButton = button('↓', function () {
+                move(indexOfRow(row), 1);
+            }, 'cm-reorder-move');
+            row.cmDownButton.setAttribute('aria-label', I18n.t('reorder.moveDownLabel', { title: option.title }));
+            buttons.appendChild(row.cmDownButton);
+            row.appendChild(buttons);
+
+            row.addEventListener('dragstart', function (event) {
+                dragIndex = indexOfRow(row);
+                row.classList.add('is-dragging');
+                if (event && event.dataTransfer) {
+                    event.dataTransfer.effectAllowed = 'move';
+                    if (typeof event.dataTransfer.setData === 'function') {
+                        event.dataTransfer.setData('text/plain', String(dragIndex));
+                    }
+                }
+            });
+            row.addEventListener('dragover', function (event) {
+                if (dragIndex === null) {
+                    return;
+                }
+                if (event && typeof event.preventDefault === 'function') {
+                    event.preventDefault();
+                }
+                if (event && event.dataTransfer) {
+                    event.dataTransfer.dropEffect = 'move';
+                }
+                updateAutoScroll(event);
+                markDrop(row, dropAfter(row, event));
+            });
+            row.addEventListener('drop', function (event) {
+                if (dragIndex === null) {
+                    return;
+                }
+                if (event && typeof event.preventDefault === 'function') {
+                    event.preventDefault();
+                }
+                const from = dragIndex;
+                dragIndex = null;
+                stopAutoScroll();
+                clearDropMarker();
+                const after = dropAfter(row, event);
+                let target = indexOfRow(row) + (after ? 1 : 0);
+                if (from < target) {
+                    target -= 1;
+                }
+                target = Math.max(0, Math.min(items.length - 1, target));
+                reorderTo(from, target);
+            });
+            row.addEventListener('dragend', function () {
+                dragIndex = null;
+                stopAutoScroll();
+                clearDropMarker();
+                Array.prototype.forEach.call(listNode.children, function (node) {
+                    if (node.classList) {
+                        node.classList.remove('is-dragging');
+                    }
+                });
+            });
+
+            return row;
+        }
+
+        function renderItems() {
+            listNode.textContent = '';
+            stripNode.textContent = '';
+            items.forEach(function (option) {
+                listNode.appendChild(buildRow(option));
+                stripNode.appendChild(buildChip(option));
+            });
+            updateRowStates();
+        }
+
+        renderItems();
+
+        const save = Dom.el('button', 'cm-button', I18n.t('ui.save'));
+        save.type = 'button';
+        save.addEventListener('click', guarded(async function () {
+            save.disabled = true;
+            try {
+                await controller.reorderOptions(Model.orderPlan(items));
+            } catch (error) {
+                save.disabled = false;
+                throw error;
+            }
+            closeModal();
+            await controller.refresh();
+            await runSearch();
+            await selectItem(tool, { preserveValues: true });
+            setStatus(I18n.t('status.optionsReordered'));
+        }, notify));
+
+        const actionsNode = Dom.el('div', 'cm-inline');
+        actionsNode.appendChild(save);
+        actionsNode.appendChild(modalCloseButton());
+
+        const shell = modalShell(I18n.t('reorder.title', { title: tool.title }), bodyNode, actionsNode);
+        scrollBody = shell.body;
+    }
+
+    function openOptionModal(existing) {
         if (!state.current) {
             notify(new Error(I18n.t('status.selectToolFirst')));
             return;
         }
         const tool = state.current;
+        const editing = Boolean(existing && existing.noteId);
 
         function field(labelText, control) {
             const wrapper = Dom.el('label', 'cm-field');
@@ -6501,6 +7397,48 @@ function openPalette(controller, options) {
             entry.textContent = I18n.t('type.' + type);
             typeSelect.appendChild(entry);
         });
+        typeSelect.setAttribute('aria-label', I18n.t('addOption.fieldType'));
+
+        const modeSelect = document.createElement('select');
+        [
+            { value: 'flag', label: 'addOption.modeFlag' },
+            { value: 'inline', label: 'addOption.modeInline' }
+        ].forEach(function (mode) {
+            const entry = document.createElement('option');
+            entry.value = mode.value;
+            entry.textContent = I18n.t(mode.label);
+            modeSelect.appendChild(entry);
+        });
+        modeSelect.setAttribute('aria-label', I18n.t('addOption.fieldMode'));
+
+        const placeholderInput = document.createElement('input');
+        placeholderInput.type = 'text';
+        placeholderInput.placeholder = I18n.t('addOption.placeholderPlaceholder');
+
+        const quoteSelect = document.createElement('select');
+        [
+            { value: 'none', label: 'addOption.quoteNone' },
+            { value: 'single', label: 'addOption.quoteSingle' },
+            { value: 'double', label: 'addOption.quoteDouble' }
+        ].forEach(function (quote) {
+            const entry = document.createElement('option');
+            entry.value = quote.value;
+            entry.textContent = I18n.t(quote.label);
+            quoteSelect.appendChild(entry);
+        });
+        quoteSelect.setAttribute('aria-label', I18n.t('addOption.fieldQuote'));
+
+        const sepSelect = document.createElement('select');
+        [
+            { value: ' ', label: 'addOption.sepSpace' },
+            { value: '=', label: 'addOption.sepEquals' }
+        ].forEach(function (separator) {
+            const entry = document.createElement('option');
+            entry.value = separator.value;
+            entry.textContent = I18n.t(separator.label);
+            sepSelect.appendChild(entry);
+        });
+        sepSelect.setAttribute('aria-label', I18n.t('addOption.fieldSeparator'));
 
         const defaultInput = document.createElement('input');
         defaultInput.type = 'text';
@@ -6521,9 +7459,26 @@ function openPalette(controller, options) {
         requiredRow.appendChild(Dom.el('span', 'cm-base-label', I18n.t('ui.required')));
         requiredRow.appendChild(requiredInput);
 
-        const add = Dom.el('button', 'cm-button', I18n.t('ui.add'));
-        add.type = 'button';
-        add.addEventListener('click', guarded(async function () {
+        if (editing) {
+            labelInput.value = existing.title;
+            flagInput.value = existing.flag || '';
+            helpInput.value = existing.help || '';
+            typeSelect.value = existing.type;
+            modeSelect.value = existing.mode === 'inline' ? 'inline' : 'flag';
+            placeholderInput.value = existing.placeholder || '';
+            defaultInput.value = existing.defaultValue === undefined || existing.defaultValue === null
+                ? ''
+                : String(existing.defaultValue);
+            valuesInput.value = (existing.enumValues || []).join(', ');
+            quoteSelect.value = existing.quote || 'none';
+            sepSelect.value = existing.sep === '=' ? '=' : ' ';
+            orderInput.value = typeof existing.order === 'number' ? String(existing.order) : '100';
+            requiredInput.checked = Boolean(existing.required);
+        }
+
+        const save = Dom.el('button', 'cm-button', I18n.t(editing ? 'ui.save' : 'ui.add'));
+        save.type = 'button';
+        save.addEventListener('click', guarded(async function () {
             const label = labelInput.value.trim();
             if (!label) {
                 throw new Error(I18n.t('status.optionLabelRequired'));
@@ -6535,8 +7490,9 @@ function openPalette(controller, options) {
                 .filter(function (entry) {
                     return entry !== '';
                 });
-            const order = Number(orderInput.value);
-            await controller.addOption(tool.noteId, {
+            const orderText = String(orderInput.value == null ? '' : orderInput.value).trim();
+            const order = orderText === '' ? 100 : Number(orderText);
+            const spec = {
                 label: label,
                 flag: flagInput.value.trim(),
                 help: helpInput.value.trim(),
@@ -6544,34 +7500,52 @@ function openPalette(controller, options) {
                 values: values,
                 defaultValue: defaultInput.value,
                 required: Boolean(requiredInput.checked),
+                mode: modeSelect.value === 'inline' ? 'inline' : 'flag',
+                placeholder: placeholderInput.value.trim(),
+                quote: Model.QUOTES.indexOf(quoteSelect.value) === -1 ? 'none' : quoteSelect.value,
+                separator: sepSelect.value === '=' ? '=' : ' ',
                 order: isFinite(order) ? order : 100
-            });
+            };
+            if (editing) {
+                await controller.updateOption(existing.noteId, spec);
+            } else {
+                await controller.addOption(tool.noteId, spec);
+            }
             closeModal();
-            await controller.refresh();
+            // An edit patches the runtime cache from the backend's saved
+            // snapshot, so a refresh would overwrite it with the stale
+            // frontend entity and hide the change until the next reload.
+            if (!editing) {
+                await controller.refresh();
+            }
             await runSearch();
             await selectItem(tool, { preserveValues: true });
-            setStatus(I18n.t('status.optionAdded'));
+            setStatus(I18n.t(editing ? 'status.optionUpdated' : 'status.optionAdded'));
         }, notify));
 
         const closeButton2 = modalCloseButton();
 
         const bodyNode = Dom.el('div', '');
-        bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('addOption.note')));
+        bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t(editing ? 'editOption.note' : 'addOption.note')));
         bodyNode.appendChild(field(I18n.t('addOption.fieldLabel'), labelInput));
         bodyNode.appendChild(field(I18n.t('addOption.fieldFlag'), flagInput));
         bodyNode.appendChild(field(I18n.t('addOption.fieldHelp'), helpInput));
         bodyNode.appendChild(field(I18n.t('addOption.fieldType'), typeSelect));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldMode'), modeSelect));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldPlaceholder'), placeholderInput));
         bodyNode.appendChild(field(I18n.t('addOption.fieldDefault'), defaultInput));
         bodyNode.appendChild(field(I18n.t('addOption.fieldValues'), valuesInput));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldQuote'), quoteSelect));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldSeparator'), sepSelect));
         bodyNode.appendChild(field(I18n.t('addOption.fieldOrder'), orderInput));
         bodyNode.appendChild(requiredRow);
         bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('addOption.requiredNote')));
 
         const actionsNode = Dom.el('div', 'cm-inline');
-        actionsNode.appendChild(add);
+        actionsNode.appendChild(save);
         actionsNode.appendChild(closeButton2);
 
-        modalShell(I18n.t('addOption.title', { title: tool.title }), bodyNode, actionsNode);
+        modalShell(I18n.t(editing ? 'editOption.title' : 'addOption.title', { title: editing ? existing.title : tool.title }), bodyNode, actionsNode);
         labelInput.focus();
     }
 
@@ -6661,11 +7635,18 @@ function openPalette(controller, options) {
         event.preventDefault();
         toggleMenu();
     });
+    updateApply.addEventListener('click', guarded(installUpdate, notify));
+    updateDismiss.addEventListener('click', function () {
+        dismissedUpdate = shownUpdate;
+        hideUpdateBar();
+    });
     newToolButton.addEventListener('click', toggleNewTool);
     importToolButton.addEventListener('click', openImportTool);
     exportToolButton.addEventListener('click', guarded(openExportTool, notify));
     importButton.addEventListener('click', openImport);
-    addOptionButton.addEventListener('click', openAddOption);
+    addOptionButton.addEventListener('click', function () {
+        openOptionModal();
+    });
     toolsButton.addEventListener('click', openToolsFolder);
     if (embedded) {
         shell.addEventListener('keydown', onKeyDown);
@@ -6699,6 +7680,8 @@ function openPalette(controller, options) {
         await controller.refresh();
         await runSearch();
     }, notify)();
+
+    checkUpdatesIfDue();
 
     return handle;
 }
@@ -6740,6 +7723,10 @@ let entriesById = new Map();
 let bootstrapPromise = null;
 let bootstrapApi = null;
 let bootstrapInfo = null;
+
+// Overlay width, as a percentage of the window. Resolved from the settings
+// note before the first mount and updated by the palette's width slider.
+let panelWidth = Model.PANEL_WIDTH_DEFAULT;
 
 function getApi() {
     return typeof api !== 'undefined' ? api : null;
@@ -6851,6 +7838,30 @@ async function resolveLocale() {
     return I18n.setLocale(I18n.normalizeLocale(configured) || I18n.detectLocale(navigatorLanguages()));
 }
 
+/**
+ * The `cmPanelWidth` label on the settings note sets the overlay width as a
+ * percentage. Missing or unreadable values fall back to the default.
+ */
+async function resolvePanelWidth() {
+    let configured = '';
+    const apiRef = getApi();
+    if (apiRef) {
+        try {
+            const root = await apiRef.searchForNote('#' + Model.LABELS.root);
+            if (root) {
+                const value = root.getLabelValue(Model.LABELS.panelWidth);
+                configured = value === null || value === undefined ? '' : String(value);
+            }
+        } catch (error) {
+            configured = '';
+        }
+    }
+    panelWidth = configured.trim() === ''
+        ? Model.PANEL_WIDTH_DEFAULT
+        : Model.normalizePanelWidth(configured);
+    return panelWidth;
+}
+
 function ensureBootstrap() {
     const apiRef = getApi();
     if (bootstrapPromise && bootstrapApi === apiRef) {
@@ -6867,6 +7878,7 @@ function ensureBootstrap() {
             icons: Model.ICONS,
             version: Version.VERSION,
             lang: locale,
+            panelWidth: panelWidth,
             strings: I18n.backendStrings(),
             seed: true,
             seedTools: Model.seedTools(),
@@ -6993,6 +8005,7 @@ async function refresh() {
             categoryLabel: categoryLabel,
             labels: labels,
             note: note,
+            whatIs: whatIs,
             optionSnapshots: optionSnapshots
         };
 
@@ -7028,6 +8041,45 @@ async function refresh() {
 function search(query) {
     return index.filter(function (item) {
         return Model.matchesText(item.searchable, query);
+    });
+}
+
+/**
+ * Apply an option snapshot returned by the backend to the cached entry, so the
+ * detail pane reflects a saved edit immediately instead of waiting for the
+ * frontend entity cache to receive the backend change (or an F5 reload).
+ */
+function patchOptionSnapshot(noteId, saved) {
+    if (!saved || saved.noteId !== noteId) {
+        return;
+    }
+    entriesById.forEach(function (entry, entryId) {
+        const snapshots = entry.optionSnapshots || [];
+        let touched = false;
+        for (let snapshotIndex = 0; snapshotIndex < snapshots.length; snapshotIndex += 1) {
+            if (snapshots[snapshotIndex].noteId === noteId) {
+                snapshots[snapshotIndex].title = saved.title;
+                snapshots[snapshotIndex].labels = saved.labels || {};
+                touched = true;
+            }
+        }
+        if (!touched) {
+            return;
+        }
+        const item = index.find(function (candidate) {
+            return candidate.noteId === entryId;
+        });
+        if (item) {
+            item.searchable = Model.searchableText({
+                title: entry.title,
+                category: entry.categoryLabel,
+                description: entry.labels[Model.LABELS.description] || '',
+                tags: entry.labels[Model.LABELS.tags],
+                base: entry.labels[Model.LABELS.base] || Model.deriveBase(entry.title),
+                whatIs: entry.whatIs,
+                optionText: Model.optionNotesText(snapshots)
+            });
+        }
     });
 }
 
@@ -7286,6 +8338,33 @@ function compareVersions(left, right) {
 }
 
 /**
+ * One HTTP read with a bounded wait. `fetch` is absent on some Trilium builds,
+ * and the callers turn that into a readable status instead of an exception.
+ */
+async function readUrl(url, kind) {
+    const options = { headers: { Accept: kind === 'json' ? 'application/json' : 'text/plain' } };
+    let timer = null;
+    if (typeof AbortController === 'function') {
+        const controller = new AbortController();
+        options.signal = controller.signal;
+        timer = setTimeout(function () {
+            controller.abort();
+        }, 10000);
+    }
+    try {
+        const response = await fetch(url, options);
+        if (!response || !response.ok) {
+            throw new Error('HTTP ' + (response ? response.status : 'unknown'));
+        }
+        return kind === 'json' ? response.json() : response.text();
+    } finally {
+        if (timer) {
+            clearTimeout(timer);
+        }
+    }
+}
+
+/**
  * Best-effort update check: the latest GitHub release, else the highest tag,
  * else the package.json version on the default branch. A private or unreachable
  * repository becomes a readable error.
@@ -7297,31 +8376,8 @@ async function checkLatestVersion() {
         return result;
     }
 
-    async function read(url, kind) {
-        const options = { headers: { Accept: kind === 'json' ? 'application/json' : 'text/plain' } };
-        let timer = null;
-        if (typeof AbortController === 'function') {
-            const controller = new AbortController();
-            options.signal = controller.signal;
-            timer = setTimeout(function () {
-                controller.abort();
-            }, 10000);
-        }
-        try {
-            const response = await fetch(url, options);
-            if (!response || !response.ok) {
-                throw new Error('HTTP ' + (response ? response.status : 'unknown'));
-            }
-            return kind === 'json' ? response.json() : response.text();
-        } finally {
-            if (timer) {
-                clearTimeout(timer);
-            }
-        }
-    }
-
     try {
-        const release = await read(Version.LATEST_RELEASE_API, 'json');
+        const release = await readUrl(Version.LATEST_RELEASE_API, 'json');
         const tag = release && (release.tag_name || release.name);
         if (tag) {
             result.latest = String(tag).replace(/^v/i, '');
@@ -7333,7 +8389,7 @@ async function checkLatestVersion() {
     }
 
     try {
-        const tags = await read(Version.LATEST_TAGS_API, 'json');
+        const tags = await readUrl(Version.LATEST_TAGS_API, 'json');
         if (Array.isArray(tags) && tags.length) {
             const names = tags
                 .map(function (tag) {
@@ -7354,7 +8410,7 @@ async function checkLatestVersion() {
     }
 
     try {
-        const text = String(await read(Version.LATEST_RAW, 'text') || '');
+        const text = String(await readUrl(Version.LATEST_RAW, 'text') || '');
         const match = /"version"\s*:\s*"([^"]+)"/.exec(text);
         if (match) {
             result.latest = match[1];
@@ -7368,6 +8424,231 @@ async function checkLatestVersion() {
         });
     }
     return result;
+}
+
+// --- automatic update check ------------------------------------------------
+// The palette opens from the launcher, so that is when Trilium can look for
+// updates without a background timer. The attempt and its result are remembered
+// for a day (localStorage when the webview allows it), so a page reload keeps
+// the banner without a second request, and the manual menu entry always
+// bypasses the throttle.
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const UPDATE_CHECKED_KEY = 'cmUpdateCheckedAt';
+const MAX_BUNDLE_CHARS = 4 * 1024 * 1024;
+const BUNDLE_MARKER = 'Command Maker - generated by tools/build.mjs';
+
+let updateInfo = null;
+let updateCheckedAt = 0;
+let storedUpdate;
+let updateCheckPromise = null;
+
+/** Last stored check, or null when missing, unreadable or from another build. */
+function readStoredUpdate() {
+    try {
+        if (typeof localStorage === 'undefined' || !localStorage) {
+            return null;
+        }
+        const raw = localStorage.getItem(UPDATE_CHECKED_KEY);
+        if (!raw) {
+            return null;
+        }
+        const parsed = JSON.parse(raw);
+        const at = Number(parsed && parsed.at);
+        if (!isFinite(at) || at <= 0) {
+            return null;
+        }
+        return {
+            at: at,
+            info: {
+                current: String(parsed.current == null ? '' : parsed.current),
+                latest: String(parsed.latest == null ? '' : parsed.latest),
+                outdated: Boolean(parsed.outdated),
+                error: String(parsed.error == null ? '' : parsed.error)
+            }
+        };
+    } catch (error) {
+        return null;
+    }
+}
+
+function rememberUpdateCheck(info) {
+    updateInfo = info;
+    updateCheckedAt = Date.now();
+    try {
+        if (typeof localStorage !== 'undefined' && localStorage) {
+            localStorage.setItem(UPDATE_CHECKED_KEY, JSON.stringify({
+                at: updateCheckedAt,
+                current: info.current,
+                latest: info.latest,
+                outdated: info.outdated,
+                error: info.error || ''
+            }));
+        }
+    } catch (error) {
+        // A private window may refuse storage; the in-memory cache still holds.
+    }
+}
+
+/** The manual check always looks again and refreshes the cached status. */
+async function checkLatestVersionNow() {
+    const info = await checkLatestVersion();
+    rememberUpdateCheck(info);
+    return info;
+}
+
+/** The stored result while it is under a day old and belongs to this build. */
+function cachedUpdate() {
+    let at = updateCheckedAt;
+    let info = updateInfo;
+    if (!info) {
+        if (storedUpdate === undefined) {
+            storedUpdate = readStoredUpdate();
+        }
+        if (!storedUpdate || storedUpdate.info.current !== Version.VERSION) {
+            return null;
+        }
+        at = storedUpdate.at;
+        info = storedUpdate.info;
+        updateInfo = info;
+        updateCheckedAt = at;
+    }
+    if (info.current !== Version.VERSION) {
+        return null;
+    }
+    if (!at || (Date.now() - at) >= UPDATE_CHECK_INTERVAL_MS) {
+        return null;
+    }
+    return info;
+}
+
+/**
+ * Run the network check only when the last result is a day old. Startup and
+ * every palette open call this; the first caller performs the request and the
+ * others share the same promise.
+ */
+function checkUpdatesIfDue() {
+    if (updateCheckPromise) {
+        return updateCheckPromise;
+    }
+    const cached = cachedUpdate();
+    if (cached) {
+        return Promise.resolve(cached);
+    }
+    updateCheckPromise = checkLatestVersionNow().then(function (info) {
+        updateCheckPromise = null;
+        return info;
+    }, function (error) {
+        updateCheckPromise = null;
+        throw error;
+    });
+    return updateCheckPromise;
+}
+
+function bundleVersion(text) {
+    const match = /const VERSION = '([^']+)';/.exec(String(text || ''));
+    return match ? match[1] : '';
+}
+
+/**
+ * Download the bundle published for `version` and refuse anything that is not
+ * that exact build: the file is about to replace the running plugin note, so a
+ * stale, truncated or unrelated response must never be written.
+ */
+async function downloadBundle(version) {
+    if (typeof fetch !== 'function') {
+        throw new Error(I18n.t('error.updateCheckUnavailable'));
+    }
+    const tagUrl = Version.bundleUrl(version);
+    let text = '';
+    try {
+        text = String(await readUrl(tagUrl, 'text') || '');
+    } catch (error) {
+        // The fallback only exists for a version announced through package.json
+        // on the default branch, where no tag exists yet. The version marker is
+        // still checked, so a newer branch can never slip in unannounced.
+        if (tagUrl === Version.BUNDLE_MAIN) {
+            throw error;
+        }
+        text = String(await readUrl(Version.BUNDLE_MAIN, 'text') || '');
+    }
+    if (text === '') {
+        throw new Error(I18n.t('error.updateNotABundle'));
+    }
+    if (text.length > MAX_BUNDLE_CHARS) {
+        throw new Error(I18n.t('error.updateBundleTooLarge'));
+    }
+    if (text.indexOf(BUNDLE_MARKER) === -1 || text.indexOf('function __def(') === -1) {
+        throw new Error(I18n.t('error.updateNotABundle'));
+    }
+    const found = bundleVersion(text);
+    if (compareVersions(found, version) !== 0) {
+        throw new Error(I18n.t('error.updateBundleMismatch', {
+            expected: String(version).replace(/^v/i, ''),
+            found: found || '?'
+        }));
+    }
+    return text;
+}
+
+function canReloadPage() {
+    try {
+        if (typeof window !== 'undefined' && window && window.location && typeof window.location.reload === 'function') {
+            return true;
+        }
+    } catch (error) {
+        // fall through to the Trilium api
+    }
+    try {
+        const apiRef = getApi();
+        return Boolean(apiRef && typeof apiRef.reload === 'function');
+    } catch (error) {
+        return false;
+    }
+}
+
+function reloadPage() {
+    try {
+        if (typeof window !== 'undefined' && window && window.location && typeof window.location.reload === 'function') {
+            window.location.reload();
+            return true;
+        }
+    } catch (error) {
+        // fall through to the Trilium api
+    }
+    try {
+        const apiRef = getApi();
+        if (apiRef && typeof apiRef.reload === 'function') {
+            apiRef.reload();
+            return true;
+        }
+    } catch (error) {
+        // the caller tells the user to reload by hand
+    }
+    return false;
+}
+
+/**
+ * Install the update the last check found: fetch the matching bundle, write it
+ * into the plugin note through the backend and refresh the page so the new
+ * script runs. Nothing here runs unless the user presses the update button.
+ */
+async function installUpdate() {
+    const info = updateInfo;
+    if (!info || !info.outdated || !info.latest) {
+        throw new Error(I18n.t('error.noUpdateAvailable'));
+    }
+    const bundle = await downloadBundle(info.latest);
+    const installed = await backendAction('applyBundle', {
+        bundle: bundle,
+        version: info.latest
+    });
+    const version = installed && installed.version ? installed.version : info.latest;
+    rememberUpdateCheck({ current: version, latest: version, outdated: false, error: '' });
+    const reloading = canReloadPage();
+    if (reloading) {
+        setTimeout(reloadPage, 1500);
+    }
+    return { noteId: installed ? installed.noteId : '', version: version, reloading: reloading };
 }
 
 /**
@@ -7433,7 +8714,11 @@ function controller() {
         repository() {
             return Version.REPOSITORY;
         },
-        checkLatestVersion: checkLatestVersion,
+        checkLatestVersion: checkLatestVersionNow,
+        /** Run the throttled daily check; resolves to the cached status. */
+        checkUpdatesIfDue: checkUpdatesIfDue,
+        /** Download and write the bundle the last check found. */
+        installUpdate: installUpdate,
 
         /** Surface a message in the Trilium UI; the footer keeps its own copy. */
         message(text) {
@@ -7504,6 +8789,16 @@ function controller() {
             return backendAction('addOption', { toolId: toolId, option: option });
         },
 
+        async updateOption(noteId, option) {
+            const saved = await backendAction('updateOption', { noteId: noteId, option: option });
+            patchOptionSnapshot(noteId, saved);
+            return saved;
+        },
+
+        reorderOptions(order) {
+            return backendAction('reorderOptions', { order: order || [] });
+        },
+
         exportTool(noteId) {
             return exportTool(noteId);
         },
@@ -7571,6 +8866,28 @@ function controller() {
             return I18n.getLocale();
         },
 
+        /** Active overlay width percentage; the palette applies it on mount. */
+        panelWidth() {
+            return panelWidth;
+        },
+
+        /**
+         * Persist the overlay width on the settings note and remember it, so a
+         * remount (language switch) keeps the chosen percentage.
+         */
+        async setPanelWidth(percent) {
+            const value = Model.normalizePanelWidth(percent);
+            const info = await ensureBootstrap();
+            await backendAction('setPanelWidth', {
+                rootId: info.rootId,
+                width: value,
+                min: Model.PANEL_WIDTH_MIN,
+                max: Model.PANEL_WIDTH_MAX
+            });
+            panelWidth = value;
+            return value;
+        },
+
         async useActiveNoteAsToolsRoot() {
             const apiRef = getApi();
             const active = apiRef.getActiveContextNote();
@@ -7627,12 +8944,18 @@ function start() {
         }
     }
 
-    // The locale comes from a note label, so it is resolved before the first
-    // mount: every label the palette builds is already in the right language.
-    // A failed lookup still opens the palette with the detected language.
-    resolveLocale().catch(function () {
-        return I18n.getLocale();
-    }).then(mount);
+    // The locale and the panel width come from note labels, so both are resolved
+    // before the first mount: every label the palette builds is already in the
+    // right language and the overlay opens at the saved width. A failed lookup
+    // still opens the palette with the detected language and default width.
+    Promise.all([
+        resolveLocale().catch(function () {
+            return I18n.getLocale();
+        }),
+        resolvePanelWidth().catch(function () {
+            return panelWidth;
+        })
+    ]).then(mount);
 }
 
 module.exports = { start, controller, refresh, search, load };

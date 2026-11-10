@@ -21,6 +21,7 @@
  *   savePreset(toolId, name, values): Promise<void>
  *   deletePreset(toolId, name): Promise<void>
  *   addOption(toolId, option): Promise<void>
+ *   updateOption(noteId, option): Promise<void>
  *   setToolBase(toolId, base): Promise<void>
  *   currentToolsRoot(): Promise<{ noteId, title } | null>
  *   setToolsRoot(noteId): Promise<void>
@@ -31,6 +32,8 @@
  *   version(): string
  *   repository(): string
  *   checkLatestVersion(): Promise<{ current, latest, outdated, error }>
+ *   checkUpdatesIfDue(): Promise<{ current, latest, outdated, error }>
+ *   installUpdate(): Promise<{ noteId, version, reloading }>
  *
  * This module never touches the Trilium `api` global: everything goes through
  * the controller, which keeps the DOM code testable with a plain DOM.
@@ -154,6 +157,7 @@ function openPalette(controller, options) {
         values: {},
         edited: false,
         exampleLoaded: false,
+        editMode: false,
         optionRows: [],
         optionGroups: [],
         previewEl: null,
@@ -170,6 +174,22 @@ function openPalette(controller, options) {
     const overlay = embedded ? null : Dom.el('div', 'cm-overlay');
     const shell = embedded ? Dom.el('div', 'cm-tab-view') : overlay;
     const panel = Dom.el('div', 'cm-panel');
+
+    /** Overlay width percentage the settings note currently holds. */
+    function currentPanelWidth() {
+        const value = typeof controller.panelWidth === 'function' ? controller.panelWidth() : undefined;
+        return Model.normalizePanelWidth(value);
+    }
+
+    /** Apply the percentage to the floating panel; a tab view stays full width. */
+    function applyPanelWidth(percent) {
+        if (embedded) {
+            return;
+        }
+        panel.style.width = Model.normalizePanelWidth(percent) + '%';
+    }
+
+    applyPanelWidth(currentPanelWidth());
 
     const head = Dom.el('div', 'cm-head');
     const searchInput = document.createElement('input');
@@ -246,7 +266,24 @@ function openPalette(controller, options) {
 
     const modalHost = Dom.el('div', 'cm-modal-host');
 
+    // Update banner: the daily check fills it when a newer release exists, and
+    // its button downloads that release and rewrites the plugin note.
+    const updateBar = Dom.el('div', 'cm-update');
+    updateBar.setAttribute('role', 'status');
+    updateBar.style.display = 'none';
+    const updateText = Dom.el('span', 'cm-update-text', '');
+    const updateApply = Dom.el('button', 'cm-button cm-update-apply', I18n.t('update.install'));
+    updateApply.type = 'button';
+    const updateDismiss = Dom.el('button', 'cm-update-dismiss', '✕');
+    updateDismiss.type = 'button';
+    updateDismiss.title = I18n.t('update.dismiss');
+    updateDismiss.setAttribute('aria-label', I18n.t('update.dismiss'));
+    updateBar.appendChild(updateText);
+    updateBar.appendChild(updateApply);
+    updateBar.appendChild(updateDismiss);
+
     panel.appendChild(head);
+    panel.appendChild(updateBar);
     panel.appendChild(body);
     panel.appendChild(footer);
     if (embedded) {
@@ -300,6 +337,69 @@ function openPalette(controller, options) {
         const menu = Dom.el('div', 'cm-menu');
         menu.setAttribute('role', 'menu');
         menu.setAttribute('aria-label', I18n.t('ui.versionMenu'));
+
+        if (!embedded) {
+            menu.appendChild(Dom.el('div', 'cm-menu-title', I18n.t('ui.panelWidth')));
+            const widthRow = Dom.el('div', 'cm-menu-row');
+            const widthInput = document.createElement('input');
+            widthInput.type = 'range';
+            widthInput.className = 'cm-width-range';
+            widthInput.min = String(Model.PANEL_WIDTH_MIN);
+            widthInput.max = String(Model.PANEL_WIDTH_MAX);
+            widthInput.step = '5';
+            widthInput.value = String(currentPanelWidth());
+            widthInput.setAttribute('aria-label', I18n.t('ui.panelWidth'));
+            const widthValue = Dom.el('span', 'cm-width-value', widthInput.value + '%');
+            const applyButton = Dom.el('button', 'cm-width-apply', I18n.t('ui.apply'));
+            applyButton.type = 'button';
+            const canSave = typeof controller.setPanelWidth === 'function';
+            // The panel is resized only on Apply: changing it while the pointer
+            // is on the slider moves the whole menu out from under the drag.
+            function pendingWidth() {
+                return Model.normalizePanelWidth(widthInput.value);
+            }
+            function syncApplyState() {
+                applyButton.disabled = !canSave || pendingWidth() === currentPanelWidth();
+            }
+            widthInput.addEventListener('input', function () {
+                const percent = pendingWidth();
+                widthInput.value = String(percent);
+                widthValue.textContent = percent + '%';
+                syncApplyState();
+            });
+            applyButton.addEventListener('click', function (event) {
+                event.preventDefault();
+                if (applyButton.disabled || !canSave) {
+                    return;
+                }
+                const percent = pendingWidth();
+                applyButton.disabled = true;
+                (async function () {
+                    try {
+                        await controller.setPanelWidth(percent);
+                    } catch (error) {
+                        // A failed write must not leave the slider promising a
+                        // width the settings note never stored.
+                        const saved = currentPanelWidth();
+                        widthInput.value = String(saved);
+                        widthValue.textContent = saved + '%';
+                        syncApplyState();
+                        notify(error);
+                        return;
+                    }
+                    applyPanelWidth(percent);
+                    widthInput.value = String(percent);
+                    widthValue.textContent = percent + '%';
+                    syncApplyState();
+                })();
+            });
+            widthRow.appendChild(widthInput);
+            widthRow.appendChild(widthValue);
+            widthRow.appendChild(applyButton);
+            menu.appendChild(widthRow);
+            syncApplyState();
+            menu.appendChild(Dom.el('div', 'cm-menu-sep'));
+        }
 
         const updates = Dom.el('button', 'cm-menu-item', I18n.t('ui.checkUpdates'));
         updates.type = 'button';
@@ -377,6 +477,65 @@ function openPalette(controller, options) {
         setStatus(error && error.message ? error.message : String(error), true);
     }
 
+    // Version the user hid, and the one the bar currently offers, so a dismiss
+    // and a later check never resurrect the banner for the same release.
+    let dismissedUpdate = '';
+    let shownUpdate = '';
+
+    function hideUpdateBar() {
+        updateBar.style.display = 'none';
+    }
+
+    /** Fill the banner for an outdated status; hide it for anything else. */
+    function showUpdateBar(info) {
+        const outdated = Boolean(info && info.outdated && info.latest && !info.error);
+        if (!outdated || info.latest === dismissedUpdate) {
+            hideUpdateBar();
+            return;
+        }
+        shownUpdate = info.latest;
+        updateText.textContent = I18n.t('update.available', {
+            current: info.current,
+            latest: info.latest
+        });
+        updateApply.textContent = I18n.t('update.install');
+        versionLabel.textContent = 'v' + info.current + ' → v' + info.latest;
+        versionButton.title = I18n.t('status.installedLatest', {
+            current: info.current,
+            latest: info.latest
+        });
+        updateBar.style.display = '';
+    }
+
+    /**
+     * The daily check stays silent on failure: it only ever raises the banner
+     * for a published update, and the manual menu entry reports the errors.
+     */
+    function checkUpdatesIfDue() {
+        if (typeof controller.checkUpdatesIfDue !== 'function') {
+            return;
+        }
+        Promise.resolve(controller.checkUpdatesIfDue()).then(showUpdateBar, function () {
+            // Invisible on purpose; the menu can retry on demand.
+        });
+    }
+
+    async function installUpdate() {
+        updateApply.textContent = I18n.t('update.installing');
+        let installed;
+        try {
+            installed = await controller.installUpdate();
+        } catch (error) {
+            updateApply.textContent = I18n.t('update.install');
+            throw error;
+        }
+        dismissedUpdate = '';
+        hideUpdateBar();
+        versionLabel.textContent = 'v' + installed.version;
+        versionButton.title = I18n.t('status.latest', { version: installed.version });
+        setStatus(I18n.t('update.done', { version: installed.version }));
+    }
+
     async function checkForUpdates() {
         if (typeof controller.checkLatestVersion !== 'function') {
             setStatus(I18n.t('status.updateUnavailable'), true);
@@ -388,10 +547,7 @@ function openPalette(controller, options) {
             setStatus(I18n.t('status.updateError', { version: info.current, error: info.error }), true);
             return;
         }
-        if (info.outdated && info.latest) {
-            versionLabel.textContent = 'v' + info.current + ' → v' + info.latest;
-            versionButton.title = I18n.t('status.installedLatest', { current: info.current, latest: info.latest });
-        }
+        showUpdateBar(info);
 
         if (info.latest && info.latest === info.current) {
             setStatus(I18n.t('status.latest', { version: info.current }));
@@ -580,6 +736,9 @@ function openPalette(controller, options) {
 
     async function selectItem(item, selectOptions) {
         const preserve = Boolean(selectOptions && selectOptions.preserveValues);
+        if (!preserve) {
+            state.editMode = false;
+        }
         const previousValues = preserve ? state.values : null;
         const previousEdited = preserve ? state.edited : false;
         const previousPreview = preserve && state.previewEl ? state.previewEl.value : '';
@@ -693,10 +852,21 @@ function openPalette(controller, options) {
         row.appendChild(main);
         const control = optionControl(option);
         row.appendChild(control);
+        let editButton = null;
+        if (!inferred && option.noteId) {
+            editButton = button(I18n.t('ui.edit'), function (event) {
+                if (event && typeof event.stopPropagation === 'function') {
+                    event.stopPropagation();
+                }
+                openOptionModal(option);
+            }, 'cm-opt-edit');
+            editButton.setAttribute('aria-label', I18n.t('editOption.editLabel', { title: option.title }));
+            row.appendChild(editButton);
+        }
         if (option.type === 'boolean') {
             row.classList.add('cm-option-bool');
             row.addEventListener('click', function (event) {
-                if (event.target === control) {
+                if (event.target === control || event.target === editButton) {
                     return;
                 }
                 control.checked = !control.checked;
@@ -1119,7 +1289,28 @@ function openPalette(controller, options) {
         detail.appendChild(baseRow());
         detail.appendChild(presetBlock());
 
-        detail.appendChild(Dom.el('div', 'cm-section', I18n.t('ui.optionsCount', { count: definition.options.length })));
+        const optionsHead = Dom.el('div', 'cm-options-head');
+        optionsHead.appendChild(Dom.el(
+            'span',
+            'cm-section cm-options-title',
+            I18n.t('ui.optionsCount', { count: definition.options.length })
+        ));
+        const editToggle = button(I18n.t(state.editMode ? 'ui.done' : 'ui.editOptionsConfig'), function () {
+            state.editMode = !state.editMode;
+            form.classList.toggle('cm-edit-mode', state.editMode);
+            editToggle.textContent = I18n.t(state.editMode ? 'ui.done' : 'ui.editOptionsConfig');
+            editToggle.setAttribute('aria-pressed', state.editMode ? 'true' : 'false');
+        }, 'cm-options-edit');
+        editToggle.setAttribute('aria-pressed', state.editMode ? 'true' : 'false');
+        const optionsActions = Dom.el('div', 'cm-options-actions');
+        if (definition.options.length > 1) {
+            optionsActions.appendChild(button(I18n.t('ui.reorderOptions'), function () {
+                openReorderModal();
+            }, 'cm-options-reorder'));
+        }
+        optionsActions.appendChild(editToggle);
+        optionsHead.appendChild(optionsActions);
+        detail.appendChild(optionsHead);
         const filter = document.createElement('input');
         filter.type = 'search';
         filter.className = 'cm-control cm-filter';
@@ -1141,6 +1332,7 @@ function openPalette(controller, options) {
         detail.appendChild(filter);
 
         const form = Dom.el('div', 'cm-form');
+        form.classList.toggle('cm-edit-mode', state.editMode);
         const requiredOptions = definition.options
             .filter(function (option) {
                 return option.required;
@@ -1677,12 +1869,368 @@ function openPalette(controller, options) {
         modalShell(I18n.t('export.title', { title: file.tool.title }), bodyNode, actionsNode);
     }
 
-    function openAddOption() {
+    /**
+     * Reorder every option in the tool. The list is the command insertion
+     * order (definition.options is already sorted), so the Required/Optional
+     * grouping in the palette cannot hide where a flag really lands.
+     */
+    function openReorderModal() {
+        if (!state.current || !state.definition) {
+            notify(new Error(I18n.t('status.selectToolFirst')));
+            return;
+        }
+        const tool = state.current;
+        const items = state.definition.options.filter(function (option) {
+            return option && option.noteId;
+        });
+        if (items.length < 2) {
+            return;
+        }
+
+        const inlineNames = Render.placeholderNames(state.definition.base);
+        const bodyNode = Dom.el('div', 'cm-reorder-body');
+        bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('reorder.note')));
+        const previewNode = Dom.el('div', 'cm-reorder-preview');
+        previewNode.setAttribute('title', I18n.t('reorder.previewHint'));
+        previewNode.appendChild(Dom.el('div', 'cm-reorder-preview-label', I18n.t('reorder.preview')));
+        const stripNode = Dom.el('div', 'cm-reorder-flags');
+        previewNode.appendChild(stripNode);
+        bodyNode.appendChild(previewNode);
+        const listNode = Dom.el('div', 'cm-reorder-list');
+        bodyNode.appendChild(listNode);
+
+        let scrollBody = null;
+        let dragIndex = null;
+        let dropRow = null;
+        let scrollFrame = null;
+        let scrollVelocity = 0;
+
+        function flagLabel(option) {
+            if (option.mode === 'inline') {
+                return option.placeholder ? '{{' + option.placeholder + '}}' : option.title;
+            }
+            if (option.flag) {
+                return option.flag;
+            }
+            if (option.placeholder) {
+                return '{{' + option.placeholder + '}}';
+            }
+            return option.title;
+        }
+
+        function isEmitted(option) {
+            if (option.mode === 'inline') {
+                return false;
+            }
+            if (option.placeholder && inlineNames.indexOf(option.placeholder) !== -1) {
+                return false;
+            }
+            const value = state.values[Render.valueKey(option)];
+            if (Render.isEmpty(value)) {
+                return false;
+            }
+            if (option.type === 'boolean' && !Render.isTruthyFlag(value)) {
+                return false;
+            }
+            if (option.type === 'number' && !isFinite(Number(value))) {
+                return false;
+            }
+            return true;
+        }
+
+        function buildChip(option) {
+            const chip = Dom.el('code', 'cm-reorder-flag' + (isEmitted(option) ? ' is-emitted' : ''), flagLabel(option));
+            chip.setAttribute('title', option.title);
+            return chip;
+        }
+
+        function indexOfRow(row) {
+            return Array.prototype.indexOf.call(listNode.children, row);
+        }
+
+        function captureTops() {
+            const tops = new Map();
+            Array.prototype.forEach.call(listNode.children, function (node) {
+                if (node.cmNoteId && typeof node.getBoundingClientRect === 'function') {
+                    tops.set(node.cmNoteId, node.getBoundingClientRect().top);
+                }
+            });
+            return tops;
+        }
+
+        function animateRows(previousTops) {
+            if (!previousTops || !previousTops.size) {
+                return;
+            }
+            Array.prototype.forEach.call(listNode.children, function (node) {
+                if (!node.cmNoteId || typeof node.animate !== 'function' || typeof node.getBoundingClientRect !== 'function') {
+                    return;
+                }
+                const before = previousTops.get(node.cmNoteId);
+                if (before === undefined) {
+                    return;
+                }
+                const delta = before - node.getBoundingClientRect().top;
+                if (!isFinite(delta) || Math.abs(delta) < 1) {
+                    return;
+                }
+                node.animate(
+                    [{ transform: 'translateY(' + delta + 'px)' }, { transform: 'translateY(0)' }],
+                    { duration: 140, easing: 'ease-out' }
+                );
+            });
+        }
+
+        function insertNodeAt(container, node, from, to) {
+            const reference = to > from
+                ? container.children[to + 1] || null
+                : container.children[to] || null;
+            container.insertBefore(node, reference);
+        }
+
+        function updateRowStates() {
+            const rows = listNode.children;
+            for (let index = 0; index < rows.length; index += 1) {
+                const row = rows[index];
+                if (row.cmPosNode) {
+                    row.cmPosNode.textContent = String(index + 1);
+                }
+                if (row.cmUpButton) {
+                    row.cmUpButton.disabled = index === 0;
+                }
+                if (row.cmDownButton) {
+                    row.cmDownButton.disabled = index === rows.length - 1;
+                }
+            }
+        }
+
+        /** Move one row and its preview chip without rebuilding the list. */
+        function reorderTo(from, to) {
+            if (from === to || from < 0 || to < 0 || from >= items.length || to >= items.length) {
+                return;
+            }
+            const previousTops = captureTops();
+            insertNodeAt(listNode, listNode.children[from], from, to);
+            insertNodeAt(stripNode, stripNode.children[from], from, to);
+            const moved = items.splice(from, 1)[0];
+            items.splice(to, 0, moved);
+            updateRowStates();
+            animateRows(previousTops);
+        }
+
+        function dropAfter(row, event) {
+            if (typeof row.getBoundingClientRect !== 'function' || !event || typeof event.clientY !== 'number') {
+                return false;
+            }
+            const rect = row.getBoundingClientRect();
+            return Boolean(rect) && event.clientY > rect.top + rect.height / 2;
+        }
+
+        function clearDropMarker() {
+            if (!dropRow) {
+                return;
+            }
+            dropRow.classList.remove('is-drop-before');
+            dropRow.classList.remove('is-drop-after');
+            dropRow = null;
+        }
+
+        function markDrop(row, after) {
+            if (dropRow !== row) {
+                clearDropMarker();
+                dropRow = row;
+            }
+            row.classList.toggle('is-drop-before', !after);
+            row.classList.toggle('is-drop-after', after);
+        }
+
+        function stopAutoScroll() {
+            scrollVelocity = 0;
+            if (scrollFrame && typeof cancelAnimationFrame === 'function') {
+                cancelAnimationFrame(scrollFrame);
+            }
+            scrollFrame = null;
+        }
+
+        function scrollTick() {
+            scrollFrame = null;
+            if (!scrollVelocity) {
+                return;
+            }
+            const current = Number(scrollBody && scrollBody.scrollTop) || 0;
+            if (scrollBody) {
+                scrollBody.scrollTop = Math.max(0, current + scrollVelocity);
+            }
+            scrollFrame = requestAnimationFrame(scrollTick);
+        }
+
+        function updateAutoScroll(event) {
+            if (!scrollBody || typeof scrollBody.getBoundingClientRect !== 'function' || !event || typeof event.clientY !== 'number') {
+                stopAutoScroll();
+                return;
+            }
+            const rect = scrollBody.getBoundingClientRect();
+            if (!rect) {
+                stopAutoScroll();
+                return;
+            }
+            const threshold = 56;
+            const maxSpeed = 14;
+            let velocity = 0;
+            if (event.clientY < rect.top + threshold) {
+                velocity = -maxSpeed * (1 - Math.max(0, event.clientY - rect.top) / threshold);
+            } else if (event.clientY > rect.bottom - threshold) {
+                velocity = maxSpeed * (1 - Math.max(0, rect.bottom - event.clientY) / threshold);
+            }
+            scrollVelocity = Math.round(velocity);
+            if (!scrollVelocity) {
+                stopAutoScroll();
+                return;
+            }
+            if (typeof requestAnimationFrame !== 'function') {
+                const current = Number(scrollBody.scrollTop) || 0;
+                scrollBody.scrollTop = Math.max(0, current + scrollVelocity);
+                return;
+            }
+            if (!scrollFrame) {
+                scrollFrame = requestAnimationFrame(scrollTick);
+            }
+        }
+
+        function move(index, delta) {
+            reorderTo(index, index + delta);
+        }
+
+        function buildRow(option) {
+            const row = Dom.el('div', 'cm-reorder-item');
+            row.cmNoteId = option.noteId;
+            row.draggable = true;
+            row.setAttribute('draggable', 'true');
+            const handle = Dom.el('span', 'cm-reorder-handle', '⠿');
+            handle.setAttribute('aria-hidden', 'true');
+            row.appendChild(handle);
+            row.cmPosNode = Dom.el('span', 'cm-reorder-pos', '');
+            row.appendChild(row.cmPosNode);
+            const info = Dom.el('div', 'cm-reorder-info');
+            info.appendChild(Dom.el('span', 'cm-opt-title', option.title));
+            if (option.flag) {
+                info.appendChild(Dom.el('code', 'cm-opt-flag', option.flag));
+            }
+            row.appendChild(info);
+
+            const buttons = Dom.el('div', 'cm-reorder-buttons');
+            row.cmUpButton = button('↑', function () {
+                move(indexOfRow(row), -1);
+            }, 'cm-reorder-move');
+            row.cmUpButton.setAttribute('aria-label', I18n.t('reorder.moveUpLabel', { title: option.title }));
+            buttons.appendChild(row.cmUpButton);
+            row.cmDownButton = button('↓', function () {
+                move(indexOfRow(row), 1);
+            }, 'cm-reorder-move');
+            row.cmDownButton.setAttribute('aria-label', I18n.t('reorder.moveDownLabel', { title: option.title }));
+            buttons.appendChild(row.cmDownButton);
+            row.appendChild(buttons);
+
+            row.addEventListener('dragstart', function (event) {
+                dragIndex = indexOfRow(row);
+                row.classList.add('is-dragging');
+                if (event && event.dataTransfer) {
+                    event.dataTransfer.effectAllowed = 'move';
+                    if (typeof event.dataTransfer.setData === 'function') {
+                        event.dataTransfer.setData('text/plain', String(dragIndex));
+                    }
+                }
+            });
+            row.addEventListener('dragover', function (event) {
+                if (dragIndex === null) {
+                    return;
+                }
+                if (event && typeof event.preventDefault === 'function') {
+                    event.preventDefault();
+                }
+                if (event && event.dataTransfer) {
+                    event.dataTransfer.dropEffect = 'move';
+                }
+                updateAutoScroll(event);
+                markDrop(row, dropAfter(row, event));
+            });
+            row.addEventListener('drop', function (event) {
+                if (dragIndex === null) {
+                    return;
+                }
+                if (event && typeof event.preventDefault === 'function') {
+                    event.preventDefault();
+                }
+                const from = dragIndex;
+                dragIndex = null;
+                stopAutoScroll();
+                clearDropMarker();
+                const after = dropAfter(row, event);
+                let target = indexOfRow(row) + (after ? 1 : 0);
+                if (from < target) {
+                    target -= 1;
+                }
+                target = Math.max(0, Math.min(items.length - 1, target));
+                reorderTo(from, target);
+            });
+            row.addEventListener('dragend', function () {
+                dragIndex = null;
+                stopAutoScroll();
+                clearDropMarker();
+                Array.prototype.forEach.call(listNode.children, function (node) {
+                    if (node.classList) {
+                        node.classList.remove('is-dragging');
+                    }
+                });
+            });
+
+            return row;
+        }
+
+        function renderItems() {
+            listNode.textContent = '';
+            stripNode.textContent = '';
+            items.forEach(function (option) {
+                listNode.appendChild(buildRow(option));
+                stripNode.appendChild(buildChip(option));
+            });
+            updateRowStates();
+        }
+
+        renderItems();
+
+        const save = Dom.el('button', 'cm-button', I18n.t('ui.save'));
+        save.type = 'button';
+        save.addEventListener('click', guarded(async function () {
+            save.disabled = true;
+            try {
+                await controller.reorderOptions(Model.orderPlan(items));
+            } catch (error) {
+                save.disabled = false;
+                throw error;
+            }
+            closeModal();
+            await controller.refresh();
+            await runSearch();
+            await selectItem(tool, { preserveValues: true });
+            setStatus(I18n.t('status.optionsReordered'));
+        }, notify));
+
+        const actionsNode = Dom.el('div', 'cm-inline');
+        actionsNode.appendChild(save);
+        actionsNode.appendChild(modalCloseButton());
+
+        const shell = modalShell(I18n.t('reorder.title', { title: tool.title }), bodyNode, actionsNode);
+        scrollBody = shell.body;
+    }
+
+    function openOptionModal(existing) {
         if (!state.current) {
             notify(new Error(I18n.t('status.selectToolFirst')));
             return;
         }
         const tool = state.current;
+        const editing = Boolean(existing && existing.noteId);
 
         function field(labelText, control) {
             const wrapper = Dom.el('label', 'cm-field');
@@ -1711,6 +2259,48 @@ function openPalette(controller, options) {
             entry.textContent = I18n.t('type.' + type);
             typeSelect.appendChild(entry);
         });
+        typeSelect.setAttribute('aria-label', I18n.t('addOption.fieldType'));
+
+        const modeSelect = document.createElement('select');
+        [
+            { value: 'flag', label: 'addOption.modeFlag' },
+            { value: 'inline', label: 'addOption.modeInline' }
+        ].forEach(function (mode) {
+            const entry = document.createElement('option');
+            entry.value = mode.value;
+            entry.textContent = I18n.t(mode.label);
+            modeSelect.appendChild(entry);
+        });
+        modeSelect.setAttribute('aria-label', I18n.t('addOption.fieldMode'));
+
+        const placeholderInput = document.createElement('input');
+        placeholderInput.type = 'text';
+        placeholderInput.placeholder = I18n.t('addOption.placeholderPlaceholder');
+
+        const quoteSelect = document.createElement('select');
+        [
+            { value: 'none', label: 'addOption.quoteNone' },
+            { value: 'single', label: 'addOption.quoteSingle' },
+            { value: 'double', label: 'addOption.quoteDouble' }
+        ].forEach(function (quote) {
+            const entry = document.createElement('option');
+            entry.value = quote.value;
+            entry.textContent = I18n.t(quote.label);
+            quoteSelect.appendChild(entry);
+        });
+        quoteSelect.setAttribute('aria-label', I18n.t('addOption.fieldQuote'));
+
+        const sepSelect = document.createElement('select');
+        [
+            { value: ' ', label: 'addOption.sepSpace' },
+            { value: '=', label: 'addOption.sepEquals' }
+        ].forEach(function (separator) {
+            const entry = document.createElement('option');
+            entry.value = separator.value;
+            entry.textContent = I18n.t(separator.label);
+            sepSelect.appendChild(entry);
+        });
+        sepSelect.setAttribute('aria-label', I18n.t('addOption.fieldSeparator'));
 
         const defaultInput = document.createElement('input');
         defaultInput.type = 'text';
@@ -1731,9 +2321,26 @@ function openPalette(controller, options) {
         requiredRow.appendChild(Dom.el('span', 'cm-base-label', I18n.t('ui.required')));
         requiredRow.appendChild(requiredInput);
 
-        const add = Dom.el('button', 'cm-button', I18n.t('ui.add'));
-        add.type = 'button';
-        add.addEventListener('click', guarded(async function () {
+        if (editing) {
+            labelInput.value = existing.title;
+            flagInput.value = existing.flag || '';
+            helpInput.value = existing.help || '';
+            typeSelect.value = existing.type;
+            modeSelect.value = existing.mode === 'inline' ? 'inline' : 'flag';
+            placeholderInput.value = existing.placeholder || '';
+            defaultInput.value = existing.defaultValue === undefined || existing.defaultValue === null
+                ? ''
+                : String(existing.defaultValue);
+            valuesInput.value = (existing.enumValues || []).join(', ');
+            quoteSelect.value = existing.quote || 'none';
+            sepSelect.value = existing.sep === '=' ? '=' : ' ';
+            orderInput.value = typeof existing.order === 'number' ? String(existing.order) : '100';
+            requiredInput.checked = Boolean(existing.required);
+        }
+
+        const save = Dom.el('button', 'cm-button', I18n.t(editing ? 'ui.save' : 'ui.add'));
+        save.type = 'button';
+        save.addEventListener('click', guarded(async function () {
             const label = labelInput.value.trim();
             if (!label) {
                 throw new Error(I18n.t('status.optionLabelRequired'));
@@ -1745,8 +2352,9 @@ function openPalette(controller, options) {
                 .filter(function (entry) {
                     return entry !== '';
                 });
-            const order = Number(orderInput.value);
-            await controller.addOption(tool.noteId, {
+            const orderText = String(orderInput.value == null ? '' : orderInput.value).trim();
+            const order = orderText === '' ? 100 : Number(orderText);
+            const spec = {
                 label: label,
                 flag: flagInput.value.trim(),
                 help: helpInput.value.trim(),
@@ -1754,34 +2362,52 @@ function openPalette(controller, options) {
                 values: values,
                 defaultValue: defaultInput.value,
                 required: Boolean(requiredInput.checked),
+                mode: modeSelect.value === 'inline' ? 'inline' : 'flag',
+                placeholder: placeholderInput.value.trim(),
+                quote: Model.QUOTES.indexOf(quoteSelect.value) === -1 ? 'none' : quoteSelect.value,
+                separator: sepSelect.value === '=' ? '=' : ' ',
                 order: isFinite(order) ? order : 100
-            });
+            };
+            if (editing) {
+                await controller.updateOption(existing.noteId, spec);
+            } else {
+                await controller.addOption(tool.noteId, spec);
+            }
             closeModal();
-            await controller.refresh();
+            // An edit patches the runtime cache from the backend's saved
+            // snapshot, so a refresh would overwrite it with the stale
+            // frontend entity and hide the change until the next reload.
+            if (!editing) {
+                await controller.refresh();
+            }
             await runSearch();
             await selectItem(tool, { preserveValues: true });
-            setStatus(I18n.t('status.optionAdded'));
+            setStatus(I18n.t(editing ? 'status.optionUpdated' : 'status.optionAdded'));
         }, notify));
 
         const closeButton2 = modalCloseButton();
 
         const bodyNode = Dom.el('div', '');
-        bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('addOption.note')));
+        bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t(editing ? 'editOption.note' : 'addOption.note')));
         bodyNode.appendChild(field(I18n.t('addOption.fieldLabel'), labelInput));
         bodyNode.appendChild(field(I18n.t('addOption.fieldFlag'), flagInput));
         bodyNode.appendChild(field(I18n.t('addOption.fieldHelp'), helpInput));
         bodyNode.appendChild(field(I18n.t('addOption.fieldType'), typeSelect));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldMode'), modeSelect));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldPlaceholder'), placeholderInput));
         bodyNode.appendChild(field(I18n.t('addOption.fieldDefault'), defaultInput));
         bodyNode.appendChild(field(I18n.t('addOption.fieldValues'), valuesInput));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldQuote'), quoteSelect));
+        bodyNode.appendChild(field(I18n.t('addOption.fieldSeparator'), sepSelect));
         bodyNode.appendChild(field(I18n.t('addOption.fieldOrder'), orderInput));
         bodyNode.appendChild(requiredRow);
         bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('addOption.requiredNote')));
 
         const actionsNode = Dom.el('div', 'cm-inline');
-        actionsNode.appendChild(add);
+        actionsNode.appendChild(save);
         actionsNode.appendChild(closeButton2);
 
-        modalShell(I18n.t('addOption.title', { title: tool.title }), bodyNode, actionsNode);
+        modalShell(I18n.t(editing ? 'editOption.title' : 'addOption.title', { title: editing ? existing.title : tool.title }), bodyNode, actionsNode);
         labelInput.focus();
     }
 
@@ -1871,11 +2497,18 @@ function openPalette(controller, options) {
         event.preventDefault();
         toggleMenu();
     });
+    updateApply.addEventListener('click', guarded(installUpdate, notify));
+    updateDismiss.addEventListener('click', function () {
+        dismissedUpdate = shownUpdate;
+        hideUpdateBar();
+    });
     newToolButton.addEventListener('click', toggleNewTool);
     importToolButton.addEventListener('click', openImportTool);
     exportToolButton.addEventListener('click', guarded(openExportTool, notify));
     importButton.addEventListener('click', openImport);
-    addOptionButton.addEventListener('click', openAddOption);
+    addOptionButton.addEventListener('click', function () {
+        openOptionModal();
+    });
     toolsButton.addEventListener('click', openToolsFolder);
     if (embedded) {
         shell.addEventListener('keydown', onKeyDown);
@@ -1909,6 +2542,8 @@ function openPalette(controller, options) {
         await controller.refresh();
         await runSearch();
     }, notify)();
+
+    checkUpdatesIfDue();
 
     return handle;
 }

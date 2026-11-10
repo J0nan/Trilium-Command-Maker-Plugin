@@ -121,13 +121,23 @@ test('non-numeric values are rejected for number options', () => {
     assert.equal(result.warnings[0].code, 'invalid-number');
 });
 
-test('segments are ordered by cmOrder then title', () => {
+test('segments are ordered by cmOrder then flag alphabetically ignoring dashes', () => {
     const def = definition('run', [
-        option({ noteId: 'n2', placeholder: 'c', flag: '--c', order: 30 }),
-        option({ noteId: 'n1', placeholder: 'a', flag: '--a', order: 10 })
+        option({ noteId: 'n2', title: 'Aardvark', placeholder: 'c', flag: '--zeta', order: 10 }),
+        option({ noteId: 'n1', title: 'Zebra', placeholder: 'a', flag: '--alpha', order: 10 }),
+        option({ noteId: 'n3', title: 'Middle', placeholder: 'b', flag: '--middle', order: 5 })
     ]);
-    const result = Render.renderCommand(def, { 'note:n1': '1', 'note:n2': '3' });
-    assert.equal(result.command, 'run --a 1 --c 3');
+    const result = Render.renderCommand(def, { 'note:n1': '1', 'note:n2': '3', 'note:n3': '2' });
+    assert.equal(result.command, 'run --middle 2 --alpha 1 --zeta 3');
+});
+
+test('short and long flags tie-break on the flag text, not the dashes', () => {
+    const def = definition('run', [
+        option({ noteId: 'n1', title: 'Yellow', placeholder: 'b', flag: '-b', order: 10 }),
+        option({ noteId: 'n2', title: 'Alpha', placeholder: 'a', flag: '--a', order: 10 })
+    ]);
+    const result = Render.renderCommand(def, { 'note:n1': '2', 'note:n2': '1' });
+    assert.equal(result.command, 'run --a 1 -b 2');
 });
 
 test('an unresolved placeholder warns and leaves no gap', () => {
