@@ -216,7 +216,8 @@ test('load returns options with help, examples, links, help output, install and 
     assert.equal(loaded.definition.base, 'ffmpeg');
     assert.equal(loaded.definition.category, 'Media');
     assert.equal(loaded.definition.options.length, 2);
-    assert.equal(loaded.definition.options[0].help, 'Input file to read.');
+    assert.equal(loaded.definition.options[0].flag, '-c:v', 'options are ordered by flag when #cmOrder ties');
+    assert.equal(loaded.definition.options[0].help, 'Video encoder.');
     assert.match(loaded.whatIs, /Encode and process video/);
     assert.deepEqual(loaded.links.map((link) => link.href), ['https://ffmpeg.org', 'https://ffmpeg.org/ffmpeg.html']);
     assert.deepEqual(loaded.usageExamples, ['ffmpeg -i in.mp4 out.mp4']);
@@ -295,12 +296,15 @@ test('exportTool builds a portable file with raw contents and every option', asy
     assert.match(file.tool.usage, /<pre><code>ffmpeg -i in.mp4 out.mp4<\/code><\/pre>/);
     assert.match(file.tool.help, /Usage: ffmpeg/);
     assert.equal(file.tool.options.length, 2);
-    assert.equal(file.tool.options[0].label, 'Input file');
-    assert.equal(file.tool.options[0].flag, '-i');
-    assert.equal(file.tool.options[0].type, 'path');
-    assert.equal(file.tool.options[0].content, '<p>Read the input file.</p>', 'option note bodies are in the backup');
-    assert.equal(file.tool.options[1].content, '', 'options without a body export as empty, not undefined');
-    assert.deepEqual(file.tool.options[1].values, ['libx264', 'libx265']);
+    assert.equal(file.tool.options[0].label, 'Video codec');
+    assert.equal(file.tool.options[0].flag, '-c:v');
+    assert.equal(file.tool.options[0].type, 'enum');
+    assert.equal(file.tool.options[0].content, '', 'options without a body export as empty, not undefined');
+    assert.deepEqual(file.tool.options[0].values, ['libx264', 'libx265']);
+    assert.equal(file.tool.options[1].label, 'Input file');
+    assert.equal(file.tool.options[1].flag, '-i');
+    assert.equal(file.tool.options[1].type, 'path');
+    assert.equal(file.tool.options[1].content, '<p>Read the input file.</p>', 'option note bodies are in the backup');
     assert.deepEqual(
         file.tool.presets,
         [{ name: 'web', values: { 'note:o1': 'web.mp4' } }],

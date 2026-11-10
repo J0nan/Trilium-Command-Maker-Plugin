@@ -216,14 +216,23 @@ test('matches searches title, category, flags, help strings and examples', () =>
     assert.equal(matches(''), true);
 });
 
-test('sortOptions orders by cmOrder then title', () => {
+test('sortOptions orders by cmOrder then flag alphabetically ignoring dashes', () => {
     const list = [
-        { title: 'zeta', order: 10, noteId: 'b' },
-        { title: 'alpha', order: 10, noteId: 'c' },
-        { title: 'first', order: 5, noteId: 'a' }
+        { title: 'zeta', flag: '--zulu', order: 10, noteId: 'b' },
+        { title: 'alpha', flag: '--alpha', order: 10, noteId: 'c' },
+        { title: 'first', flag: '--first', order: 5, noteId: 'a' }
     ];
     list.sort(Model.sortOptions);
     assert.deepEqual(list.map((entry) => entry.title), ['first', 'alpha', 'zeta']);
+});
+
+test('sortOptions ignores leading dashes when comparing flags', () => {
+    const list = [
+        { title: 'yellow', flag: '-b', order: 10, noteId: 'b' },
+        { title: 'aardvark', flag: '--a', order: 10, noteId: 'a' }
+    ];
+    list.sort(Model.sortOptions);
+    assert.deepEqual(list.map((entry) => entry.title), ['aardvark', 'yellow']);
 });
 
 test('toolTemplate contains exactly the three required H2 sections', () => {

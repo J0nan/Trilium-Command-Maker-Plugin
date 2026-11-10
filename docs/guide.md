@@ -195,11 +195,11 @@ Options live under the tool's `Options` folder. Each option is a note whose titl
 | `#cmValues` | enum values, comma separated | none |
 | `#cmDefault` | initial value | empty / `false` |
 | `#cmRequired` | `true` marks the option required | `false` |
-| `#cmOrder` | numeric ordering of emitted segments | `100` |
+| `#cmOrder` | numeric ordering of emitted segments; options sharing a value are sorted alphabetically by flag, ignoring the leading `-`/`--` | `100` |
 | `#cmQuote` | `none`, `single`, `double` (emitted segments) | `none` |
 | `#cmSep` | `space` or `=` (`--flag=value`) | `space` |
 
-Required options are grouped under a **Required** heading before the **Optional** ones, and produce a warning until they have a value. Set one with `#cmRequired=true`; the **Add option** modal and the import preview can set it for you. Every option row can be edited without touching note labels: press **Edit options configuration** next to the **Options (n)** heading, then use the **Edit** button that appears on each row. The same form opens with the option's current attributes; **Done** hides the row buttons again.
+Required options are grouped under a **Required** heading before the **Optional** ones, and produce a warning until they have a value. Inside each group, options are listed in the order they are inserted into the command: `#cmOrder`, then the flag alphabetically ignoring its leading dashes. Set one with `#cmRequired=true`; the **Add option** modal and the import preview can set it for you. Every option row can be edited without touching note labels: press **Edit options configuration** next to the **Options (n)** heading, then use the **Edit** button that appears on each row. The same form opens with the option's current attributes; **Done** hides the row buttons again.
 
 Clicking anywhere on a boolean option row toggles its checkbox.
 
@@ -210,7 +210,7 @@ The option note's content is a good place for a longer explanation; the palette 
 The command is:
 
 ```
-<base> <extra arguments> <selected option flags, ordered by #cmOrder>
+<base> <extra arguments> <selected option flags, ordered by #cmOrder, then by flag alphabetically (leading dashes ignored)>
 ```
 
 - The base comes from `#cmBase` on the tool note. If it is empty, the tool title is lowercased (`Git commit` → `git commit`). You can edit it from the palette and it is saved back to the tool note.

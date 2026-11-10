@@ -95,12 +95,27 @@ function valueKey(option) {
     return 'ph:' + (option.placeholder || option.name || '');
 }
 
-/** Same precedence as Model.sortOptions: cmOrder, then title, then note id. */
+/** Flag text without its leading dashes; the alphabetical tie-break below. */
+function flagSortKey(option) {
+    return String(option && option.flag != null ? option.flag : '').trim().replace(/^-+/, '');
+}
+
+/**
+ * Command insertion order, shared by the renderer and the palette so the GUI
+ * lists options exactly as they will be emitted: cmOrder, then the flag
+ * alphabetically ignoring its leading dashes, then title and note id for
+ * stability.
+ */
 function compareOptions(left, right) {
     const leftOrder = typeof left.order === 'number' ? left.order : 100;
     const rightOrder = typeof right.order === 'number' ? right.order : 100;
     if (leftOrder !== rightOrder) {
         return leftOrder - rightOrder;
+    }
+    const leftFlag = flagSortKey(left).toLowerCase();
+    const rightFlag = flagSortKey(right).toLowerCase();
+    if (leftFlag && rightFlag && leftFlag !== rightFlag) {
+        return leftFlag < rightFlag ? -1 : 1;
     }
     if (left.title !== right.title) {
         return String(left.title) < String(right.title) ? -1 : 1;
