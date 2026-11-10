@@ -61,11 +61,32 @@ const LABELS = {
     icon: 'iconClass',
     // settings
     lang: 'cmLang',
+    panelWidth: 'cmPanelWidth',
 };
 
 const LABEL_NAMES = Object.keys(LABELS).map(function (key) {
     return LABELS[key];
 });
+
+// Overlay panel width, stored as a percentage of the window. Shared by the
+// runtime (read/write), the palette menu (slider) and the backend (clamp).
+const PANEL_WIDTH_MIN = 30;
+const PANEL_WIDTH_MAX = 100;
+const PANEL_WIDTH_DEFAULT = 70;
+
+function normalizePanelWidth(value) {
+    const parsed = Math.round(Number(value));
+    if (!isFinite(parsed)) {
+        return PANEL_WIDTH_DEFAULT;
+    }
+    if (parsed < PANEL_WIDTH_MIN) {
+        return PANEL_WIDTH_MIN;
+    }
+    if (parsed > PANEL_WIDTH_MAX) {
+        return PANEL_WIDTH_MAX;
+    }
+    return parsed;
+}
 
 const TYPES = ['string', 'path', 'number', 'boolean', 'enum'];
 const QUOTES = ['none', 'single', 'double'];
@@ -605,6 +626,10 @@ module.exports = {
     TYPES,
     QUOTES,
     ICONS,
+    PANEL_WIDTH_MIN,
+    PANEL_WIDTH_MAX,
+    PANEL_WIDTH_DEFAULT,
+    normalizePanelWidth,
     EXTRA_KEY: Render.EXTRA_KEY,
     deriveBase,
     optionFromNote,

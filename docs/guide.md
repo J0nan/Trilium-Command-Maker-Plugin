@@ -17,6 +17,7 @@ Ctrl+Shift+Space  →  search a tool  →  read help  →  fill options  →  co
   - [Manual install (no installer script)](#manual-install-no-installer-script)
 - [Structure](#structure)
   - [Language](#language)
+  - [Panel width](#panel-width)
   - [Tool notes](#tool-notes)
   - [The three standard children](#the-three-standard-children)
   - [Option notes](#option-notes)
@@ -131,6 +132,12 @@ If you installed the plugin runtime manually *before* ever running the installer
 The plugin ships English and Spain Spanish in one bundle. The version pill in the footer (`v1.2 ▾`) opens a small menu with the update check and the language: picking **English** or **Español** writes `#cmLang` (`en` or `es`) on the `Command Maker` settings note and rebuilds the palette in that language, including the titles of the notes the backend creates later (`Opciones`, `Instalación`, `Uso`, `Ayuda`).
 
 Set `#cmLang=es` on the settings note by hand to start in Spanish. With no label, the plugin follows the browser/Trilium language and falls back to English; on the first bootstrap it records the language it picked, so the setting is always visible. The label is strictly a UI preference: tool files, labels, presets and rendered commands never change with it. Notes seeded before a language switch keep the language they were written in.
+
+### Panel width
+
+The palette that opens over Trilium is percentage-based. The version menu holds a **Panel width** slider from 30% to 100% of the window (70% by default): the overlay resizes when you click **Apply**, so the menu stays put while you drag, and applying writes `#cmPanelWidth` on the `Command Maker` settings note. The same menu item is hidden in the tab view, because a tab always fills its container.
+
+Set `#cmPanelWidth=85` on the settings note by hand to open at that width before the first open. Values outside 30–100 are clamped, and a missing or unreadable label opens at 70%. The setting only affects the floating overlay; import dialogs inside the palette keep their own size.
 
 ### Tool notes
 

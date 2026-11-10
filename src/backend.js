@@ -10,9 +10,9 @@
  * being duplicated here. Consequently `beRun` must never reference a
  * module-scope binding and dispatches on literal action strings only.
  *
- * Actions: bootstrap | setLanguage | createTool | importTool | addOption |
- * importOptions | deleteOption | setToolBase | setToolsRoot | savePreset |
- * deletePreset | ensureTab
+ * Actions: bootstrap | setLanguage | setPanelWidth | createTool | importTool |
+ * addOption | importOptions | deleteOption | setToolBase | setToolsRoot |
+ * savePreset | deletePreset | ensureTab
  */
 
 function beRun(params) {
@@ -459,6 +459,15 @@ function beRun(params) {
             }
         }
 
+        // Same treatment for the overlay width: record the active percentage
+        // once so the setting is discoverable and the menu has a value to show.
+        if (nonEmpty(options.panelWidth) && labels.panelWidth) {
+            const configured = root.getLabelValue(labels.panelWidth);
+            if (configured === null || configured === undefined || String(configured).trim() === '') {
+                root.setLabel(labels.panelWidth, String(options.panelWidth));
+            }
+        }
+
         if (nonEmpty(options.version) && root.getLabelValue(labels.version) !== String(options.version)) {
             root.setLabel(labels.version, String(options.version));
         }
@@ -739,11 +748,27 @@ function beRun(params) {
         return { ok: true, lang: String(options.lang == null ? '' : options.lang) };
     }
 
+    /** Store the overlay width as a percentage, clamped to the allowed range. */
+    function setPanelWidth() {
+        const root = requireNote(options.rootId, text('back.errorSettingsNote', 'Command Maker settings note not found'));
+        if (!labels.panelWidth) {
+            throw new Error(text('back.errorUnknownActionPrefix', 'Unknown action: ') + 'setPanelWidth');
+        }
+        const min = options.min === undefined ? 30 : Number(options.min);
+        const max = options.max === undefined ? 100 : Number(options.max);
+        const parsed = Math.round(Number(options.width));
+        const width = isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : 70;
+        root.setLabel(labels.panelWidth, String(width));
+        return { ok: true, width: width };
+    }
+
     switch (options.action) {
         case 'bootstrap':
             return bootstrap();
         case 'setLanguage':
             return setLanguage();
+        case 'setPanelWidth':
+            return setPanelWidth();
         case 'createTool':
             return createTool();
         case 'importTool':

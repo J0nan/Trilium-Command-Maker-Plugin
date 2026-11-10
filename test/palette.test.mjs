@@ -398,6 +398,9 @@ test('palette lists tools, shows option help, examples, help, copy/insert and pr
     assert.match(style.textContent, /\.cm-danger-armed\{[^}]*background:#dc2626/);
     assert.match(style.textContent, /\.cm-install pre\{[^}]*box-shadow:var\(--code-block-box-shadow/);
     assert.match(style.textContent, /@media \(hover:none\)\{\.cm-code-copy\{opacity:1;\}\}/);
+    assert.match(style.textContent, /\.cm-width-range\{/);
+    assert.match(style.textContent, /\.cm-width-value\{/);
+    assert.match(style.textContent, /@media \(max-width:720px\)\{\.cm-panel\{width:100% !important;\}/);
     assert.equal(style.textContent.includes('#f4f4f4'), false, 'no hard-coded light code background');
 
     const versionButton = find(dom.body, (node) => classed(node, 'cm-version'));
@@ -1145,7 +1148,9 @@ test('a render-note host mounts the palette inside its tab container', async () 
     await waitFor(() => find(marker, (node) => classed(node, 'cm-result')), 'embedded search results');
     assert.equal(find(dom.body, (node) => classed(node, 'cm-overlay')), null, 'no overlay is created');
     assert.ok(find(marker, (node) => classed(node, 'cm-tab-view')), 'the tab view wraps the panel');
-    assert.ok(find(marker, (node) => classed(node, 'cm-panel')), 'the palette panel is inside the tab');
+    const embeddedPanel = find(marker, (node) => classed(node, 'cm-panel'));
+    assert.ok(embeddedPanel, 'the palette panel is inside the tab');
+    assert.ok(!embeddedPanel.style.width, 'the tab view keeps the full width instead of the overlay percentage');
     assert.equal(find(marker, (node) => classed(node, 'cm-open-tab')), null, 'no Open in tab button inside a tab');
     assert.equal(find(marker, (node) => classed(node, 'cm-close')), null, 'no overlay close button inside a tab');
 
@@ -1721,6 +1726,76 @@ test('an existing cmLang setting starts the palette in that language', async () 
     assert.equal(bootstrap.strings['back.noteInstall'], 'Instalación');
     assert.equal(bootstrap.seedTools[0].category, 'Control de versiones');
     assert.match(bootstrap.newToolNotes.content, /Enlaces oficiales/);
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('the version menu changes the overlay panel width and persists it', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    const panel = find(dom.body, (node) => classed(node, 'cm-panel'));
+    assert.equal(panel.style.width, '70%', 'the overlay starts at the default percentage width');
+
+    const trigger = find(dom.body, (node) => classed(node, 'cm-version'));
+    trigger.click();
+    const menu = await waitFor(
+        () => findAll(dom.body, (node) => classed(node, 'cm-menu')).pop(),
+        'settings menu'
+    );
+    const range = find(menu, (node) => classed(node, 'cm-width-range'));
+    assert.ok(range, 'the menu holds the width slider');
+    assert.equal(range.value, '70');
+    assert.equal(find(menu, (node) => classed(node, 'cm-width-value')).textContent, '70%');
+    const apply = buttonWithText(menu, 'Apply');
+    assert.ok(apply, 'the menu holds an Apply button');
+    assert.equal(apply.disabled, true, 'Apply waits until the slider value changes');
+
+    range.value = '95';
+    range.dispatch('input');
+    assert.equal(panel.style.width, '70%', 'the panel stays put while the slider moves');
+    assert.equal(find(menu, (node) => classed(node, 'cm-width-value')).textContent, '95%');
+    assert.equal(apply.disabled, false, 'Apply becomes available for the pending value');
+
+    apply.click();
+    await waitFor(
+        () => env.calls.backend.some((entry) => entry.action === 'setPanelWidth'),
+        'width persistence'
+    );
+    await waitFor(() => panel.style.width === '95%', 'applied width');
+    const call = env.calls.backend.filter((entry) => entry.action === 'setPanelWidth')[0];
+    assert.equal(call.rootId, 'root');
+    assert.equal(call.width, 95);
+    assert.equal(apply.disabled, true, 'Apply goes idle again after the write');
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('a saved cmPanelWidth label sets the overlay width before the menu opens', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    const searchForNote = env.api.searchForNote.bind(env.api);
+    env.api.searchForNote = async (query) => {
+        if (query === '#cmRoot') {
+            return {
+                noteId: 'root',
+                title: 'Command Maker',
+                getLabelValue(name) {
+                    return name === 'cmPanelWidth' ? '55' : null;
+                }
+            };
+        }
+        return searchForNote(query);
+    };
+    run(dom, env.api, env.navigator);
+
+    const panel = await waitFor(
+        () => find(dom.body, (node) => classed(node, 'cm-panel')),
+        'panel'
+    );
+    assert.equal(panel.style.width, '55%');
     assert.deepEqual(env.calls.errors, []);
 });
 

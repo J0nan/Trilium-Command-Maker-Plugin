@@ -171,6 +171,22 @@ function openPalette(controller, options) {
     const shell = embedded ? Dom.el('div', 'cm-tab-view') : overlay;
     const panel = Dom.el('div', 'cm-panel');
 
+    /** Overlay width percentage the settings note currently holds. */
+    function currentPanelWidth() {
+        const value = typeof controller.panelWidth === 'function' ? controller.panelWidth() : undefined;
+        return Model.normalizePanelWidth(value);
+    }
+
+    /** Apply the percentage to the floating panel; a tab view stays full width. */
+    function applyPanelWidth(percent) {
+        if (embedded) {
+            return;
+        }
+        panel.style.width = Model.normalizePanelWidth(percent) + '%';
+    }
+
+    applyPanelWidth(currentPanelWidth());
+
     const head = Dom.el('div', 'cm-head');
     const searchInput = document.createElement('input');
     searchInput.type = 'search';
@@ -300,6 +316,69 @@ function openPalette(controller, options) {
         const menu = Dom.el('div', 'cm-menu');
         menu.setAttribute('role', 'menu');
         menu.setAttribute('aria-label', I18n.t('ui.versionMenu'));
+
+        if (!embedded) {
+            menu.appendChild(Dom.el('div', 'cm-menu-title', I18n.t('ui.panelWidth')));
+            const widthRow = Dom.el('div', 'cm-menu-row');
+            const widthInput = document.createElement('input');
+            widthInput.type = 'range';
+            widthInput.className = 'cm-width-range';
+            widthInput.min = String(Model.PANEL_WIDTH_MIN);
+            widthInput.max = String(Model.PANEL_WIDTH_MAX);
+            widthInput.step = '5';
+            widthInput.value = String(currentPanelWidth());
+            widthInput.setAttribute('aria-label', I18n.t('ui.panelWidth'));
+            const widthValue = Dom.el('span', 'cm-width-value', widthInput.value + '%');
+            const applyButton = Dom.el('button', 'cm-width-apply', I18n.t('ui.apply'));
+            applyButton.type = 'button';
+            const canSave = typeof controller.setPanelWidth === 'function';
+            // The panel is resized only on Apply: changing it while the pointer
+            // is on the slider moves the whole menu out from under the drag.
+            function pendingWidth() {
+                return Model.normalizePanelWidth(widthInput.value);
+            }
+            function syncApplyState() {
+                applyButton.disabled = !canSave || pendingWidth() === currentPanelWidth();
+            }
+            widthInput.addEventListener('input', function () {
+                const percent = pendingWidth();
+                widthInput.value = String(percent);
+                widthValue.textContent = percent + '%';
+                syncApplyState();
+            });
+            applyButton.addEventListener('click', function (event) {
+                event.preventDefault();
+                if (applyButton.disabled || !canSave) {
+                    return;
+                }
+                const percent = pendingWidth();
+                applyButton.disabled = true;
+                (async function () {
+                    try {
+                        await controller.setPanelWidth(percent);
+                    } catch (error) {
+                        // A failed write must not leave the slider promising a
+                        // width the settings note never stored.
+                        const saved = currentPanelWidth();
+                        widthInput.value = String(saved);
+                        widthValue.textContent = saved + '%';
+                        syncApplyState();
+                        notify(error);
+                        return;
+                    }
+                    applyPanelWidth(percent);
+                    widthInput.value = String(percent);
+                    widthValue.textContent = percent + '%';
+                    syncApplyState();
+                })();
+            });
+            widthRow.appendChild(widthInput);
+            widthRow.appendChild(widthValue);
+            widthRow.appendChild(applyButton);
+            menu.appendChild(widthRow);
+            syncApplyState();
+            menu.appendChild(Dom.el('div', 'cm-menu-sep'));
+        }
 
         const updates = Dom.el('button', 'cm-menu-item', I18n.t('ui.checkUpdates'));
         updates.type = 'button';

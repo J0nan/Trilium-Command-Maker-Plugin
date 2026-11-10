@@ -33,6 +33,10 @@ let bootstrapPromise = null;
 let bootstrapApi = null;
 let bootstrapInfo = null;
 
+// Overlay width, as a percentage of the window. Resolved from the settings
+// note before the first mount and updated by the palette's width slider.
+let panelWidth = Model.PANEL_WIDTH_DEFAULT;
+
 function getApi() {
     return typeof api !== 'undefined' ? api : null;
 }
@@ -143,6 +147,30 @@ async function resolveLocale() {
     return I18n.setLocale(I18n.normalizeLocale(configured) || I18n.detectLocale(navigatorLanguages()));
 }
 
+/**
+ * The `cmPanelWidth` label on the settings note sets the overlay width as a
+ * percentage. Missing or unreadable values fall back to the default.
+ */
+async function resolvePanelWidth() {
+    let configured = '';
+    const apiRef = getApi();
+    if (apiRef) {
+        try {
+            const root = await apiRef.searchForNote('#' + Model.LABELS.root);
+            if (root) {
+                const value = root.getLabelValue(Model.LABELS.panelWidth);
+                configured = value === null || value === undefined ? '' : String(value);
+            }
+        } catch (error) {
+            configured = '';
+        }
+    }
+    panelWidth = configured.trim() === ''
+        ? Model.PANEL_WIDTH_DEFAULT
+        : Model.normalizePanelWidth(configured);
+    return panelWidth;
+}
+
 function ensureBootstrap() {
     const apiRef = getApi();
     if (bootstrapPromise && bootstrapApi === apiRef) {
@@ -159,6 +187,7 @@ function ensureBootstrap() {
             icons: Model.ICONS,
             version: Version.VERSION,
             lang: locale,
+            panelWidth: panelWidth,
             strings: I18n.backendStrings(),
             seed: true,
             seedTools: Model.seedTools(),
@@ -863,6 +892,28 @@ function controller() {
             return I18n.getLocale();
         },
 
+        /** Active overlay width percentage; the palette applies it on mount. */
+        panelWidth() {
+            return panelWidth;
+        },
+
+        /**
+         * Persist the overlay width on the settings note and remember it, so a
+         * remount (language switch) keeps the chosen percentage.
+         */
+        async setPanelWidth(percent) {
+            const value = Model.normalizePanelWidth(percent);
+            const info = await ensureBootstrap();
+            await backendAction('setPanelWidth', {
+                rootId: info.rootId,
+                width: value,
+                min: Model.PANEL_WIDTH_MIN,
+                max: Model.PANEL_WIDTH_MAX
+            });
+            panelWidth = value;
+            return value;
+        },
+
         async useActiveNoteAsToolsRoot() {
             const apiRef = getApi();
             const active = apiRef.getActiveContextNote();
@@ -919,12 +970,18 @@ function start() {
         }
     }
 
-    // The locale comes from a note label, so it is resolved before the first
-    // mount: every label the palette builds is already in the right language.
-    // A failed lookup still opens the palette with the detected language.
-    resolveLocale().catch(function () {
-        return I18n.getLocale();
-    }).then(mount);
+    // The locale and the panel width come from note labels, so both are resolved
+    // before the first mount: every label the palette builds is already in the
+    // right language and the overlay opens at the saved width. A failed lookup
+    // still opens the palette with the detected language and default width.
+    Promise.all([
+        resolveLocale().catch(function () {
+            return I18n.getLocale();
+        }),
+        resolvePanelWidth().catch(function () {
+            return panelWidth;
+        })
+    ]).then(mount);
 }
 
 module.exports = { start, controller, refresh, search, load };

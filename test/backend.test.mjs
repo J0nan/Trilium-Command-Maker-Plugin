@@ -477,6 +477,35 @@ test('bootstrap keeps the settings note version current', () => {
     assert.equal(root.getLabelValue(labels.version), Version.VERSION, 'no version param leaves it alone');
 });
 
+test('setPanelWidth stores a clamped percentage on the settings note', () => {
+    const api = createApi();
+    const beRun = serialise(Backend.beRun, api);
+    const { rootId } = boot(api, beRun);
+    const root = api.getNote(rootId);
+
+    const high = beRun({ action: 'setPanelWidth', labels, rootId, width: 140, min: 30, max: 100 });
+    assert.equal(high.width, 100);
+    assert.equal(root.getLabelValue(labels.panelWidth), '100');
+
+    beRun({ action: 'setPanelWidth', labels, rootId, width: 12, min: 30, max: 100 });
+    assert.equal(root.getLabelValue(labels.panelWidth), '30');
+
+    beRun({ action: 'setPanelWidth', labels, rootId, width: 75, min: 30, max: 100 });
+    assert.equal(root.getLabelValue(labels.panelWidth), '75');
+});
+
+test('bootstrap records the default panel width only when the label is missing', () => {
+    const api = createApi();
+    const beRun = serialise(Backend.beRun, api);
+    const first = boot(api, beRun, { panelWidth: 70 });
+    const root = api.getNote(first.rootId);
+    assert.equal(root.getLabelValue(labels.panelWidth), '70');
+
+    root.setLabel(labels.panelWidth, '55');
+    boot(api, beRun, { panelWidth: 70 });
+    assert.equal(root.getLabelValue(labels.panelWidth), '55', 'an existing choice wins');
+});
+
 test('tools created in one category reuse it, and an unknown Tools root is refused', () => {
     // The old createCategory backend action was unreachable production code;
     // category reuse is what callers actually depend on, so it is pinned here.

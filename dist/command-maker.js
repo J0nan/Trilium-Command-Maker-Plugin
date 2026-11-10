@@ -55,6 +55,8 @@ const EN = {
     'ui.toolsFolder': 'Tools folder',
     'ui.repository': 'Repository',
     'ui.language': 'Language',
+    'ui.panelWidth': 'Panel width',
+    'ui.apply': 'Apply',
     'lang.en': 'English',
     'lang.es': 'Español',
     'ui.checkUpdates': 'Check for updates',
@@ -480,6 +482,8 @@ const ES = {
     'ui.toolsFolder': 'Carpeta de herramientas',
     'ui.repository': 'Repositorio',
     'ui.language': 'Idioma',
+    'ui.panelWidth': 'Ancho del panel',
+    'ui.apply': 'Aplicar',
     'lang.en': 'English',
     'lang.es': 'Español',
     'ui.checkUpdates': 'Buscar actualizaciones',
@@ -2999,11 +3003,32 @@ const LABELS = {
     icon: 'iconClass',
     // settings
     lang: 'cmLang',
+    panelWidth: 'cmPanelWidth',
 };
 
 const LABEL_NAMES = Object.keys(LABELS).map(function (key) {
     return LABELS[key];
 });
+
+// Overlay panel width, stored as a percentage of the window. Shared by the
+// runtime (read/write), the palette menu (slider) and the backend (clamp).
+const PANEL_WIDTH_MIN = 30;
+const PANEL_WIDTH_MAX = 100;
+const PANEL_WIDTH_DEFAULT = 70;
+
+function normalizePanelWidth(value) {
+    const parsed = Math.round(Number(value));
+    if (!isFinite(parsed)) {
+        return PANEL_WIDTH_DEFAULT;
+    }
+    if (parsed < PANEL_WIDTH_MIN) {
+        return PANEL_WIDTH_MIN;
+    }
+    if (parsed > PANEL_WIDTH_MAX) {
+        return PANEL_WIDTH_MAX;
+    }
+    return parsed;
+}
 
 const TYPES = ['string', 'path', 'number', 'boolean', 'enum'];
 const QUOTES = ['none', 'single', 'double'];
@@ -3543,6 +3568,10 @@ module.exports = {
     TYPES,
     QUOTES,
     ICONS,
+    PANEL_WIDTH_MIN,
+    PANEL_WIDTH_MAX,
+    PANEL_WIDTH_DEFAULT,
+    normalizePanelWidth,
     EXTRA_KEY: Render.EXTRA_KEY,
     deriveBase,
     optionFromNote,
@@ -3672,13 +3701,19 @@ const CSS = [
     '.cm-version-link{font-size:11px;opacity:.6;color:inherit;text-decoration:none;padding:2px 4px;}',
     '.cm-menu-host{position:relative;display:inline-flex;}',
     '.cm-version-chevron{font-size:9px;margin-left:4px;opacity:.8;}',
-    '.cm-menu{position:absolute;right:0;bottom:calc(100% + 6px);z-index:2;min-width:190px;padding:4px;border-radius:8px;background:var(--main-background-color,#fff);color:inherit;border:1px solid var(--main-border-color,#ccc);box-shadow:0 10px 28px rgba(0,0,0,.28);display:flex;flex-direction:column;gap:2px;}',
+    '.cm-menu{position:absolute;right:0;bottom:calc(100% + 6px);z-index:2;min-width:240px;padding:4px;border-radius:8px;background:var(--main-background-color,#fff);color:inherit;border:1px solid var(--main-border-color,#ccc);box-shadow:0 10px 28px rgba(0,0,0,.28);display:flex;flex-direction:column;gap:2px;}',
     '.cm-menu-item{display:flex;align-items:center;gap:6px;width:100%;padding:6px 8px;border:0;border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:13px;text-align:left;cursor:pointer;}',
     '.cm-menu-item:hover,.cm-menu-item:focus-visible{background:var(--hover-item-background-color,#00000010);color:var(--hover-item-text-color,inherit);}',
     '.cm-menu-item.is-checked{font-weight:600;}',
     '.cm-menu-check{order:-1;width:1em;flex-shrink:0;opacity:.85;}',
     '.cm-menu-sep{height:1px;margin:4px 2px;background:var(--main-border-color,#ddd);opacity:.6;}',
     '.cm-menu-title{padding:2px 8px 4px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;opacity:.6;}',
+    '.cm-menu-row{display:flex;align-items:center;gap:8px;padding:2px 8px 6px;}',
+    '.cm-width-range{flex:1;min-width:0;margin:0;accent-color:var(--link-color,#4f8cff);cursor:pointer;}',
+    '.cm-width-value{font-size:12px;opacity:.75;min-width:3.2em;text-align:end;}',
+    '.cm-width-apply{padding:3px 8px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--button-background-color,#fff);color:inherit;cursor:pointer;font:inherit;font-size:12px;white-space:nowrap;}',
+    '.cm-width-apply:hover{background:var(--accented-background-color,#eef2ff);}',
+    '.cm-width-apply:disabled{opacity:.5;cursor:default;}',
     '.cm-version-link:hover{opacity:1;text-decoration:underline;}',
     '.cm-badge{font-size:11px;padding:1px 6px;border-radius:999px;background:var(--accented-background-color,#eef2ff);opacity:.8;}',
     '.cm-example{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:6px;}',
@@ -3722,7 +3757,7 @@ const CSS = [
     '.cm-import-flag{font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;}',
     '.cm-import-help{font-size:12px;opacity:.7;}',
     '.cm-note{font-size:12px;opacity:.7;}',
-    '@media (max-width:720px){.cm-body{flex-direction:column;}.cm-list{width:auto;max-height:180px;border-right:0;border-bottom:1px solid var(--main-border-color,#ddd);}.cm-opt-control{flex-basis:150px;}}'
+    '@media (max-width:720px){.cm-panel{width:100% !important;}.cm-body{flex-direction:column;}.cm-list{width:auto;max-height:180px;border-right:0;border-bottom:1px solid var(--main-border-color,#ddd);}.cm-opt-control{flex-basis:150px;}}'
 ].join('\n');
 
 module.exports = { STYLE_ID, CSS };
@@ -4049,9 +4084,9 @@ __def("backend", function (module, exports, __require) {
  * being duplicated here. Consequently `beRun` must never reference a
  * module-scope binding and dispatches on literal action strings only.
  *
- * Actions: bootstrap | setLanguage | createTool | importTool | addOption |
- * importOptions | deleteOption | setToolBase | setToolsRoot | savePreset |
- * deletePreset | ensureTab
+ * Actions: bootstrap | setLanguage | setPanelWidth | createTool | importTool |
+ * addOption | importOptions | deleteOption | setToolBase | setToolsRoot |
+ * savePreset | deletePreset | ensureTab
  */
 
 function beRun(params) {
@@ -4498,6 +4533,15 @@ function beRun(params) {
             }
         }
 
+        // Same treatment for the overlay width: record the active percentage
+        // once so the setting is discoverable and the menu has a value to show.
+        if (nonEmpty(options.panelWidth) && labels.panelWidth) {
+            const configured = root.getLabelValue(labels.panelWidth);
+            if (configured === null || configured === undefined || String(configured).trim() === '') {
+                root.setLabel(labels.panelWidth, String(options.panelWidth));
+            }
+        }
+
         if (nonEmpty(options.version) && root.getLabelValue(labels.version) !== String(options.version)) {
             root.setLabel(labels.version, String(options.version));
         }
@@ -4778,11 +4822,27 @@ function beRun(params) {
         return { ok: true, lang: String(options.lang == null ? '' : options.lang) };
     }
 
+    /** Store the overlay width as a percentage, clamped to the allowed range. */
+    function setPanelWidth() {
+        const root = requireNote(options.rootId, text('back.errorSettingsNote', 'Command Maker settings note not found'));
+        if (!labels.panelWidth) {
+            throw new Error(text('back.errorUnknownActionPrefix', 'Unknown action: ') + 'setPanelWidth');
+        }
+        const min = options.min === undefined ? 30 : Number(options.min);
+        const max = options.max === undefined ? 100 : Number(options.max);
+        const parsed = Math.round(Number(options.width));
+        const width = isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : 70;
+        root.setLabel(labels.panelWidth, String(width));
+        return { ok: true, width: width };
+    }
+
     switch (options.action) {
         case 'bootstrap':
             return bootstrap();
         case 'setLanguage':
             return setLanguage();
+        case 'setPanelWidth':
+            return setPanelWidth();
         case 'createTool':
             return createTool();
         case 'importTool':
@@ -4985,6 +5045,22 @@ function openPalette(controller, options) {
     const shell = embedded ? Dom.el('div', 'cm-tab-view') : overlay;
     const panel = Dom.el('div', 'cm-panel');
 
+    /** Overlay width percentage the settings note currently holds. */
+    function currentPanelWidth() {
+        const value = typeof controller.panelWidth === 'function' ? controller.panelWidth() : undefined;
+        return Model.normalizePanelWidth(value);
+    }
+
+    /** Apply the percentage to the floating panel; a tab view stays full width. */
+    function applyPanelWidth(percent) {
+        if (embedded) {
+            return;
+        }
+        panel.style.width = Model.normalizePanelWidth(percent) + '%';
+    }
+
+    applyPanelWidth(currentPanelWidth());
+
     const head = Dom.el('div', 'cm-head');
     const searchInput = document.createElement('input');
     searchInput.type = 'search';
@@ -5114,6 +5190,69 @@ function openPalette(controller, options) {
         const menu = Dom.el('div', 'cm-menu');
         menu.setAttribute('role', 'menu');
         menu.setAttribute('aria-label', I18n.t('ui.versionMenu'));
+
+        if (!embedded) {
+            menu.appendChild(Dom.el('div', 'cm-menu-title', I18n.t('ui.panelWidth')));
+            const widthRow = Dom.el('div', 'cm-menu-row');
+            const widthInput = document.createElement('input');
+            widthInput.type = 'range';
+            widthInput.className = 'cm-width-range';
+            widthInput.min = String(Model.PANEL_WIDTH_MIN);
+            widthInput.max = String(Model.PANEL_WIDTH_MAX);
+            widthInput.step = '5';
+            widthInput.value = String(currentPanelWidth());
+            widthInput.setAttribute('aria-label', I18n.t('ui.panelWidth'));
+            const widthValue = Dom.el('span', 'cm-width-value', widthInput.value + '%');
+            const applyButton = Dom.el('button', 'cm-width-apply', I18n.t('ui.apply'));
+            applyButton.type = 'button';
+            const canSave = typeof controller.setPanelWidth === 'function';
+            // The panel is resized only on Apply: changing it while the pointer
+            // is on the slider moves the whole menu out from under the drag.
+            function pendingWidth() {
+                return Model.normalizePanelWidth(widthInput.value);
+            }
+            function syncApplyState() {
+                applyButton.disabled = !canSave || pendingWidth() === currentPanelWidth();
+            }
+            widthInput.addEventListener('input', function () {
+                const percent = pendingWidth();
+                widthInput.value = String(percent);
+                widthValue.textContent = percent + '%';
+                syncApplyState();
+            });
+            applyButton.addEventListener('click', function (event) {
+                event.preventDefault();
+                if (applyButton.disabled || !canSave) {
+                    return;
+                }
+                const percent = pendingWidth();
+                applyButton.disabled = true;
+                (async function () {
+                    try {
+                        await controller.setPanelWidth(percent);
+                    } catch (error) {
+                        // A failed write must not leave the slider promising a
+                        // width the settings note never stored.
+                        const saved = currentPanelWidth();
+                        widthInput.value = String(saved);
+                        widthValue.textContent = saved + '%';
+                        syncApplyState();
+                        notify(error);
+                        return;
+                    }
+                    applyPanelWidth(percent);
+                    widthInput.value = String(percent);
+                    widthValue.textContent = percent + '%';
+                    syncApplyState();
+                })();
+            });
+            widthRow.appendChild(widthInput);
+            widthRow.appendChild(widthValue);
+            widthRow.appendChild(applyButton);
+            menu.appendChild(widthRow);
+            syncApplyState();
+            menu.appendChild(Dom.el('div', 'cm-menu-sep'));
+        }
 
         const updates = Dom.el('button', 'cm-menu-item', I18n.t('ui.checkUpdates'));
         updates.type = 'button';
@@ -6815,6 +6954,10 @@ let bootstrapPromise = null;
 let bootstrapApi = null;
 let bootstrapInfo = null;
 
+// Overlay width, as a percentage of the window. Resolved from the settings
+// note before the first mount and updated by the palette's width slider.
+let panelWidth = Model.PANEL_WIDTH_DEFAULT;
+
 function getApi() {
     return typeof api !== 'undefined' ? api : null;
 }
@@ -6925,6 +7068,30 @@ async function resolveLocale() {
     return I18n.setLocale(I18n.normalizeLocale(configured) || I18n.detectLocale(navigatorLanguages()));
 }
 
+/**
+ * The `cmPanelWidth` label on the settings note sets the overlay width as a
+ * percentage. Missing or unreadable values fall back to the default.
+ */
+async function resolvePanelWidth() {
+    let configured = '';
+    const apiRef = getApi();
+    if (apiRef) {
+        try {
+            const root = await apiRef.searchForNote('#' + Model.LABELS.root);
+            if (root) {
+                const value = root.getLabelValue(Model.LABELS.panelWidth);
+                configured = value === null || value === undefined ? '' : String(value);
+            }
+        } catch (error) {
+            configured = '';
+        }
+    }
+    panelWidth = configured.trim() === ''
+        ? Model.PANEL_WIDTH_DEFAULT
+        : Model.normalizePanelWidth(configured);
+    return panelWidth;
+}
+
 function ensureBootstrap() {
     const apiRef = getApi();
     if (bootstrapPromise && bootstrapApi === apiRef) {
@@ -6941,6 +7108,7 @@ function ensureBootstrap() {
             icons: Model.ICONS,
             version: Version.VERSION,
             lang: locale,
+            panelWidth: panelWidth,
             strings: I18n.backendStrings(),
             seed: true,
             seedTools: Model.seedTools(),
@@ -7645,6 +7813,28 @@ function controller() {
             return I18n.getLocale();
         },
 
+        /** Active overlay width percentage; the palette applies it on mount. */
+        panelWidth() {
+            return panelWidth;
+        },
+
+        /**
+         * Persist the overlay width on the settings note and remember it, so a
+         * remount (language switch) keeps the chosen percentage.
+         */
+        async setPanelWidth(percent) {
+            const value = Model.normalizePanelWidth(percent);
+            const info = await ensureBootstrap();
+            await backendAction('setPanelWidth', {
+                rootId: info.rootId,
+                width: value,
+                min: Model.PANEL_WIDTH_MIN,
+                max: Model.PANEL_WIDTH_MAX
+            });
+            panelWidth = value;
+            return value;
+        },
+
         async useActiveNoteAsToolsRoot() {
             const apiRef = getApi();
             const active = apiRef.getActiveContextNote();
@@ -7701,12 +7891,18 @@ function start() {
         }
     }
 
-    // The locale comes from a note label, so it is resolved before the first
-    // mount: every label the palette builds is already in the right language.
-    // A failed lookup still opens the palette with the detected language.
-    resolveLocale().catch(function () {
-        return I18n.getLocale();
-    }).then(mount);
+    // The locale and the panel width come from note labels, so both are resolved
+    // before the first mount: every label the palette builds is already in the
+    // right language and the overlay opens at the saved width. A failed lookup
+    // still opens the palette with the detected language and default width.
+    Promise.all([
+        resolveLocale().catch(function () {
+            return I18n.getLocale();
+        }),
+        resolvePanelWidth().catch(function () {
+            return panelWidth;
+        })
+    ]).then(mount);
 }
 
 module.exports = { start, controller, refresh, search, load };
