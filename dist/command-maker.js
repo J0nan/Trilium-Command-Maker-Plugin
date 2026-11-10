@@ -102,7 +102,7 @@ const EN = {
     'ui.toolNamePlaceholder': 'Tool name (e.g. docker)',
     'ui.category': 'Category',
     'ui.newCategory': 'New category…',
-    'ui.newCategoryPlaceholder': 'New category name',
+    'ui.newCategoryPlaceholder': 'New category or path, e.g. Infrastructure/Wifi',
     'ui.baseOptional': 'Base command (optional, defaults to the name)',
 
     // --- option types ------------------------------------------------------
@@ -197,6 +197,7 @@ const EN = {
     'warn.unexpectedKind': 'Unexpected file kind "{kind}"; expected "{expected}".',
     'warn.missingTitle': 'The tool file has no "title".',
     'warn.tooManyOptions': 'The tool file lists {count} options; only the first {max} are imported.',
+    'warn.categoryPathTooDeep': 'The category path is deeper than {max} folders; only the first {max} are imported.',
 
     // --- import options dialog --------------------------------------------
     'import.hint': 'Paste "--help" output, a JSON options file, or a markdown table. Nothing is written until you import.',
@@ -314,6 +315,7 @@ const EN = {
     'prompt.convert': 'Convert the input above now. Return only the JSON object.',
     'prompt.schemaTitle': '<command name, e.g. git commit>',
     'prompt.schemaCategory': '<short group, e.g. Version control>',
+    'prompt.schemaCategoryPath': '<folder path, outermost first, e.g. Version control>',
     'prompt.schemaBase': '<command the user types, e.g. git commit>',
     'prompt.schemaDescription': '<one sentence>',
     'prompt.schemaInstall': '<p>Install on Windows:</p><pre><code>winget install tool</code></pre>',
@@ -324,6 +326,7 @@ const EN = {
     'prompt.ruleTitleBase': '- title: the command name. base: the exact command the user types (keep subcommands, e.g. "git commit").',
     'prompt.ruleTags': '- tags, presets and per-option "content" exist for full backups; leave them out unless a backup was asked for.',
     'prompt.ruleCategory': '- category: a short group such as "Network", "Media" or "Version control".',
+    'prompt.ruleCategoryPath': '- categoryPath: the folder chain from the Tools root to the tool folder, outermost first, for example ["Infrastructure", "Wifi"]; one entry when there is no subcategory.',
     'prompt.ruleDescription': '- description: one sentence that explains what the tool does.',
     'prompt.ruleContent': function () {
         return '- content: HTML with exactly three <h2> sections in this order: "'
@@ -512,7 +515,7 @@ const ES = {
     'ui.toolNamePlaceholder': 'Nombre de la herramienta (p. ej. docker)',
     'ui.category': 'Categoría',
     'ui.newCategory': 'Nueva categoría…',
-    'ui.newCategoryPlaceholder': 'Nombre de la nueva categoría',
+    'ui.newCategoryPlaceholder': 'Categoría o ruta nueva, p. ej. Infraestructura/Wifi',
     'ui.baseOptional': 'Comando base (opcional, por defecto el nombre)',
 
     // --- option types ------------------------------------------------------
@@ -607,6 +610,7 @@ const ES = {
     'warn.unexpectedKind': 'Tipo de archivo inesperado "{kind}"; se esperaba "{expected}".',
     'warn.missingTitle': 'El archivo de herramienta no tiene "title".',
     'warn.tooManyOptions': 'El archivo de herramienta lista {count} opciones; solo se importan las primeras {max}.',
+    'warn.categoryPathTooDeep': 'La ruta de categorías tiene más de {max} carpetas; solo se importan las primeras {max}.',
 
     // --- import options dialog --------------------------------------------
     'import.hint': 'Pega la salida de "--help", un archivo JSON de opciones o una tabla markdown. No se escribe nada hasta que importes.',
@@ -732,6 +736,7 @@ const ES = {
     'prompt.convert': 'Convierte la entrada anterior ahora. Devuelve solo el objeto JSON.',
     'prompt.schemaTitle': '<nombre del comando, p. ej. git commit>',
     'prompt.schemaCategory': '<grupo corto, p. ej. Control de versiones>',
+    'prompt.schemaCategoryPath': '<ruta de carpetas, de fuera hacia dentro, p. ej. Control de versiones>',
     'prompt.schemaBase': '<comando que escribe el usuario, p. ej. git commit>',
     'prompt.schemaDescription': '<una frase>',
     'prompt.schemaInstall': '<p>Instalar en Windows:</p><pre><code>winget install tool</code></pre>',
@@ -742,6 +747,7 @@ const ES = {
     'prompt.ruleTitleBase': '- title: el nombre del comando. base: el comando exacto que escribe el usuario (mantén los subcomandos, p. ej. "git commit").',
     'prompt.ruleTags': '- tags, presets y el "content" de cada opción existen para copias de seguridad completas; omítelos salvo que se pida una copia de seguridad.',
     'prompt.ruleCategory': '- category: un grupo corto como "Red", "Multimedia" o "Control de versiones".',
+    'prompt.ruleCategoryPath': '- categoryPath: la cadena de carpetas desde la raíz Tools hasta la carpeta de la herramienta, de fuera hacia dentro, por ejemplo ["Infraestructura", "Wifi"]; una sola entrada si no hay subcategoría.',
     'prompt.ruleDescription': '- description: una frase que explique qué hace la herramienta.',
     'prompt.ruleContent': function () {
         return '- content: HTML con exactamente tres secciones <h2> en este orden: "'
@@ -2458,12 +2464,16 @@ __def("toolfile", function (module, exports, __require) {
  *   kind: 'command-maker-tool',
  *   version: 2,
  *   tool: {
- *     title, category, base, description, tags,
+ *     title, category, categoryPath, base, description, tags,
  *     content, install, usage, help,
  *     options: [ { ...option fields, content }, ... ],
  *     presets: [ { name, values }, ... ]
  *   }
  * }
+ *
+ * `categoryPath` is the folder chain from the Tools root to the tool's own
+ * folder, outermost first (`["Infrastructure", "Wifi"]`); `category` repeats
+ * its last entry so older readers still know where the tool goes.
  *
  * An option uses the same fields the backend option notes store, with the
  * portable names label/help/values/default so an AI model can fill it in
@@ -2478,6 +2488,8 @@ const FILE_VERSION = 2;
 // One tool file must not be able to create thousands of notes in a single
 // import: the same bound the parser applies to examples (MAX_EXAMPLES).
 const MAX_OPTIONS = 200;
+// A hostile or generated file must not create a deep folder tree either.
+const MAX_CATEGORY_DEPTH = 16;
 
 function text(value) {
     return value === undefined || value === null ? '' : String(value);
@@ -2621,9 +2633,43 @@ function normaliseOption(entry, index, warnings) {
     };
 }
 
+/**
+ * Category chain (outermost first) -> the folder titles the backend creates.
+ * Only strings count, so a hand-edited file cannot smuggle objects or numbers
+ * into folder titles; a file without a usable chain falls back to its single
+ * `category`, which is how version-2 files exported before nesting support
+ * still land in the right folder.
+ */
+function normaliseCategoryPath(raw, fallback, warnings) {
+    const out = [];
+    if (Array.isArray(raw)) {
+        for (let index = 0; index < raw.length; index += 1) {
+            if (typeof raw[index] !== 'string') {
+                continue;
+            }
+            const next = raw[index].trim();
+            if (next !== '') {
+                out.push(next);
+            }
+        }
+    }
+    if (out.length === 0 && nonEmpty(fallback)) {
+        out.push(trimmed(fallback));
+    }
+    if (out.length > MAX_CATEGORY_DEPTH) {
+        warnings.push({
+            code: 'category-path-too-deep',
+            message: I18n.t('warn.categoryPathTooDeep', { max: MAX_CATEGORY_DEPTH })
+        });
+        out.length = MAX_CATEGORY_DEPTH;
+    }
+    return out;
+}
+
 /** Tool object (exported or hand-written) -> the canonical portable tool. */
 function normaliseTool(spec, warnings) {
     const source = spec && typeof spec === 'object' && !Array.isArray(spec) ? spec : {};
+    const categoryPath = normaliseCategoryPath(source.categoryPath, source.category, warnings);
     const options = [];
     if (Array.isArray(source.options)) {
         for (let index = 0; index < source.options.length; index += 1) {
@@ -2641,7 +2687,8 @@ function normaliseTool(spec, warnings) {
 
     return {
         title: trimmed(source.title),
-        category: trimmed(source.category),
+        categoryPath: categoryPath,
+        category: categoryPath.length ? categoryPath[categoryPath.length - 1] : trimmed(source.category),
         base: trimmed(source.base),
         description: trimmed(source.description),
         tags: trimmed(source.tags),
@@ -2736,6 +2783,7 @@ module.exports = {
     TOOL_KIND,
     FILE_VERSION,
     MAX_OPTIONS,
+    MAX_CATEGORY_DEPTH,
     normalisePresets,
     buildToolFile,
     parseToolFile
@@ -2767,6 +2815,7 @@ function schema() {
         tool: {
             title: I18n.t('prompt.schemaTitle'),
             category: I18n.t('prompt.schemaCategory'),
+            categoryPath: [I18n.t('prompt.schemaCategoryPath')],
             base: I18n.t('prompt.schemaBase'),
             description: I18n.t('prompt.schemaDescription'),
             content: '<h2>' + whatIs + '</h2><p>...</p><h2>' + official
@@ -2798,6 +2847,7 @@ function rules() {
         I18n.t('prompt.ruleTitleBase'),
         I18n.t('prompt.ruleTags'),
         I18n.t('prompt.ruleCategory'),
+        I18n.t('prompt.ruleCategoryPath'),
         I18n.t('prompt.ruleDescription'),
         I18n.t('prompt.ruleContent'),
         I18n.t('prompt.ruleContentBody'),
@@ -2871,12 +2921,17 @@ __def("model", function (module, exports, __require) {
  *
  * A tool definition looks like:
  * {
- *   noteId, title, category, description, tags, base,
+ *   noteId, title, category, categoryPath, categoryLabel,
+ *   description, tags, base,
  *   options: [ option, ... ],
  *   inferred: [ option, ... ],
  *   placeholders: [ name, ... ],
  *   warnings: [ { code, message } ]
  * }
+ *
+ * `category` is the immediate folder that groups the tool; `categoryPath` is
+ * the folder chain from Tools down to it, and `categoryLabel` that chain as
+ * one display string ("Infrastructure / Wifi").
  */
 
 const Render = __require("render");
@@ -3037,6 +3092,19 @@ function sortOptions(left, right) {
 function buildTool(note) {
     const snapshot = note || {};
     const labels = snapshot.labels || {};
+    // Folders may nest (Tools/Infrastructure/Wifi), so a tool keeps the whole
+    // chain: `category` stays the immediate folder for creation and export,
+    // while `categoryPath`/`categoryLabel` are what the palette shows.
+    const categoryPath = Array.isArray(snapshot.categoryPath)
+        ? snapshot.categoryPath
+            .map(function (part) {
+                return String(part);
+            })
+            .filter(function (part) {
+                return part !== '';
+            })
+        : [];
+    const category = String(snapshot.category || '');
 
     const configuredBase = labels[LABELS.base];
     const base = configuredBase !== undefined && configuredBase !== null && String(configuredBase).trim() !== ''
@@ -3110,7 +3178,9 @@ function buildTool(note) {
     return {
         noteId: snapshot.noteId || '',
         title: String(snapshot.title || ''),
-        category: String(snapshot.category || ''),
+        category: category,
+        categoryPath: categoryPath,
+        categoryLabel: categoryPath.length ? categoryPath.join(' / ') : category,
         description: readString(labels, LABELS.description, ''),
         tags: readString(labels, LABELS.tags, ''),
         base: base,
@@ -3473,7 +3543,7 @@ __def("version", function (module, exports, __require) {
  * a newer one. `tools/build.mjs` fails the build when VERSION and package.json
  * disagree.
  */
-const VERSION = '1.1';
+const VERSION = '1.2';
 const REPOSITORY = 'https://github.com/J0nan/Trilium-Command-Maker-Plugin';
 const LATEST_RELEASE_API = 'https://api.github.com/repos/J0nan/Trilium-Command-Maker-Plugin/releases/latest';
 const LATEST_TAGS_API = 'https://api.github.com/repos/J0nan/Trilium-Command-Maker-Plugin/tags?per_page=50';
@@ -4036,8 +4106,8 @@ function beRun(params) {
         note.setLabel(labels.icon, String(className));
     }
 
-    function findCategory(toolsRoot, name) {
-        const children = toolsRoot.getChildNotes();
+    function findCategory(parent, name) {
+        const children = parent.getChildNotes();
         for (let index = 0; index < children.length; index += 1) {
             if (children[index].title === name && hasLabel(children[index], labels.category)) {
                 return children[index];
@@ -4046,19 +4116,31 @@ function beRun(params) {
         return null;
     }
 
-    function ensureCategory(toolsRoot, name) {
-        const existing = findCategory(toolsRoot, name);
+    function ensureCategory(parent, name) {
+        const existing = findCategory(parent, name);
         if (existing) {
             return existing;
         }
         const note = track(api.createNewNote({
-            parentNoteId: toolsRoot.noteId,
+            parentNoteId: parent.noteId,
             title: name,
             type: 'text',
             content: ''
         }).note);
         note.setLabel(labels.category, '');
         return note;
+    }
+
+    /** Walk (and create) one nested category folder per path entry. */
+    function ensureCategoryPath(toolsRoot, path) {
+        // The tool-file reader already bounds the depth; this action can also
+        // be called directly, so the bound lives here too.
+        const depth = Math.min(path.length, 16);
+        let parent = toolsRoot;
+        for (let index = 0; index < depth; index += 1) {
+            parent = ensureCategory(parent, path[index]);
+        }
+        return parent;
     }
 
     function ensureOptionsFolder(toolNote) {
@@ -4210,8 +4292,19 @@ function beRun(params) {
         const safeSpec = spec || {};
         const safeFallbacks = fallbacks || {};
         const categoryName = nonEmpty(safeSpec.category) ? String(safeSpec.category) : text('back.noteUncategorized', 'Uncategorized');
+        // `categoryPath` turns a nested tool file into real nested folders;
+        // a caller that only knows one category keeps the flat behaviour.
+        const categoryPath = Array.isArray(safeSpec.categoryPath)
+            ? safeSpec.categoryPath
+                .map(function (segment) {
+                    return String(segment).trim();
+                })
+                .filter(function (segment) {
+                    return segment !== '';
+                })
+            : [];
         const title = nonEmpty(safeSpec.title) ? String(safeSpec.title) : text('back.noteNewTool', 'New tool');
-        const category = ensureCategory(toolsRoot, categoryName);
+        const category = ensureCategoryPath(toolsRoot, categoryPath.length ? categoryPath : [categoryName]);
         const note = track(api.createNewNote({
             parentNoteId: category.noteId,
             title: title,
@@ -4703,14 +4796,14 @@ __def("ui", function (module, exports, __require) {
  *
  * The UI is driven by a controller (see runtime.js):
  *   refresh(): Promise<void>
- *   search(query): Array<{ noteId, title, category, description, base }>
+ *   search(query): Array<{ noteId, title, category, categoryLabel, description, base }>
  *   load(noteId): Promise<{ definition, presets, whatIs, links, usageExamples,
  *                            helpText, installText, ... }>
  *   copy(text): Promise<boolean>
  *   insert(text): void
  *   message(text): void            show a non-blocking Trilium message
  *   error(text): void              show a Trilium error message
- *   categories(): string[]
+ *   categories(): Array<{ label, path }>  // label = "Infrastructure / Wifi"
  *   createTool(spec): Promise<{ noteId }>
  *   importTool(tool): Promise<{ noteId }>
  *   exportTool(noteId): Promise<{ kind, version, tool }>
@@ -4754,7 +4847,28 @@ function codeCopyButton() {
 
 const NEW_CATEGORY = '__new__';
 
+/** Category line of the import preview: the whole folder path when there is one. */
+function categoryPreview(tool) {
+    const safe = tool || {};
+    if (Array.isArray(safe.categoryPath) && safe.categoryPath.length) {
+        return safe.categoryPath.join(' / ');
+    }
+    return safe.category || I18n.t('importTool.uncategorized');
+}
+
 let instance = null;
+
+/** "Infrastructure / Wifi" -> ['Infrastructure', 'Wifi']; blank segments drop. */
+function parseCategoryPath(value) {
+    return String(value == null ? '' : value)
+        .split('/')
+        .map(function (part) {
+            return part.trim();
+        })
+        .filter(function (part) {
+            return part !== '';
+        });
+}
 
 /**
  * Resolve after the handler, so a rejected promise becomes a status message.
@@ -5182,8 +5296,9 @@ function openPalette(controller, options) {
             row.type = 'button';
             row.appendChild(Dom.el('div', 'cm-result-title', item.title));
             const meta = Dom.el('div', 'cm-result-meta');
-            if (item.category) {
-                meta.appendChild(Dom.el('span', 'cm-cat', item.category));
+            const categoryLabel = item.categoryLabel || item.category;
+            if (categoryLabel) {
+                meta.appendChild(Dom.el('span', 'cm-cat', categoryLabel));
             }
             if (item.description) {
                 meta.appendChild(Dom.el('div', 'cm-result-desc', item.description));
@@ -5771,8 +5886,9 @@ function openPalette(controller, options) {
         const header = Dom.el('div', 'cm-detail-head');
         const title = Dom.el('h2', 'cm-title');
         title.appendChild(Dom.el('span', '', definition.title));
-        if (definition.category) {
-            title.appendChild(Dom.el('span', 'cm-cat', definition.category));
+        const categoryLabel = definition.categoryLabel || definition.category;
+        if (categoryLabel) {
+            title.appendChild(Dom.el('span', 'cm-cat', categoryLabel));
         }
         header.appendChild(title);
         if (definition.description) {
@@ -5942,11 +6058,13 @@ function openPalette(controller, options) {
         categorySelect.className = 'cm-control cm-select';
         categorySelect.setAttribute('aria-label', I18n.t('ui.category'));
         const categories = controller.categories();
-        categories.forEach(function (name) {
+        const categoryPaths = [];
+        categories.forEach(function (entry) {
             const option = document.createElement('option');
-            option.value = name;
-            option.textContent = name;
+            option.value = String(categoryPaths.length);
+            option.textContent = entry.label;
             categorySelect.appendChild(option);
+            categoryPaths.push(entry.path);
         });
         const newCategoryOption = document.createElement('option');
         newCategoryOption.value = NEW_CATEGORY;
@@ -5979,14 +6097,17 @@ function openPalette(controller, options) {
                 return;
             }
             const isNewCategory = categorySelect.value === NEW_CATEGORY;
-            const category = isNewCategory ? newCategoryInput.value.trim() : categorySelect.value;
-            if (isNewCategory && !category) {
+            const categoryPath = isNewCategory
+                ? parseCategoryPath(newCategoryInput.value)
+                : (categoryPaths[Number(categorySelect.value)] || []).slice();
+            if (!categoryPath.length) {
                 notify(new Error(I18n.t('status.categoryRequired')));
                 return;
             }
             const created = await controller.createTool({
                 title: title,
-                category: category,
+                category: categoryPath[categoryPath.length - 1],
+                categoryPath: categoryPath,
                 base: baseInput.value.trim(),
                 description: ''
             });
@@ -6221,7 +6342,7 @@ function openPalette(controller, options) {
             }
             [
                 [I18n.t('importTool.fieldTitle'), tool.title],
-                [I18n.t('importTool.fieldCategory'), tool.category || I18n.t('importTool.uncategorized')],
+                [I18n.t('importTool.fieldCategory'), categoryPreview(tool)],
                 [I18n.t('importTool.fieldBase'), tool.base || Model.deriveBase(tool.title)]
             ].forEach(function (line) {
                 previewList.appendChild(Dom.el('div', 'cm-import-flag', line[0] + ': ' + line[1]));
@@ -6594,13 +6715,14 @@ __def("runtime", function (module, exports, __require) {
  * Structure the runtime expects:
  *   Tools/                 #cmTools (any path)
  *     Category/            #cmCategory
- *       Tool/              #cmTool  (three H2 sections in its content)
- *         Install          #cmInstall
- *         Usage            #cmUsage
- *         Help             #cmHelpNote
- *         Options/         #cmOptions
- *           Option         #cmOption
- *           Presets        #cmPresets (JSON)
+ *       Subcategory/       #cmCategory  (optional, any depth)
+ *         Tool/            #cmTool  (three H2 sections in its content)
+ *           Install        #cmInstall
+ *           Usage          #cmUsage
+ *           Help           #cmHelpNote
+ *           Options/       #cmOptions
+ *             Option       #cmOption
+ *             Presets      #cmPresets (JSON)
  */
 
 const Model = __require("model");
@@ -6800,25 +6922,51 @@ async function readOptionSnapshots(toolNote) {
     return snapshots;
 }
 
+/**
+ * Folder chain that groups a tool, outermost first: a tool in
+ * Tools/Infrastructure/Wifi yields ['Infrastructure', 'Wifi']. The walk stops
+ * at the Tools root, so the root itself never shows as a category; a note
+ * moved outside that tree still reports the folders it actually sits in.
+ */
+function categoryPath(note, rootId) {
+    const path = [];
+    let current = note;
+    for (let depth = 0; depth < 32; depth += 1) {
+        let parents = [];
+        try {
+            parents = current && typeof current.getParentNotes === 'function'
+                ? current.getParentNotes()
+                : [];
+        } catch (error) {
+            parents = [];
+        }
+        const parent = Array.isArray(parents) && parents.length ? parents[0] : null;
+        if (!parent) {
+            break;
+        }
+        if (rootId && parent.noteId === rootId) {
+            break;
+        }
+        path.unshift(String(parent.title || ''));
+        current = parent;
+    }
+    return path;
+}
+
 async function refresh() {
     await ensureBootstrap();
     const apiRef = getApi();
     const notes = await apiRef.searchForNotes('#' + Model.LABELS.tool);
+    const rootId = bootstrapInfo ? bootstrapInfo.toolsRootId : '';
 
     const nextIndex = [];
     const nextById = new Map();
 
     for (const note of notes) {
         const labels = readLabels(note);
-        let category = '';
-        try {
-            const parents = note.getParentNotes();
-            if (parents && parents.length) {
-                category = parents[0].title;
-            }
-        } catch (error) {
-            category = '';
-        }
+        const path = categoryPath(note, rootId);
+        const category = path.length ? path[path.length - 1] : '';
+        const categoryLabel = path.join(' / ');
 
         let optionSnapshots = [];
         try {
@@ -6841,6 +6989,8 @@ async function refresh() {
             noteId: note.noteId,
             title: note.title,
             category: category,
+            categoryPath: path,
+            categoryLabel: categoryLabel,
             labels: labels,
             note: note,
             optionSnapshots: optionSnapshots
@@ -6851,6 +7001,8 @@ async function refresh() {
             noteId: note.noteId,
             title: note.title,
             category: category,
+            categoryPath: path,
+            categoryLabel: categoryLabel,
             description: description,
             base: base,
             // Built once per refresh: search runs on every keystroke, and the
@@ -6858,7 +7010,7 @@ async function refresh() {
             // to Model.matchesText.
             searchable: Model.searchableText({
                 title: note.title,
-                category: category,
+                category: categoryLabel,
                 description: description,
                 tags: labels[Model.LABELS.tags],
                 base: base,
@@ -6947,6 +7099,7 @@ async function load(noteId) {
         noteId: note.noteId,
         title: note.title,
         category: entry.category,
+        categoryPath: entry.categoryPath,
         content: toolContent,
         labels: labels,
         optionNotes: entry.optionSnapshots,
@@ -7050,6 +7203,7 @@ async function exportTool(noteId) {
     return ToolFile.buildToolFile({
         title: note.title,
         category: entry.category,
+        categoryPath: entry.categoryPath,
         base: definition.base,
         description: definition.description,
         tags: labels[Model.LABELS.tags] || '',
@@ -7305,21 +7459,36 @@ function controller() {
         },
 
         categories() {
-            const seen = new Set();
+            const seen = new Map();
             for (const item of index) {
-                if (item.category) {
-                    seen.add(item.category);
+                if (item.categoryLabel && item.categoryPath && item.categoryPath.length) {
+                    if (!seen.has(item.categoryLabel)) {
+                        seen.set(item.categoryLabel, item.categoryPath.slice());
+                    }
                 }
             }
-            return Array.from(seen).sort();
+            return Array.from(seen.keys()).sort().map(function (label) {
+                return { label: label, path: seen.get(label) };
+            });
         },
 
         async createTool(spec) {
+            const safe = spec || {};
+            const categoryPath = Array.isArray(safe.categoryPath)
+                ? safe.categoryPath
+                    .map(function (segment) {
+                        return String(segment).trim();
+                    })
+                    .filter(function (segment) {
+                        return segment !== '';
+                    })
+                : [];
             const notes = Model.newToolNotes();
             const created = await backendAction('createTool', {
                 toolsRootId: toolsRootId(),
-                category: spec.category,
-                title: spec.title,
+                category: safe.category || (categoryPath.length ? categoryPath[categoryPath.length - 1] : ''),
+                categoryPath: categoryPath,
+                title: safe.title,
                 base: spec.base,
                 description: spec.description,
                 content: notes.content,

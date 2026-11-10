@@ -319,6 +319,61 @@ test('setToolsRoot keeps the pointer when removing the old label fails', () => {
     );
 });
 
+test('importTool recreates nested categories from the category path', () => {
+    const { api, beRun, result } = seedApi();
+    const created = beRun({
+        action: 'importTool',
+        labels,
+        toolsRootId: result.toolsRootId,
+        newToolNotes: Model.newToolNotes(),
+        tool: {
+            title: 'iwconfig',
+            category: 'Wifi',
+            categoryPath: ['Infrastructure', 'Wifi'],
+            base: 'iwconfig'
+        }
+    });
+
+    const toolsRoot = api.getNote(result.toolsRootId);
+    const outer = toolsRoot.getChildNotes().filter((child) => {
+        return child.title === 'Infrastructure' && child.hasLabel(labels.category);
+    })[0];
+    assert.ok(outer, 'the outer category is created under the Tools root');
+    const inner = outer.getChildNotes().filter((child) => {
+        return child.title === 'Wifi' && child.hasLabel(labels.category);
+    })[0];
+    assert.ok(inner, 'the subcategory is created inside it');
+    assert.ok(
+        inner.getChildNotes().some((child) => child.noteId === created.noteId),
+        'the tool lands in the innermost folder'
+    );
+    assert.equal(
+        toolsRoot.getChildNotes().filter((child) => child.title === 'Wifi').length,
+        0,
+        'no flat folder with the leaf name is created'
+    );
+});
+
+test('a second import into the same nested path reuses its folders', () => {
+    const { api, beRun, result } = seedApi();
+    const importOne = (title) => beRun({
+        action: 'importTool',
+        labels,
+        toolsRootId: result.toolsRootId,
+        newToolNotes: Model.newToolNotes(),
+        tool: { title: title, category: 'Wifi', categoryPath: ['Infrastructure', 'Wifi'] }
+    });
+    importOne('iwconfig');
+    importOne('iwlist');
+
+    const toolsRoot = api.getNote(result.toolsRootId);
+    const outers = toolsRoot.getChildNotes().filter((child) => child.title === 'Infrastructure');
+    assert.equal(outers.length, 1, 'the outer folder is reused');
+    const inners = outers[0].getChildNotes().filter((child) => child.title === 'Wifi');
+    assert.equal(inners.length, 1, 'the subcategory is reused');
+    assert.equal(inners[0].getChildNotes().filter((child) => child.hasLabel(labels.tool)).length, 2);
+});
+
 test('createToolNote removes notes it already created when a later step throws', () => {
     const { api, beRun, result } = seedApi();
     const originalCreate = api.createNewNote;
@@ -357,6 +412,36 @@ test('createToolNote removes notes it already created when a later step throws',
         aliveTools.length,
         2,
         'the seeded tools survive untouched'
+    );
+});
+
+test('a failed nested import removes the category folders it created', () => {
+    const { api, beRun, result } = seedApi();
+    const originalCreate = api.createNewNote;
+    let createCount = 0;
+    api.createNewNote = function (params) {
+        createCount += 1;
+        if (createCount === 3) {
+            throw new Error('database is busy');
+        }
+        return originalCreate.call(api, params);
+    };
+
+    assert.throws(() => beRun({
+        action: 'importTool',
+        labels,
+        toolsRootId: result.toolsRootId,
+        newToolNotes: Model.newToolNotes(),
+        tool: { title: 'partial', category: 'Wifi', categoryPath: ['Infrastructure', 'Wifi'], base: 'partial' }
+    }), 'the import failure surfaces');
+    api.createNewNote = originalCreate;
+
+    const aliveCategories = api.getNotesWithLabel(labels.category).filter((note) => !note.deleted);
+    assert.equal(aliveCategories.length, 2, 'only the two seeded categories survive');
+    assert.equal(
+        aliveCategories.filter((note) => note.title === 'Infrastructure' || note.title === 'Wifi').length,
+        0,
+        'both folders created for the failed import were cleaned up'
     );
 });
 

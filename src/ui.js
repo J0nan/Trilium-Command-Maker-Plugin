@@ -6,14 +6,14 @@
  *
  * The UI is driven by a controller (see runtime.js):
  *   refresh(): Promise<void>
- *   search(query): Array<{ noteId, title, category, description, base }>
+ *   search(query): Array<{ noteId, title, category, categoryLabel, description, base }>
  *   load(noteId): Promise<{ definition, presets, whatIs, links, usageExamples,
  *                            helpText, installText, ... }>
  *   copy(text): Promise<boolean>
  *   insert(text): void
  *   message(text): void            show a non-blocking Trilium message
  *   error(text): void              show a Trilium error message
- *   categories(): string[]
+ *   categories(): Array<{ label, path }>  // label = "Infrastructure / Wifi"
  *   createTool(spec): Promise<{ noteId }>
  *   importTool(tool): Promise<{ noteId }>
  *   exportTool(noteId): Promise<{ kind, version, tool }>
@@ -57,7 +57,28 @@ function codeCopyButton() {
 
 const NEW_CATEGORY = '__new__';
 
+/** Category line of the import preview: the whole folder path when there is one. */
+function categoryPreview(tool) {
+    const safe = tool || {};
+    if (Array.isArray(safe.categoryPath) && safe.categoryPath.length) {
+        return safe.categoryPath.join(' / ');
+    }
+    return safe.category || I18n.t('importTool.uncategorized');
+}
+
 let instance = null;
+
+/** "Infrastructure / Wifi" -> ['Infrastructure', 'Wifi']; blank segments drop. */
+function parseCategoryPath(value) {
+    return String(value == null ? '' : value)
+        .split('/')
+        .map(function (part) {
+            return part.trim();
+        })
+        .filter(function (part) {
+            return part !== '';
+        });
+}
 
 /**
  * Resolve after the handler, so a rejected promise becomes a status message.
@@ -485,8 +506,9 @@ function openPalette(controller, options) {
             row.type = 'button';
             row.appendChild(Dom.el('div', 'cm-result-title', item.title));
             const meta = Dom.el('div', 'cm-result-meta');
-            if (item.category) {
-                meta.appendChild(Dom.el('span', 'cm-cat', item.category));
+            const categoryLabel = item.categoryLabel || item.category;
+            if (categoryLabel) {
+                meta.appendChild(Dom.el('span', 'cm-cat', categoryLabel));
             }
             if (item.description) {
                 meta.appendChild(Dom.el('div', 'cm-result-desc', item.description));
@@ -1074,8 +1096,9 @@ function openPalette(controller, options) {
         const header = Dom.el('div', 'cm-detail-head');
         const title = Dom.el('h2', 'cm-title');
         title.appendChild(Dom.el('span', '', definition.title));
-        if (definition.category) {
-            title.appendChild(Dom.el('span', 'cm-cat', definition.category));
+        const categoryLabel = definition.categoryLabel || definition.category;
+        if (categoryLabel) {
+            title.appendChild(Dom.el('span', 'cm-cat', categoryLabel));
         }
         header.appendChild(title);
         if (definition.description) {
@@ -1245,11 +1268,13 @@ function openPalette(controller, options) {
         categorySelect.className = 'cm-control cm-select';
         categorySelect.setAttribute('aria-label', I18n.t('ui.category'));
         const categories = controller.categories();
-        categories.forEach(function (name) {
+        const categoryPaths = [];
+        categories.forEach(function (entry) {
             const option = document.createElement('option');
-            option.value = name;
-            option.textContent = name;
+            option.value = String(categoryPaths.length);
+            option.textContent = entry.label;
             categorySelect.appendChild(option);
+            categoryPaths.push(entry.path);
         });
         const newCategoryOption = document.createElement('option');
         newCategoryOption.value = NEW_CATEGORY;
@@ -1282,14 +1307,17 @@ function openPalette(controller, options) {
                 return;
             }
             const isNewCategory = categorySelect.value === NEW_CATEGORY;
-            const category = isNewCategory ? newCategoryInput.value.trim() : categorySelect.value;
-            if (isNewCategory && !category) {
+            const categoryPath = isNewCategory
+                ? parseCategoryPath(newCategoryInput.value)
+                : (categoryPaths[Number(categorySelect.value)] || []).slice();
+            if (!categoryPath.length) {
                 notify(new Error(I18n.t('status.categoryRequired')));
                 return;
             }
             const created = await controller.createTool({
                 title: title,
-                category: category,
+                category: categoryPath[categoryPath.length - 1],
+                categoryPath: categoryPath,
                 base: baseInput.value.trim(),
                 description: ''
             });
@@ -1524,7 +1552,7 @@ function openPalette(controller, options) {
             }
             [
                 [I18n.t('importTool.fieldTitle'), tool.title],
-                [I18n.t('importTool.fieldCategory'), tool.category || I18n.t('importTool.uncategorized')],
+                [I18n.t('importTool.fieldCategory'), categoryPreview(tool)],
                 [I18n.t('importTool.fieldBase'), tool.base || Model.deriveBase(tool.title)]
             ].forEach(function (line) {
                 previewList.appendChild(Dom.el('div', 'cm-import-flag', line[0] + ': ' + line[1]));

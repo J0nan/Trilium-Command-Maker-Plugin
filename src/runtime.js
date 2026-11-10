@@ -7,13 +7,14 @@
  * Structure the runtime expects:
  *   Tools/                 #cmTools (any path)
  *     Category/            #cmCategory
- *       Tool/              #cmTool  (three H2 sections in its content)
- *         Install          #cmInstall
- *         Usage            #cmUsage
- *         Help             #cmHelpNote
- *         Options/         #cmOptions
- *           Option         #cmOption
- *           Presets        #cmPresets (JSON)
+ *       Subcategory/       #cmCategory  (optional, any depth)
+ *         Tool/            #cmTool  (three H2 sections in its content)
+ *           Install        #cmInstall
+ *           Usage          #cmUsage
+ *           Help           #cmHelpNote
+ *           Options/       #cmOptions
+ *             Option       #cmOption
+ *             Presets      #cmPresets (JSON)
  */
 
 const Model = require('./model');
@@ -213,25 +214,51 @@ async function readOptionSnapshots(toolNote) {
     return snapshots;
 }
 
+/**
+ * Folder chain that groups a tool, outermost first: a tool in
+ * Tools/Infrastructure/Wifi yields ['Infrastructure', 'Wifi']. The walk stops
+ * at the Tools root, so the root itself never shows as a category; a note
+ * moved outside that tree still reports the folders it actually sits in.
+ */
+function categoryPath(note, rootId) {
+    const path = [];
+    let current = note;
+    for (let depth = 0; depth < 32; depth += 1) {
+        let parents = [];
+        try {
+            parents = current && typeof current.getParentNotes === 'function'
+                ? current.getParentNotes()
+                : [];
+        } catch (error) {
+            parents = [];
+        }
+        const parent = Array.isArray(parents) && parents.length ? parents[0] : null;
+        if (!parent) {
+            break;
+        }
+        if (rootId && parent.noteId === rootId) {
+            break;
+        }
+        path.unshift(String(parent.title || ''));
+        current = parent;
+    }
+    return path;
+}
+
 async function refresh() {
     await ensureBootstrap();
     const apiRef = getApi();
     const notes = await apiRef.searchForNotes('#' + Model.LABELS.tool);
+    const rootId = bootstrapInfo ? bootstrapInfo.toolsRootId : '';
 
     const nextIndex = [];
     const nextById = new Map();
 
     for (const note of notes) {
         const labels = readLabels(note);
-        let category = '';
-        try {
-            const parents = note.getParentNotes();
-            if (parents && parents.length) {
-                category = parents[0].title;
-            }
-        } catch (error) {
-            category = '';
-        }
+        const path = categoryPath(note, rootId);
+        const category = path.length ? path[path.length - 1] : '';
+        const categoryLabel = path.join(' / ');
 
         let optionSnapshots = [];
         try {
@@ -254,6 +281,8 @@ async function refresh() {
             noteId: note.noteId,
             title: note.title,
             category: category,
+            categoryPath: path,
+            categoryLabel: categoryLabel,
             labels: labels,
             note: note,
             optionSnapshots: optionSnapshots
@@ -264,6 +293,8 @@ async function refresh() {
             noteId: note.noteId,
             title: note.title,
             category: category,
+            categoryPath: path,
+            categoryLabel: categoryLabel,
             description: description,
             base: base,
             // Built once per refresh: search runs on every keystroke, and the
@@ -271,7 +302,7 @@ async function refresh() {
             // to Model.matchesText.
             searchable: Model.searchableText({
                 title: note.title,
-                category: category,
+                category: categoryLabel,
                 description: description,
                 tags: labels[Model.LABELS.tags],
                 base: base,
@@ -360,6 +391,7 @@ async function load(noteId) {
         noteId: note.noteId,
         title: note.title,
         category: entry.category,
+        categoryPath: entry.categoryPath,
         content: toolContent,
         labels: labels,
         optionNotes: entry.optionSnapshots,
@@ -463,6 +495,7 @@ async function exportTool(noteId) {
     return ToolFile.buildToolFile({
         title: note.title,
         category: entry.category,
+        categoryPath: entry.categoryPath,
         base: definition.base,
         description: definition.description,
         tags: labels[Model.LABELS.tags] || '',
@@ -718,21 +751,36 @@ function controller() {
         },
 
         categories() {
-            const seen = new Set();
+            const seen = new Map();
             for (const item of index) {
-                if (item.category) {
-                    seen.add(item.category);
+                if (item.categoryLabel && item.categoryPath && item.categoryPath.length) {
+                    if (!seen.has(item.categoryLabel)) {
+                        seen.set(item.categoryLabel, item.categoryPath.slice());
+                    }
                 }
             }
-            return Array.from(seen).sort();
+            return Array.from(seen.keys()).sort().map(function (label) {
+                return { label: label, path: seen.get(label) };
+            });
         },
 
         async createTool(spec) {
+            const safe = spec || {};
+            const categoryPath = Array.isArray(safe.categoryPath)
+                ? safe.categoryPath
+                    .map(function (segment) {
+                        return String(segment).trim();
+                    })
+                    .filter(function (segment) {
+                        return segment !== '';
+                    })
+                : [];
             const notes = Model.newToolNotes();
             const created = await backendAction('createTool', {
                 toolsRootId: toolsRootId(),
-                category: spec.category,
-                title: spec.title,
+                category: safe.category || (categoryPath.length ? categoryPath[categoryPath.length - 1] : ''),
+                categoryPath: categoryPath,
+                title: safe.title,
                 base: spec.base,
                 description: spec.description,
                 content: notes.content,

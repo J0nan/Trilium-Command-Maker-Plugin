@@ -91,8 +91,8 @@ function beRun(params) {
         note.setLabel(labels.icon, String(className));
     }
 
-    function findCategory(toolsRoot, name) {
-        const children = toolsRoot.getChildNotes();
+    function findCategory(parent, name) {
+        const children = parent.getChildNotes();
         for (let index = 0; index < children.length; index += 1) {
             if (children[index].title === name && hasLabel(children[index], labels.category)) {
                 return children[index];
@@ -101,19 +101,31 @@ function beRun(params) {
         return null;
     }
 
-    function ensureCategory(toolsRoot, name) {
-        const existing = findCategory(toolsRoot, name);
+    function ensureCategory(parent, name) {
+        const existing = findCategory(parent, name);
         if (existing) {
             return existing;
         }
         const note = track(api.createNewNote({
-            parentNoteId: toolsRoot.noteId,
+            parentNoteId: parent.noteId,
             title: name,
             type: 'text',
             content: ''
         }).note);
         note.setLabel(labels.category, '');
         return note;
+    }
+
+    /** Walk (and create) one nested category folder per path entry. */
+    function ensureCategoryPath(toolsRoot, path) {
+        // The tool-file reader already bounds the depth; this action can also
+        // be called directly, so the bound lives here too.
+        const depth = Math.min(path.length, 16);
+        let parent = toolsRoot;
+        for (let index = 0; index < depth; index += 1) {
+            parent = ensureCategory(parent, path[index]);
+        }
+        return parent;
     }
 
     function ensureOptionsFolder(toolNote) {
@@ -265,8 +277,19 @@ function beRun(params) {
         const safeSpec = spec || {};
         const safeFallbacks = fallbacks || {};
         const categoryName = nonEmpty(safeSpec.category) ? String(safeSpec.category) : text('back.noteUncategorized', 'Uncategorized');
+        // `categoryPath` turns a nested tool file into real nested folders;
+        // a caller that only knows one category keeps the flat behaviour.
+        const categoryPath = Array.isArray(safeSpec.categoryPath)
+            ? safeSpec.categoryPath
+                .map(function (segment) {
+                    return String(segment).trim();
+                })
+                .filter(function (segment) {
+                    return segment !== '';
+                })
+            : [];
         const title = nonEmpty(safeSpec.title) ? String(safeSpec.title) : text('back.noteNewTool', 'New tool');
-        const category = ensureCategory(toolsRoot, categoryName);
+        const category = ensureCategoryPath(toolsRoot, categoryPath.length ? categoryPath : [categoryName]);
         const note = track(api.createNewNote({
             parentNoteId: category.noteId,
             title: title,

@@ -23,6 +23,7 @@ function schema() {
         tool: {
             title: I18n.t('prompt.schemaTitle'),
             category: I18n.t('prompt.schemaCategory'),
+            categoryPath: [I18n.t('prompt.schemaCategoryPath')],
             base: I18n.t('prompt.schemaBase'),
             description: I18n.t('prompt.schemaDescription'),
             content: '<h2>' + whatIs + '</h2><p>...</p><h2>' + official
@@ -54,6 +55,7 @@ function rules() {
         I18n.t('prompt.ruleTitleBase'),
         I18n.t('prompt.ruleTags'),
         I18n.t('prompt.ruleCategory'),
+        I18n.t('prompt.ruleCategoryPath'),
         I18n.t('prompt.ruleDescription'),
         I18n.t('prompt.ruleContent'),
         I18n.t('prompt.ruleContentBody'),

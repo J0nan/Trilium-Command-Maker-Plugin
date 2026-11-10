@@ -85,7 +85,7 @@ const EN = {
     'ui.toolNamePlaceholder': 'Tool name (e.g. docker)',
     'ui.category': 'Category',
     'ui.newCategory': 'New category…',
-    'ui.newCategoryPlaceholder': 'New category name',
+    'ui.newCategoryPlaceholder': 'New category or path, e.g. Infrastructure/Wifi',
     'ui.baseOptional': 'Base command (optional, defaults to the name)',
 
     // --- option types ------------------------------------------------------
@@ -180,6 +180,7 @@ const EN = {
     'warn.unexpectedKind': 'Unexpected file kind "{kind}"; expected "{expected}".',
     'warn.missingTitle': 'The tool file has no "title".',
     'warn.tooManyOptions': 'The tool file lists {count} options; only the first {max} are imported.',
+    'warn.categoryPathTooDeep': 'The category path is deeper than {max} folders; only the first {max} are imported.',
 
     // --- import options dialog --------------------------------------------
     'import.hint': 'Paste "--help" output, a JSON options file, or a markdown table. Nothing is written until you import.',
@@ -297,6 +298,7 @@ const EN = {
     'prompt.convert': 'Convert the input above now. Return only the JSON object.',
     'prompt.schemaTitle': '<command name, e.g. git commit>',
     'prompt.schemaCategory': '<short group, e.g. Version control>',
+    'prompt.schemaCategoryPath': '<folder path, outermost first, e.g. Version control>',
     'prompt.schemaBase': '<command the user types, e.g. git commit>',
     'prompt.schemaDescription': '<one sentence>',
     'prompt.schemaInstall': '<p>Install on Windows:</p><pre><code>winget install tool</code></pre>',
@@ -307,6 +309,7 @@ const EN = {
     'prompt.ruleTitleBase': '- title: the command name. base: the exact command the user types (keep subcommands, e.g. "git commit").',
     'prompt.ruleTags': '- tags, presets and per-option "content" exist for full backups; leave them out unless a backup was asked for.',
     'prompt.ruleCategory': '- category: a short group such as "Network", "Media" or "Version control".',
+    'prompt.ruleCategoryPath': '- categoryPath: the folder chain from the Tools root to the tool folder, outermost first, for example ["Infrastructure", "Wifi"]; one entry when there is no subcategory.',
     'prompt.ruleDescription': '- description: one sentence that explains what the tool does.',
     'prompt.ruleContent': function () {
         return '- content: HTML with exactly three <h2> sections in this order: "'
@@ -495,7 +498,7 @@ const ES = {
     'ui.toolNamePlaceholder': 'Nombre de la herramienta (p. ej. docker)',
     'ui.category': 'Categoría',
     'ui.newCategory': 'Nueva categoría…',
-    'ui.newCategoryPlaceholder': 'Nombre de la nueva categoría',
+    'ui.newCategoryPlaceholder': 'Categoría o ruta nueva, p. ej. Infraestructura/Wifi',
     'ui.baseOptional': 'Comando base (opcional, por defecto el nombre)',
 
     // --- option types ------------------------------------------------------
@@ -590,6 +593,7 @@ const ES = {
     'warn.unexpectedKind': 'Tipo de archivo inesperado "{kind}"; se esperaba "{expected}".',
     'warn.missingTitle': 'El archivo de herramienta no tiene "title".',
     'warn.tooManyOptions': 'El archivo de herramienta lista {count} opciones; solo se importan las primeras {max}.',
+    'warn.categoryPathTooDeep': 'La ruta de categorías tiene más de {max} carpetas; solo se importan las primeras {max}.',
 
     // --- import options dialog --------------------------------------------
     'import.hint': 'Pega la salida de "--help", un archivo JSON de opciones o una tabla markdown. No se escribe nada hasta que importes.',
@@ -715,6 +719,7 @@ const ES = {
     'prompt.convert': 'Convierte la entrada anterior ahora. Devuelve solo el objeto JSON.',
     'prompt.schemaTitle': '<nombre del comando, p. ej. git commit>',
     'prompt.schemaCategory': '<grupo corto, p. ej. Control de versiones>',
+    'prompt.schemaCategoryPath': '<ruta de carpetas, de fuera hacia dentro, p. ej. Control de versiones>',
     'prompt.schemaBase': '<comando que escribe el usuario, p. ej. git commit>',
     'prompt.schemaDescription': '<una frase>',
     'prompt.schemaInstall': '<p>Instalar en Windows:</p><pre><code>winget install tool</code></pre>',
@@ -725,6 +730,7 @@ const ES = {
     'prompt.ruleTitleBase': '- title: el nombre del comando. base: el comando exacto que escribe el usuario (mantén los subcomandos, p. ej. "git commit").',
     'prompt.ruleTags': '- tags, presets y el "content" de cada opción existen para copias de seguridad completas; omítelos salvo que se pida una copia de seguridad.',
     'prompt.ruleCategory': '- category: un grupo corto como "Red", "Multimedia" o "Control de versiones".',
+    'prompt.ruleCategoryPath': '- categoryPath: la cadena de carpetas desde la raíz Tools hasta la carpeta de la herramienta, de fuera hacia dentro, por ejemplo ["Infraestructura", "Wifi"]; una sola entrada si no hay subcategoría.',
     'prompt.ruleDescription': '- description: una frase que explique qué hace la herramienta.',
     'prompt.ruleContent': function () {
         return '- content: HTML con exactamente tres secciones <h2> en este orden: "'

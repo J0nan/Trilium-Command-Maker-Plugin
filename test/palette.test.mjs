@@ -200,8 +200,9 @@ async function waitFor(predicate, label) {
     throw new Error('timed out waiting for ' + (label || 'condition'));
 }
 
-function buildFixture() {
-    const media = note({ noteId: 'cat-media', title: 'Media' });
+function buildFixture(settings) {
+    const config = settings || {};
+    const media = note({ noteId: 'cat-media', title: 'Media', parents: config.mediaParents || [] });
     const vcs = note({ noteId: 'cat-vcs', title: 'Version control' });
 
     const input = note({
@@ -634,7 +635,7 @@ test('new tool form creates a tool with a category and the three-H2 content', as
     assert.ok(categorySelect, 'category select offers a new category');
     categorySelect.value = '__new__';
     categorySelect.dispatch('change');
-    const categoryInput = find(dom.body, (node) => node.placeholder === 'New category name');
+    const categoryInput = find(dom.body, (node) => /New category or path/.test(String(node.placeholder || '')));
     categoryInput.value = 'Containers';
     const baseInput = find(dom.body, (node) => String(node.placeholder || '').indexOf('Base command') !== -1);
     baseInput.value = 'docker';
@@ -644,10 +645,66 @@ test('new tool form creates a tool with a category and the three-H2 content', as
     const call = env.calls.backend.filter((entry) => entry.action === 'createTool')[0];
     assert.equal(call.title, 'docker');
     assert.equal(call.category, 'Containers');
+    assert.deepEqual(Array.from(call.categoryPath), ['Containers'], 'a flat category is a one-entry path');
     assert.equal(call.base, 'docker');
     assert.match(call.content, /<h2>What is\?<\/h2>/);
     assert.match(call.content, /<h2>Official links<\/h2>/);
     assert.match(call.content, /<h2>Useful links<\/h2>/);
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('new tool form accepts a nested category path', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'New tool')[0].click();
+
+    const titleInput = find(dom.body, (node) => node.placeholder === 'Tool name (e.g. docker)');
+    titleInput.value = 'iwconfig';
+    const categorySelect = find(dom.body, (node) => {
+        return node.tagName === 'SELECT' && node.children.some((child) => child.value === '__new__');
+    });
+    categorySelect.value = '__new__';
+    categorySelect.dispatch('change');
+    const categoryInput = find(dom.body, (node) => /New category or path/.test(String(node.placeholder || '')));
+    categoryInput.value = 'Infrastructure/Wifi';
+    const baseInput = find(dom.body, (node) => String(node.placeholder || '').indexOf('Base command') !== -1);
+    baseInput.value = 'iwconfig';
+
+    findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'Create')[0].click();
+    await waitFor(() => env.calls.backend.filter((call) => call.action === 'createTool').length > 0, 'create tool');
+    const call = env.calls.backend.filter((entry) => entry.action === 'createTool')[0];
+    assert.deepEqual(Array.from(call.categoryPath), ['Infrastructure', 'Wifi'], 'the typed path reaches the backend');
+    assert.equal(call.category, 'Wifi', 'the leaf stays the category');
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('an existing nested category is offered with its whole path and reused', async () => {
+    const dom = createDom();
+    const infrastructure = note({ noteId: 'cat-infra', title: 'Infrastructure' });
+    const fixture = buildFixture({ mediaParents: [infrastructure] });
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'New tool')[0].click();
+
+    const categorySelect = find(dom.body, (node) => {
+        return node.tagName === 'SELECT' && node.children.some((child) => child.value === '__new__');
+    });
+    const nested = categorySelect.children.filter((child) => child.textContent === 'Infrastructure / Media')[0];
+    assert.ok(nested, 'the picker lists the whole path');
+    categorySelect.value = nested.value;
+
+    find(dom.body, (node) => node.placeholder === 'Tool name (e.g. docker)').value = 'ffprobe';
+    findAll(dom.body, (node) => node.tagName === 'BUTTON' && node.textContent === 'Create')[0].click();
+    await waitFor(() => env.calls.backend.filter((call) => call.action === 'createTool').length > 0, 'create tool');
+    const call = env.calls.backend.filter((entry) => entry.action === 'createTool')[0];
+    assert.deepEqual(Array.from(call.categoryPath), ['Infrastructure', 'Media']);
+    assert.equal(call.category, 'Media');
     assert.deepEqual(env.calls.errors, []);
 });
 
@@ -845,6 +902,7 @@ const portableTool = {
     tool: {
         title: 'ripgrep',
         category: 'Search',
+        categoryPath: ['Infrastructure', 'Search'],
         base: 'rg',
         description: 'Search text recursively.',
         content: '<h2>What is?</h2><p>Fast search.</p><h2>Official links</h2><ul></ul><h2>Useful links</h2><ul></ul>',
@@ -891,6 +949,11 @@ test('Import tool parses a tool file, copies the AI prompt and imports the tool'
     }, 'parse status');
     assert.ok(buttonWithText(modal, 'Import tool').disabled === false, 'the import action is enabled');
     assert.ok(
+        find(modal, (node) => classed(node, 'cm-import-flag')
+            && node.textContent === 'Category: Infrastructure / Search'),
+        'the preview shows the whole category path'
+    );
+    assert.ok(
         env.calls.messages.some((message) => /Parsed tool "ripgrep"/.test(message)),
         'the parse status is also shown as a Trilium message'
     );
@@ -900,6 +963,7 @@ test('Import tool parses a tool file, copies the AI prompt and imports the tool'
         return env.calls.backend.filter((entry) => entry.action === 'importTool')[0];
     }, 'importTool backend call');
     assert.equal(call.tool.title, 'ripgrep');
+    assert.deepEqual(Array.from(call.tool.categoryPath), ['Infrastructure', 'Search'], 'the imported path reaches the backend');
     assert.equal(call.tool.options.length, 2);
     assert.equal(call.tool.options[1].flag, '', 'the positional option survives the import');
     await waitFor(() => {
@@ -1649,5 +1713,23 @@ test('an existing cmLang setting starts the palette in that language', async () 
     assert.equal(bootstrap.strings['back.noteInstall'], 'Instalación');
     assert.equal(bootstrap.seedTools[0].category, 'Control de versiones');
     assert.match(bootstrap.newToolNotes.content, /Enlaces oficiales/);
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('a tool inside a subcategory shows the whole folder path in the list and the detail', async () => {
+    const dom = createDom();
+    const infrastructure = note({ noteId: 'cat-infra', title: 'Infrastructure' });
+    const fixture = buildFixture({ mediaParents: [infrastructure] });
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    const row = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    const pill = find(row, (node) => classed(node, 'cm-cat'));
+    assert.equal(pill.textContent, 'Infrastructure / Media');
+
+    row.click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+    const title = find(dom.body, (node) => classed(node, 'cm-title'));
+    assert.equal(find(title, (node) => classed(node, 'cm-cat')).textContent, 'Infrastructure / Media');
     assert.deepEqual(env.calls.errors, []);
 });

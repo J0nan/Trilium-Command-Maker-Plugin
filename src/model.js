@@ -7,12 +7,17 @@
  *
  * A tool definition looks like:
  * {
- *   noteId, title, category, description, tags, base,
+ *   noteId, title, category, categoryPath, categoryLabel,
+ *   description, tags, base,
  *   options: [ option, ... ],
  *   inferred: [ option, ... ],
  *   placeholders: [ name, ... ],
  *   warnings: [ { code, message } ]
  * }
+ *
+ * `category` is the immediate folder that groups the tool; `categoryPath` is
+ * the folder chain from Tools down to it, and `categoryLabel` that chain as
+ * one display string ("Infrastructure / Wifi").
  */
 
 const Render = require('./render');
@@ -173,6 +178,19 @@ function sortOptions(left, right) {
 function buildTool(note) {
     const snapshot = note || {};
     const labels = snapshot.labels || {};
+    // Folders may nest (Tools/Infrastructure/Wifi), so a tool keeps the whole
+    // chain: `category` stays the immediate folder for creation and export,
+    // while `categoryPath`/`categoryLabel` are what the palette shows.
+    const categoryPath = Array.isArray(snapshot.categoryPath)
+        ? snapshot.categoryPath
+            .map(function (part) {
+                return String(part);
+            })
+            .filter(function (part) {
+                return part !== '';
+            })
+        : [];
+    const category = String(snapshot.category || '');
 
     const configuredBase = labels[LABELS.base];
     const base = configuredBase !== undefined && configuredBase !== null && String(configuredBase).trim() !== ''
@@ -246,7 +264,9 @@ function buildTool(note) {
     return {
         noteId: snapshot.noteId || '',
         title: String(snapshot.title || ''),
-        category: String(snapshot.category || ''),
+        category: category,
+        categoryPath: categoryPath,
+        categoryLabel: categoryPath.length ? categoryPath.join(' / ') : category,
         description: readString(labels, LABELS.description, ''),
         tags: readString(labels, LABELS.tags, ''),
         base: base,

@@ -107,17 +107,20 @@ Download `command-maker.js` from the [latest release](https://github.com/J0nan/T
 ```
 Tools/                              #cmTools  (move it anywhere, the label follows)
 ├── Network/                        #cmCategory
-│   └── curl/                       #cmTool
-│       ├── Install                 #cmInstall   text
-│       ├── Usage                   #cmUsage     text (examples in code blocks)
-│       ├── Help                    #cmHelpNote  code (text/x-sh)
-│       └── Options/                #cmOptions
-│           ├── URL                 #cmOption #cmPlaceholder=url #cmRequired=true
-│           └── Presets             #cmPresets  JSON
+│   └── Subcategory/                #cmCategory  (optional, any depth)
+│       └── curl/                   #cmTool
+│           ├── Install             #cmInstall   text
+│           ├── Usage               #cmUsage     text (examples in code blocks)
+│           ├── Help                #cmHelpNote  code (text/x-sh)
+│           └── Options/            #cmOptions
+│               ├── URL             #cmOption #cmPlaceholder=url #cmRequired=true
+│               └── Presets         #cmPresets  JSON
 └── Version control/
     └── git commit/                 #cmTool
         └── ...
 ```
+
+Folders can nest as deep as you like: a tool inside `Tools/Infrastructure/Wifi` is listed and shown as **Infrastructure / Wifi**, and every folder in the chain is searchable. The category picker in the new-tool form lists existing paths (`Infrastructure / Wifi`), and its new-category field accepts a path too: type `Infrastructure/Wifi` and the folders are created as needed.
 
 The `Tools` folder is found by its `#cmTools` label, so you can drag it to another path and the plugin keeps working. Use **Tools folder → Use the active note** in the palette (or the note-ID field there) to pick a different root: moving the root **moves the `#cmTools` label** from the old folder to the new one, and only one folder should carry the label; if you label a second folder by hand while another still holds it, the palette picks one of them unpredictably, so use the palette action instead of manual labelling.
 
@@ -125,7 +128,7 @@ If you installed the plugin runtime manually *before* ever running the installer
 
 ### Language
 
-The plugin ships English and Spain Spanish in one bundle. The version pill in the footer (`v1.0 ▾`) opens a small menu with the update check and the language: picking **English** or **Español** writes `#cmLang` (`en` or `es`) on the `Command Maker` settings note and rebuilds the palette in that language, including the titles of the notes the backend creates later (`Opciones`, `Instalación`, `Uso`, `Ayuda`).
+The plugin ships English and Spain Spanish in one bundle. The version pill in the footer (`v1.2 ▾`) opens a small menu with the update check and the language: picking **English** or **Español** writes `#cmLang` (`en` or `es`) on the `Command Maker` settings note and rebuilds the palette in that language, including the titles of the notes the backend creates later (`Opciones`, `Instalación`, `Uso`, `Ayuda`).
 
 Set `#cmLang=es` on the settings note by hand to start in Spanish. With no label, the plugin follows the browser/Trilium language and falls back to English; on the first bootstrap it records the language it picked, so the setting is always visible. The label is strictly a UI preference: tool files, labels, presets and rendered commands never change with it. Notes seeded before a language switch keep the language they were written in.
 
@@ -231,6 +234,7 @@ The footer has **Import tool** and **Export tool** next to the option actions. B
   "version": 2,
   "tool": {
     "title": "ripgrep",
+    "categoryPath": ["Infrastructure", "Search"],
     "category": "Search",
     "base": "rg",
     "description": "Search text recursively.",
@@ -263,8 +267,9 @@ The footer has **Import tool** and **Export tool** next to the option actions. B
 }
 ```
 
-- **Export tool** reads the selected tool, its three standard children, every option with its note body, the `#cmTags` value and the presets, and shows the JSON. **Copy JSON** copies it; **Download .json** saves it as `<tool>.tool.json`. A version-2 file is therefore a real backup: importing it recreates the tool with nothing the file holds dropped. (Preset values are keyed by option note IDs, so after importing into a *different* instance the stored preset values may not line up with the recreated option notes.) The file must carry `"version": 2` (or no version at all, for hand-written objects, which are read in the current shape); a file declaring any other version is rejected by **Parse** and nothing is written.
-- **Import tool** accepts the same JSON from a paste, the active note or a file. It previews the title, category, base and options, then creates a new tool note under that category. A file listing more than 200 options imports only the first 200, with a warning in the preview. Existing tools are never modified or overwritten.
+- **Export tool** reads the selected tool, its three standard children, every option with its note body, the `#cmTags` value, the presets and the folder path that groups it, and shows the JSON. **Copy JSON** copies it; **Download .json** saves it as `<tool>.tool.json`. A version-2 file is therefore a real backup: importing it recreates the tool, its nested category folders included, with nothing the file holds dropped. (Preset values are keyed by option note IDs, so after importing into a *different* instance the stored preset values may not line up with the recreated option notes.) The file must carry `"version": 2` (or no version at all, for hand-written objects, which are read in the current shape); a file declaring any other version is rejected by **Parse** and nothing is written.
+- **Import tool** accepts the same JSON from a paste, the active note or a file. It previews the title, category path, base and options, then creates the new tool note in that folder, creating the nested category folders when they do not exist yet. A file listing more than 200 options imports only the first 200, with a warning in the preview. Existing tools are never modified or overwritten.
+- **Category path.** `categoryPath` is the folder chain from the `Tools` root to the tool's own folder, outermost first: `["Infrastructure", "Wifi"]` puts the tool in `Tools/Infrastructure/Wifi`. `category` keeps the last entry so older readers still know where the tool belongs; the importer recomputes it from the path. Files exported before this field existed have no `categoryPath`, and still import into one folder, so nothing needs converting. A path deeper than 16 folders is truncated with a warning in the preview.
 
 ### Generating the file with an AI model
 
@@ -279,7 +284,7 @@ The model is told to return only the JSON object. If a markdown fence still slip
 
 ## Version check
 
-Current version: **1.0**. The palette footer shows `v1.0`; click it to check GitHub's latest release (falling back to the highest tag, then `package.json` on `main`). The settings note stores `#cmVersion`, and the installer log prints the version. A network/CORS failure is reported in the status and the **Repository** link opens the source.
+Current version: **1.2**. The palette footer shows `v1.2`; click it to check GitHub's latest release (falling back to the highest tag, then `package.json` on `main`). The settings note stores `#cmVersion`, and the installer log prints the version. A network/CORS failure is reported in the status and the **Repository** link opens the source.
 
 ## Design notes
 
