@@ -200,8 +200,9 @@ async function waitFor(predicate, label) {
     throw new Error('timed out waiting for ' + (label || 'condition'));
 }
 
-function buildFixture() {
-    const media = note({ noteId: 'cat-media', title: 'Media' });
+function buildFixture(settings) {
+    const config = settings || {};
+    const media = note({ noteId: 'cat-media', title: 'Media', parents: config.mediaParents || [] });
     const vcs = note({ noteId: 'cat-vcs', title: 'Version control' });
 
     const input = note({
@@ -1649,5 +1650,23 @@ test('an existing cmLang setting starts the palette in that language', async () 
     assert.equal(bootstrap.strings['back.noteInstall'], 'Instalación');
     assert.equal(bootstrap.seedTools[0].category, 'Control de versiones');
     assert.match(bootstrap.newToolNotes.content, /Enlaces oficiales/);
+    assert.deepEqual(env.calls.errors, []);
+});
+
+test('a tool inside a subcategory shows the whole folder path in the list and the detail', async () => {
+    const dom = createDom();
+    const infrastructure = note({ noteId: 'cat-infra', title: 'Infrastructure' });
+    const fixture = buildFixture({ mediaParents: [infrastructure] });
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    const row = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    const pill = find(row, (node) => classed(node, 'cm-cat'));
+    assert.equal(pill.textContent, 'Infrastructure / Media');
+
+    row.click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+    const title = find(dom.body, (node) => classed(node, 'cm-title'));
+    assert.equal(find(title, (node) => classed(node, 'cm-cat')).textContent, 'Infrastructure / Media');
     assert.deepEqual(env.calls.errors, []);
 });

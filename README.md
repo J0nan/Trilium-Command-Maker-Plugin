@@ -25,7 +25,7 @@ The installer is idempotent. It creates the `Command Maker` settings note, the `
 
 ## What it does
 
-- **A palette for your CLI notes.** `Ctrl+Shift+Space` opens a searchable list of the tools you documented, with categories.
+- **A palette for your CLI notes.** `Ctrl+Shift+Space` opens a searchable list of the tools you documented, with their folder path (`Infrastructure / Wifi`).
 - **Docs where you need them.** Each tool note keeps a *What is?* section plus sections for the official links and the install, usage and `--help` output.
 - **Options, not memorised flags.** Each option is a note with a flag, help text and a type, so the palette renders the right control: text, path, number, boolean or enum.
 - **A command you can trust.** The preview assembles base, extra arguments and selected flags in order, quotes them for a POSIX shell, and lets you copy, insert into the editor or save as a preset.

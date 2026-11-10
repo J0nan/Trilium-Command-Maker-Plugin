@@ -25,7 +25,7 @@ El instalador es idempotente. Crea la nota de ajustes `Command Maker`, la carpet
 
 ## Qué hace
 
-- **Una paleta para tus notas de CLI.** `Ctrl+Shift+Space` abre una lista buscable de las herramientas que hayas documentado, con categorías.
+- **Una paleta para tus notas de CLI.** `Ctrl+Shift+Space` abre una lista buscable de las herramientas que hayas documentado, con la ruta de sus carpetas (`Infraestructura / Wifi`).
 - **La documentación donde la necesitas.** Cada nota de herramienta mantiene una sección *¿Qué es?* y secciones para los enlaces oficiales y la salida de instalación, uso y `--help`.
 - **Opciones, no flags memorizados.** Cada opción es una nota con un flag, un texto de ayuda y un tipo, así que la paleta muestra el control correcto: texto, ruta, número, booleano o enumeración.
 - **Un comando en el que puedes confiar.** La vista previa ensambla el comando base, los argumentos extra y los flags seleccionados en orden, los entrecomilla para un shell POSIX y te deja copiarlos, insertarlos en el editor o guardarlos como preset.

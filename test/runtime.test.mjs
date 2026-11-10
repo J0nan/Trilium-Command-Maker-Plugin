@@ -145,6 +145,29 @@ test('refresh indexes tool title, category, base, option help and What is? text'
     globalThis.api = undefined;
 });
 
+test('a tool nested under two folders exposes its whole category path', async () => {
+    const built = makeTool();
+    const outer = makeNote({ noteId: 'cat-outer', title: 'Infrastructure' });
+    const inner = makeNote({ noteId: 'cat-inner', title: 'Wifi', parents: [outer] });
+    built.tool.getParentNotes = function () {
+        return [inner];
+    };
+    installApi(built.tool, {});
+    await Runtime.refresh();
+
+    const item = Runtime.search('wifi')[0];
+    assert.equal(item.category, 'Wifi', 'the immediate folder stays the category');
+    assert.equal(item.categoryLabel, 'Infrastructure / Wifi');
+    assert.deepEqual(item.categoryPath, ['Infrastructure', 'Wifi']);
+    assert.equal(Runtime.search('infrastructure').length, 1, 'the outer folder is searchable');
+
+    const loaded = await Runtime.load('t1');
+    assert.equal(loaded.definition.category, 'Wifi');
+    assert.equal(loaded.definition.categoryLabel, 'Infrastructure / Wifi');
+    assert.deepEqual(loaded.definition.categoryPath, ['Infrastructure', 'Wifi']);
+    globalThis.api = undefined;
+});
+
 test('load returns options with help, examples, links, help output, install and presets', async () => {
     const built = makeTool();
     installApi(built.tool, {});

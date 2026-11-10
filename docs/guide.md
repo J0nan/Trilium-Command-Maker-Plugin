@@ -107,17 +107,20 @@ Download `command-maker.js` from the [latest release](https://github.com/J0nan/T
 ```
 Tools/                              #cmTools  (move it anywhere, the label follows)
 ├── Network/                        #cmCategory
-│   └── curl/                       #cmTool
-│       ├── Install                 #cmInstall   text
-│       ├── Usage                   #cmUsage     text (examples in code blocks)
-│       ├── Help                    #cmHelpNote  code (text/x-sh)
-│       └── Options/                #cmOptions
-│           ├── URL                 #cmOption #cmPlaceholder=url #cmRequired=true
-│           └── Presets             #cmPresets  JSON
+│   └── Subcategory/                #cmCategory  (optional, any depth)
+│       └── curl/                   #cmTool
+│           ├── Install             #cmInstall   text
+│           ├── Usage               #cmUsage     text (examples in code blocks)
+│           ├── Help                #cmHelpNote  code (text/x-sh)
+│           └── Options/            #cmOptions
+│               ├── URL             #cmOption #cmPlaceholder=url #cmRequired=true
+│               └── Presets         #cmPresets  JSON
 └── Version control/
     └── git commit/                 #cmTool
         └── ...
 ```
+
+Folders can nest as deep as you like: a tool inside `Tools/Infrastructure/Wifi` is listed and shown as **Infrastructure / Wifi**, and every folder in the chain is searchable. The category picker in the new-tool form still creates one folder directly under `Tools`; create subcategories by hand in the note tree.
 
 The `Tools` folder is found by its `#cmTools` label, so you can drag it to another path and the plugin keeps working. Use **Tools folder → Use the active note** in the palette (or the note-ID field there) to pick a different root: moving the root **moves the `#cmTools` label** from the old folder to the new one, and only one folder should carry the label; if you label a second folder by hand while another still holds it, the palette picks one of them unpredictably, so use the palette action instead of manual labelling.
 

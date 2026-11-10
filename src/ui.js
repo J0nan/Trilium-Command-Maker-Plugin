@@ -6,7 +6,7 @@
  *
  * The UI is driven by a controller (see runtime.js):
  *   refresh(): Promise<void>
- *   search(query): Array<{ noteId, title, category, description, base }>
+ *   search(query): Array<{ noteId, title, category, categoryLabel, description, base }>
  *   load(noteId): Promise<{ definition, presets, whatIs, links, usageExamples,
  *                            helpText, installText, ... }>
  *   copy(text): Promise<boolean>
@@ -485,8 +485,9 @@ function openPalette(controller, options) {
             row.type = 'button';
             row.appendChild(Dom.el('div', 'cm-result-title', item.title));
             const meta = Dom.el('div', 'cm-result-meta');
-            if (item.category) {
-                meta.appendChild(Dom.el('span', 'cm-cat', item.category));
+            const categoryLabel = item.categoryLabel || item.category;
+            if (categoryLabel) {
+                meta.appendChild(Dom.el('span', 'cm-cat', categoryLabel));
             }
             if (item.description) {
                 meta.appendChild(Dom.el('div', 'cm-result-desc', item.description));
@@ -1074,8 +1075,9 @@ function openPalette(controller, options) {
         const header = Dom.el('div', 'cm-detail-head');
         const title = Dom.el('h2', 'cm-title');
         title.appendChild(Dom.el('span', '', definition.title));
-        if (definition.category) {
-            title.appendChild(Dom.el('span', 'cm-cat', definition.category));
+        const categoryLabel = definition.categoryLabel || definition.category;
+        if (categoryLabel) {
+            title.appendChild(Dom.el('span', 'cm-cat', categoryLabel));
         }
         header.appendChild(title);
         if (definition.description) {

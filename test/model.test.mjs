@@ -102,9 +102,26 @@ test('buildTool carries category, help strings and examples', () => {
     });
     assert.equal(definition.base, 'ffmpeg');
     assert.equal(definition.category, 'Media');
+    assert.equal(definition.categoryLabel, 'Media', 'a flat category is its own label');
+    assert.deepEqual(definition.categoryPath, []);
     assert.equal(definition.description, 'Media toolkit');
     assert.equal(definition.options[0].help, 'Input file.');
     assert.deepEqual(definition.examples, ['ffmpeg -i in.mp4 out.mp4']);
+});
+
+test('buildTool carries a nested category path and joins it into one label', () => {
+    const definition = Model.buildTool({
+        noteId: 't1',
+        title: 'iwconfig',
+        category: 'Wifi',
+        categoryPath: ['Infrastructure', 'Wifi'],
+        content: '',
+        labels: {},
+        optionNotes: []
+    });
+    assert.equal(definition.category, 'Wifi');
+    assert.deepEqual(definition.categoryPath, ['Infrastructure', 'Wifi']);
+    assert.equal(definition.categoryLabel, 'Infrastructure / Wifi');
 });
 
 test('#cmBase overrides the derived base', () => {

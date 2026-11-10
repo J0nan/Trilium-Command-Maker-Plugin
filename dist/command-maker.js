@@ -2871,12 +2871,17 @@ __def("model", function (module, exports, __require) {
  *
  * A tool definition looks like:
  * {
- *   noteId, title, category, description, tags, base,
+ *   noteId, title, category, categoryPath, categoryLabel,
+ *   description, tags, base,
  *   options: [ option, ... ],
  *   inferred: [ option, ... ],
  *   placeholders: [ name, ... ],
  *   warnings: [ { code, message } ]
  * }
+ *
+ * `category` is the immediate folder that groups the tool; `categoryPath` is
+ * the folder chain from Tools down to it, and `categoryLabel` that chain as
+ * one display string ("Infrastructure / Wifi").
  */
 
 const Render = __require("render");
@@ -3037,6 +3042,19 @@ function sortOptions(left, right) {
 function buildTool(note) {
     const snapshot = note || {};
     const labels = snapshot.labels || {};
+    // Folders may nest (Tools/Infrastructure/Wifi), so a tool keeps the whole
+    // chain: `category` stays the immediate folder for creation and export,
+    // while `categoryPath`/`categoryLabel` are what the palette shows.
+    const categoryPath = Array.isArray(snapshot.categoryPath)
+        ? snapshot.categoryPath
+            .map(function (part) {
+                return String(part);
+            })
+            .filter(function (part) {
+                return part !== '';
+            })
+        : [];
+    const category = String(snapshot.category || '');
 
     const configuredBase = labels[LABELS.base];
     const base = configuredBase !== undefined && configuredBase !== null && String(configuredBase).trim() !== ''
@@ -3110,7 +3128,9 @@ function buildTool(note) {
     return {
         noteId: snapshot.noteId || '',
         title: String(snapshot.title || ''),
-        category: String(snapshot.category || ''),
+        category: category,
+        categoryPath: categoryPath,
+        categoryLabel: categoryPath.length ? categoryPath.join(' / ') : category,
         description: readString(labels, LABELS.description, ''),
         tags: readString(labels, LABELS.tags, ''),
         base: base,
@@ -4703,7 +4723,7 @@ __def("ui", function (module, exports, __require) {
  *
  * The UI is driven by a controller (see runtime.js):
  *   refresh(): Promise<void>
- *   search(query): Array<{ noteId, title, category, description, base }>
+ *   search(query): Array<{ noteId, title, category, categoryLabel, description, base }>
  *   load(noteId): Promise<{ definition, presets, whatIs, links, usageExamples,
  *                            helpText, installText, ... }>
  *   copy(text): Promise<boolean>
@@ -5182,8 +5202,9 @@ function openPalette(controller, options) {
             row.type = 'button';
             row.appendChild(Dom.el('div', 'cm-result-title', item.title));
             const meta = Dom.el('div', 'cm-result-meta');
-            if (item.category) {
-                meta.appendChild(Dom.el('span', 'cm-cat', item.category));
+            const categoryLabel = item.categoryLabel || item.category;
+            if (categoryLabel) {
+                meta.appendChild(Dom.el('span', 'cm-cat', categoryLabel));
             }
             if (item.description) {
                 meta.appendChild(Dom.el('div', 'cm-result-desc', item.description));
@@ -5771,8 +5792,9 @@ function openPalette(controller, options) {
         const header = Dom.el('div', 'cm-detail-head');
         const title = Dom.el('h2', 'cm-title');
         title.appendChild(Dom.el('span', '', definition.title));
-        if (definition.category) {
-            title.appendChild(Dom.el('span', 'cm-cat', definition.category));
+        const categoryLabel = definition.categoryLabel || definition.category;
+        if (categoryLabel) {
+            title.appendChild(Dom.el('span', 'cm-cat', categoryLabel));
         }
         header.appendChild(title);
         if (definition.description) {
@@ -6594,13 +6616,14 @@ __def("runtime", function (module, exports, __require) {
  * Structure the runtime expects:
  *   Tools/                 #cmTools (any path)
  *     Category/            #cmCategory
- *       Tool/              #cmTool  (three H2 sections in its content)
- *         Install          #cmInstall
- *         Usage            #cmUsage
- *         Help             #cmHelpNote
- *         Options/         #cmOptions
- *           Option         #cmOption
- *           Presets        #cmPresets (JSON)
+ *       Subcategory/       #cmCategory  (optional, any depth)
+ *         Tool/            #cmTool  (three H2 sections in its content)
+ *           Install        #cmInstall
+ *           Usage          #cmUsage
+ *           Help           #cmHelpNote
+ *           Options/       #cmOptions
+ *             Option       #cmOption
+ *             Presets      #cmPresets (JSON)
  */
 
 const Model = __require("model");
@@ -6800,25 +6823,51 @@ async function readOptionSnapshots(toolNote) {
     return snapshots;
 }
 
+/**
+ * Folder chain that groups a tool, outermost first: a tool in
+ * Tools/Infrastructure/Wifi yields ['Infrastructure', 'Wifi']. The walk stops
+ * at the Tools root, so the root itself never shows as a category; a note
+ * moved outside that tree still reports the folders it actually sits in.
+ */
+function categoryPath(note, rootId) {
+    const path = [];
+    let current = note;
+    for (let depth = 0; depth < 32; depth += 1) {
+        let parents = [];
+        try {
+            parents = current && typeof current.getParentNotes === 'function'
+                ? current.getParentNotes()
+                : [];
+        } catch (error) {
+            parents = [];
+        }
+        const parent = Array.isArray(parents) && parents.length ? parents[0] : null;
+        if (!parent) {
+            break;
+        }
+        if (rootId && parent.noteId === rootId) {
+            break;
+        }
+        path.unshift(String(parent.title || ''));
+        current = parent;
+    }
+    return path;
+}
+
 async function refresh() {
     await ensureBootstrap();
     const apiRef = getApi();
     const notes = await apiRef.searchForNotes('#' + Model.LABELS.tool);
+    const rootId = bootstrapInfo ? bootstrapInfo.toolsRootId : '';
 
     const nextIndex = [];
     const nextById = new Map();
 
     for (const note of notes) {
         const labels = readLabels(note);
-        let category = '';
-        try {
-            const parents = note.getParentNotes();
-            if (parents && parents.length) {
-                category = parents[0].title;
-            }
-        } catch (error) {
-            category = '';
-        }
+        const path = categoryPath(note, rootId);
+        const category = path.length ? path[path.length - 1] : '';
+        const categoryLabel = path.join(' / ');
 
         let optionSnapshots = [];
         try {
@@ -6841,6 +6890,8 @@ async function refresh() {
             noteId: note.noteId,
             title: note.title,
             category: category,
+            categoryPath: path,
+            categoryLabel: categoryLabel,
             labels: labels,
             note: note,
             optionSnapshots: optionSnapshots
@@ -6851,6 +6902,8 @@ async function refresh() {
             noteId: note.noteId,
             title: note.title,
             category: category,
+            categoryPath: path,
+            categoryLabel: categoryLabel,
             description: description,
             base: base,
             // Built once per refresh: search runs on every keystroke, and the
@@ -6858,7 +6911,7 @@ async function refresh() {
             // to Model.matchesText.
             searchable: Model.searchableText({
                 title: note.title,
-                category: category,
+                category: categoryLabel,
                 description: description,
                 tags: labels[Model.LABELS.tags],
                 base: base,
@@ -6947,6 +7000,7 @@ async function load(noteId) {
         noteId: note.noteId,
         title: note.title,
         category: entry.category,
+        categoryPath: entry.categoryPath,
         content: toolContent,
         labels: labels,
         optionNotes: entry.optionSnapshots,
