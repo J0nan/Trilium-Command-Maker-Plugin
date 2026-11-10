@@ -800,6 +800,44 @@ test('deleteOption refuses any note that is not an option', () => {
     }
 });
 
+test('reorderOptions writes every #cmOrder in one action and refuses non-options', () => {
+    const api = createApi();
+    const beRun = serialise(Backend.beRun, api);
+    const { toolsRootId, rootId } = boot(api, beRun);
+    const created = beRun({ action: 'createTool', labels, toolsRootId, title: 'git', base: 'git' });
+    const first = beRun({ action: 'addOption', labels, toolId: created.noteId, option: { label: 'A', flag: '-a', order: 10 } });
+    const second = beRun({ action: 'addOption', labels, toolId: created.noteId, option: { label: 'B', flag: '-b', order: 20 } });
+
+    const result = beRun({
+        action: 'reorderOptions',
+        labels,
+        order: [
+            { noteId: second.noteId, order: 10 },
+            { noteId: first.noteId, order: 20 }
+        ]
+    });
+    assert.deepEqual(Array.from(result.noteIds), [second.noteId, first.noteId]);
+    assert.equal(api.getNote(second.noteId).getLabelValue(labels.order), '10');
+    assert.equal(api.getNote(first.noteId).getLabelValue(labels.order), '20');
+
+    const category = api.getNote(toolsRootId).getChildNotes()[0];
+    for (const noteId of [toolsRootId, created.noteId, category.noteId, rootId]) {
+        assert.throws(
+            () => beRun({ action: 'reorderOptions', labels, order: [{ noteId, order: 10 }] }),
+            /not an option/,
+            'a non-option note is protected'
+        );
+    }
+    assert.throws(
+        () => beRun({ action: 'reorderOptions', labels, order: [{ noteId: first.noteId, order: 'nope' }] }),
+        /must be a number/
+    );
+    assert.throws(
+        () => beRun({ action: 'reorderOptions', labels, order: [{ noteId: 'nope', order: 10 }] }),
+        /Option note not found/
+    );
+});
+
 test('importOptions skips flags that already exist on the tool', () => {
     const api = createApi();
     const beRun = serialise(Backend.beRun, api);

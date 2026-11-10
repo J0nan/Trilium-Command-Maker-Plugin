@@ -871,6 +871,10 @@ function controller() {
             return saved;
         },
 
+        reorderOptions(order) {
+            return backendAction('reorderOptions', { order: order || [] });
+        },
+
         exportTool(noteId) {
             return exportTool(noteId);
         },

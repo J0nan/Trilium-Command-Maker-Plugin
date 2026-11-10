@@ -1227,7 +1227,14 @@ function openPalette(controller, options) {
             editToggle.setAttribute('aria-pressed', state.editMode ? 'true' : 'false');
         }, 'cm-options-edit');
         editToggle.setAttribute('aria-pressed', state.editMode ? 'true' : 'false');
-        optionsHead.appendChild(editToggle);
+        const optionsActions = Dom.el('div', 'cm-options-actions');
+        if (definition.options.length > 1) {
+            optionsActions.appendChild(button(I18n.t('ui.reorderOptions'), function () {
+                openReorderModal();
+            }, 'cm-options-reorder'));
+        }
+        optionsActions.appendChild(editToggle);
+        optionsHead.appendChild(optionsActions);
         detail.appendChild(optionsHead);
         const filter = document.createElement('input');
         filter.type = 'search';
@@ -1785,6 +1792,95 @@ function openPalette(controller, options) {
         actionsNode.appendChild(closeButton2);
 
         modalShell(I18n.t('export.title', { title: file.tool.title }), bodyNode, actionsNode);
+    }
+
+    /**
+     * Reorder every option in the tool. The list is the command insertion
+     * order (definition.options is already sorted), so the Required/Optional
+     * grouping in the palette cannot hide where a flag really lands.
+     */
+    function openReorderModal() {
+        if (!state.current || !state.definition) {
+            notify(new Error(I18n.t('status.selectToolFirst')));
+            return;
+        }
+        const tool = state.current;
+        const items = state.definition.options.filter(function (option) {
+            return option && option.noteId;
+        });
+        if (items.length < 2) {
+            return;
+        }
+
+        const bodyNode = Dom.el('div', '');
+        bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('reorder.note')));
+        const listNode = Dom.el('div', 'cm-reorder-list');
+        bodyNode.appendChild(listNode);
+
+        function move(index, delta) {
+            const target = index + delta;
+            if (target < 0 || target >= items.length) {
+                return;
+            }
+            const moved = items.splice(index, 1)[0];
+            items.splice(target, 0, moved);
+            renderItems();
+        }
+
+        function renderItems() {
+            listNode.textContent = '';
+            items.forEach(function (option, index) {
+                const row = Dom.el('div', 'cm-reorder-item');
+                row.appendChild(Dom.el('span', 'cm-reorder-pos', String(index + 1)));
+                const info = Dom.el('div', 'cm-reorder-info');
+                info.appendChild(Dom.el('span', 'cm-opt-title', option.title));
+                if (option.flag) {
+                    info.appendChild(Dom.el('code', 'cm-opt-flag', option.flag));
+                }
+                row.appendChild(info);
+
+                const buttons = Dom.el('div', 'cm-reorder-buttons');
+                const up = button('↑', function () {
+                    move(index, -1);
+                }, 'cm-reorder-move');
+                up.setAttribute('aria-label', I18n.t('reorder.moveUpLabel', { title: option.title }));
+                up.disabled = index === 0;
+                buttons.appendChild(up);
+                const down = button('↓', function () {
+                    move(index, 1);
+                }, 'cm-reorder-move');
+                down.setAttribute('aria-label', I18n.t('reorder.moveDownLabel', { title: option.title }));
+                down.disabled = index === items.length - 1;
+                buttons.appendChild(down);
+                row.appendChild(buttons);
+                listNode.appendChild(row);
+            });
+        }
+
+        renderItems();
+
+        const save = Dom.el('button', 'cm-button', I18n.t('ui.save'));
+        save.type = 'button';
+        save.addEventListener('click', guarded(async function () {
+            save.disabled = true;
+            try {
+                await controller.reorderOptions(Model.orderPlan(items));
+            } catch (error) {
+                save.disabled = false;
+                throw error;
+            }
+            closeModal();
+            await controller.refresh();
+            await runSearch();
+            await selectItem(tool, { preserveValues: true });
+            setStatus(I18n.t('status.optionsReordered'));
+        }, notify));
+
+        const actionsNode = Dom.el('div', 'cm-inline');
+        actionsNode.appendChild(save);
+        actionsNode.appendChild(modalCloseButton());
+
+        modalShell(I18n.t('reorder.title', { title: tool.title }), bodyNode, actionsNode);
     }
 
     function openOptionModal(existing) {

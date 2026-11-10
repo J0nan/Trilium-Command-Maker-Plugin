@@ -1904,3 +1904,45 @@ test('a tool inside a subcategory shows the whole folder path in the list and th
     assert.equal(find(title, (node) => classed(node, 'cm-cat')).textContent, 'Infrastructure / Media');
     assert.deepEqual(env.calls.errors, []);
 });
+
+test('reorder options modal saves the command insertion order in one action', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+
+    const reorder = find(dom.body, (node) => classed(node, 'cm-options-reorder'));
+    assert.ok(reorder, 'the options header offers a reorder control');
+    reorder.click();
+
+    const modal = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-modal')), 'reorder modal');
+    let items = findAll(modal, (node) => classed(node, 'cm-reorder-item'));
+    assert.equal(items.length, 3, 'every note-backed option is listed');
+    assert.equal(find(items[0], (node) => classed(node, 'cm-opt-title')).textContent, 'Input file');
+
+    const down = find(items[0], (node) => node.getAttribute('aria-label') === 'Move "Input file" down');
+    assert.ok(down, 'each row has a move-down control');
+    down.click();
+
+    items = findAll(modal, (node) => classed(node, 'cm-reorder-item'));
+    assert.deepEqual(
+        items.map((node) => find(node, (entry) => classed(entry, 'cm-opt-title')).textContent),
+        ['Video codec', 'Input file', 'Verbose']
+    );
+
+    buttonWithText(modal, 'Save').click();
+    await waitFor(
+        () => env.calls.backend.filter((call) => call.action === 'reorderOptions').length > 0,
+        'reorder options action'
+    );
+    const call = env.calls.backend.filter((entry) => entry.action === 'reorderOptions')[0];
+    assert.deepEqual(JSON.parse(JSON.stringify(call.order)), [
+        { noteId: 'o2', order: 10 },
+        { noteId: 'o1', order: 20 },
+        { noteId: 'o3', order: 30 }
+    ]);
+});

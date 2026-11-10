@@ -11,8 +11,8 @@
  * module-scope binding and dispatches on literal action strings only.
  *
  * Actions: bootstrap | setLanguage | setPanelWidth | createTool | importTool |
- * addOption | updateOption | importOptions | deleteOption | setToolBase |
- * setToolsRoot | savePreset | deletePreset | ensureTab
+ * addOption | updateOption | reorderOptions | importOptions | deleteOption |
+ * setToolBase | setToolsRoot | savePreset | deletePreset | ensureTab
  */
 
 function beRun(params) {
@@ -655,6 +655,29 @@ function beRun(params) {
         return { ok: true };
     }
 
+    /**
+     * Persist a whole option ordering in one round-trip. Each target must be an
+     * option note; the caller already computed the sequential `#cmOrder` values.
+     */
+    function reorderOptions() {
+        const entries = Array.isArray(options.order) ? options.order : [];
+        const noteIds = [];
+        for (let index = 0; index < entries.length; index += 1) {
+            const entry = entries[index] || {};
+            const note = requireNote(entry.noteId, text('back.errorOptionNote', 'Option note not found'));
+            if (!hasLabel(note, labels.option)) {
+                throw new Error(text('back.errorNotAnOptionPrefix', 'Note is not an option of a tool: ') + note.noteId);
+            }
+            const order = Number(entry.order);
+            if (!isFinite(order)) {
+                throw new Error(text('back.errorInvalidOrder', 'Option order must be a number: ') + note.noteId);
+            }
+            note.setLabel(labels.order, String(order));
+            noteIds.push(note.noteId);
+        }
+        return { noteIds: noteIds };
+    }
+
     function setToolBase() {
         const tool = requireNote(options.toolId, text('back.errorToolNote', 'Tool note not found'));
         if (nonEmpty(options.base)) {
@@ -826,6 +849,8 @@ function beRun(params) {
             return addOption();
         case 'updateOption':
             return updateOption();
+        case 'reorderOptions':
+            return reorderOptions();
         case 'importOptions':
             return importOptions();
         case 'deleteOption':

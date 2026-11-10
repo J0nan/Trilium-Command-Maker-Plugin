@@ -196,6 +196,40 @@ function sortOptions(left, right) {
     return Render.compareOptions(left, right);
 }
 
+/**
+ * Sequential #cmOrder values for an option list already in command order.
+ * Only note-backed options can be persisted; inferred placeholders have no
+ * note to label. Ten-point gaps leave room for a manual #cmOrder later.
+ */
+function orderPlan(options) {
+    const plan = [];
+    (Array.isArray(options) ? options : []).forEach(function (option) {
+        if (option && option.noteId) {
+            plan.push({ noteId: option.noteId, order: (plan.length + 1) * 10 });
+        }
+    });
+    return plan;
+}
+
+/** New order plan after moving one option to a position in command order. */
+function reorderPlan(options, noteId, targetIndex) {
+    const noteOptions = (Array.isArray(options) ? options : []).filter(function (option) {
+        return option && option.noteId;
+    });
+    const from = noteOptions.findIndex(function (option) {
+        return option.noteId === noteId;
+    });
+    if (from === -1) {
+        return [];
+    }
+    const ordered = noteOptions.slice();
+    const moved = ordered.splice(from, 1)[0];
+    const parsed = Number(targetIndex);
+    const target = isFinite(parsed) ? Math.max(0, Math.min(ordered.length, parsed)) : ordered.length;
+    ordered.splice(target, 0, moved);
+    return orderPlan(ordered);
+}
+
 function buildTool(note) {
     const snapshot = note || {};
     const labels = snapshot.labels || {};
@@ -634,6 +668,8 @@ module.exports = {
     deriveBase,
     optionFromNote,
     sortOptions,
+    orderPlan,
+    reorderPlan,
     buildTool,
     defaultValueMap,
     valuesFromExample,

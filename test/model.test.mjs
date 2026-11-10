@@ -235,6 +235,33 @@ test('sortOptions ignores leading dashes when comparing flags', () => {
     assert.deepEqual(list.map((entry) => entry.title), ['aardvark', 'yellow']);
 });
 
+test('orderPlan assigns sequential orders and skips note-less options', () => {
+    const plan = Model.orderPlan([
+        { noteId: 'a' },
+        { noteId: null },
+        { noteId: 'b' }
+    ]);
+    assert.deepEqual(plan, [
+        { noteId: 'a', order: 10 },
+        { noteId: 'b', order: 20 }
+    ]);
+});
+
+test('reorderPlan moves one option and renumbers the whole list', () => {
+    const options = [{ noteId: 'a' }, { noteId: 'b' }, { noteId: 'c' }];
+    assert.deepEqual(Model.reorderPlan(options, 'c', 0), [
+        { noteId: 'c', order: 10 },
+        { noteId: 'a', order: 20 },
+        { noteId: 'b', order: 30 }
+    ]);
+    assert.deepEqual(Model.reorderPlan(options, 'a', 99), [
+        { noteId: 'b', order: 10 },
+        { noteId: 'c', order: 20 },
+        { noteId: 'a', order: 30 }
+    ]);
+    assert.deepEqual(Model.reorderPlan(options, 'missing', 0), []);
+});
+
 test('toolTemplate contains exactly the three required H2 sections', () => {
     const content = Model.toolTemplate();
     const headings = content.match(/<h2>[^<]+<\/h2>/g) || [];

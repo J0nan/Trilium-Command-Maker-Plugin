@@ -52,6 +52,13 @@ const EN = {
     'ui.exportTool': 'Export tool',
     'ui.importOptions': 'Import options',
     'ui.addOption': 'Add option',
+    'ui.reorderOptions': 'Reorder options',
+    'reorder.title': 'Reorder options for "{title}"',
+    'reorder.note': 'This list follows the order the options are inserted into the command. Use the arrows to move one, then save.',
+    'reorder.moveUp': 'Move up',
+    'reorder.moveDown': 'Move down',
+    'reorder.moveUpLabel': 'Move "{title}" up',
+    'reorder.moveDownLabel': 'Move "{title}" down',
     'ui.edit': 'Edit',
     'ui.editOptionsConfig': 'Edit options configuration',
     'ui.done': 'Done',
@@ -150,6 +157,7 @@ const EN = {
     'status.optionLabelRequired': 'Option label is required.',
     'status.optionAdded': 'Option added.',
     'status.optionUpdated': 'Option updated.',
+    'status.optionsReordered': 'Options reordered.',
     'status.toolsRootActive': 'Tools folder updated to the active note.',
     'status.enterNoteId': 'Enter a note ID.',
     'status.toolsRootUpdated': 'Tools folder updated.',
@@ -404,6 +412,7 @@ const EN = {
     'back.errorSettingsNote': 'Command Maker settings note not found',
     'back.errorNotAnOptionPrefix': 'Note is not an option of a tool: ',
     'back.errorNoteNotFound': 'Note not found',
+    'back.errorInvalidOrder': 'Option order must be a number: ',
     'back.errorPresetsSave': 'The Presets note is not valid JSON. Fix or delete it before saving a preset.',
     'back.errorPresetsDelete': 'The Presets note is not valid JSON. Fix or delete it before deleting a preset.',
     'back.errorUnknownActionPrefix': 'Unknown action: ',
@@ -489,6 +498,13 @@ const ES = {
     'ui.exportTool': 'Exportar herramienta',
     'ui.importOptions': 'Importar opciones',
     'ui.addOption': 'Añadir opción',
+    'ui.reorderOptions': 'Reordenar opciones',
+    'reorder.title': 'Reordenar opciones de "{title}"',
+    'reorder.note': 'La lista sigue el orden en que las opciones se insertan en el comando. Usa las flechas para mover una y guarda.',
+    'reorder.moveUp': 'Subir',
+    'reorder.moveDown': 'Bajar',
+    'reorder.moveUpLabel': 'Subir "{title}"',
+    'reorder.moveDownLabel': 'Bajar "{title}"',
     'ui.edit': 'Editar',
     'ui.editOptionsConfig': 'Editar configuración de opciones',
     'ui.done': 'Listo',
@@ -587,6 +603,7 @@ const ES = {
     'status.optionLabelRequired': 'La etiqueta de la opción es obligatoria.',
     'status.optionAdded': 'Opción añadida.',
     'status.optionUpdated': 'Opción actualizada.',
+    'status.optionsReordered': 'Opciones reordenadas.',
     'status.toolsRootActive': 'Carpeta de herramientas actualizada a la nota activa.',
     'status.enterNoteId': 'Introduce un ID de nota.',
     'status.toolsRootUpdated': 'Carpeta de herramientas actualizada.',
@@ -849,6 +866,7 @@ const ES = {
     'back.errorSettingsNote': 'No se encontró la nota de ajustes de Command Maker',
     'back.errorNotAnOptionPrefix': 'La nota no es una opción de ninguna herramienta: ',
     'back.errorNoteNotFound': 'Nota no encontrada',
+    'back.errorInvalidOrder': 'El orden de la opción debe ser un número: ',
     'back.errorPresetsSave': 'La nota de presets no es JSON válido. Arréglala o bórrala antes de guardar un preset.',
     'back.errorPresetsDelete': 'La nota de presets no es JSON válido. Arréglala o bórrala antes de borrar un preset.',
     'back.errorUnknownActionPrefix': 'Acción desconocida: ',
@@ -987,6 +1005,7 @@ const BACKEND_KEYS = [
     'back.errorToolsRoot', 'back.errorToolNote', 'back.errorOptionNote',
     'back.errorSettingsNote', 'back.errorNotAnOptionPrefix',
     'back.errorNoteNotFound',
+    'back.errorInvalidOrder',
     'back.errorPresetsSave', 'back.errorPresetsDelete',
     'back.errorUnknownActionPrefix'
 ];
@@ -3173,6 +3192,40 @@ function sortOptions(left, right) {
     return Render.compareOptions(left, right);
 }
 
+/**
+ * Sequential #cmOrder values for an option list already in command order.
+ * Only note-backed options can be persisted; inferred placeholders have no
+ * note to label. Ten-point gaps leave room for a manual #cmOrder later.
+ */
+function orderPlan(options) {
+    const plan = [];
+    (Array.isArray(options) ? options : []).forEach(function (option) {
+        if (option && option.noteId) {
+            plan.push({ noteId: option.noteId, order: (plan.length + 1) * 10 });
+        }
+    });
+    return plan;
+}
+
+/** New order plan after moving one option to a position in command order. */
+function reorderPlan(options, noteId, targetIndex) {
+    const noteOptions = (Array.isArray(options) ? options : []).filter(function (option) {
+        return option && option.noteId;
+    });
+    const from = noteOptions.findIndex(function (option) {
+        return option.noteId === noteId;
+    });
+    if (from === -1) {
+        return [];
+    }
+    const ordered = noteOptions.slice();
+    const moved = ordered.splice(from, 1)[0];
+    const parsed = Number(targetIndex);
+    const target = isFinite(parsed) ? Math.max(0, Math.min(ordered.length, parsed)) : ordered.length;
+    ordered.splice(target, 0, moved);
+    return orderPlan(ordered);
+}
+
 function buildTool(note) {
     const snapshot = note || {};
     const labels = snapshot.labels || {};
@@ -3611,6 +3664,8 @@ module.exports = {
     deriveBase,
     optionFromNote,
     sortOptions,
+    orderPlan,
+    reorderPlan,
     buildTool,
     defaultValueMap,
     valuesFromExample,
@@ -3706,8 +3761,16 @@ const CSS = [
     '.cm-edit-mode .cm-opt-edit{display:inline-block;}',
     '.cm-options-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:14px 0 6px;}',
     '.cm-options-title{margin:0;}',
+    '.cm-options-actions{display:flex;align-items:center;gap:6px;}',
+    '.cm-button.cm-options-reorder{padding:2px 10px;font-size:12px;}',
     '.cm-button.cm-options-edit{padding:2px 10px;font-size:12px;}',
     '.cm-filter{width:100%;box-sizing:border-box;margin-bottom:4px;}',
+    '.cm-reorder-list{display:flex;flex-direction:column;gap:4px;}',
+    '.cm-reorder-item{display:flex;align-items:center;gap:8px;padding:4px 6px;border:1px solid var(--main-border-color,#ddd);border-radius:6px;}',
+    '.cm-reorder-pos{width:2em;text-align:end;opacity:.6;font-variant-numeric:tabular-nums;}',
+    '.cm-reorder-info{flex:1;min-width:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}',
+    '.cm-reorder-buttons{display:flex;gap:4px;}',
+    '.cm-button.cm-reorder-move{padding:2px 8px;font-size:12px;}',
     '.cm-form{display:flex;flex-direction:column;gap:6px;margin-bottom:10px;}',
     '.cm-control{padding:6px 8px;border:1px solid var(--main-border-color,#ccc);border-radius:6px;background:var(--input-background-color,#fafafa);color:inherit;font:inherit;box-sizing:border-box;}',
     ':root .cm-control.cm-select{appearance:none;-webkit-appearance:none;background-color:var(--input-background-color,#fafafa);background-image:var(--select-arrow-svg,url(\'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="none" stroke="%23888888" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m2 5 6 6 6-6"/></svg>\'));background-position:right 0.75rem center;background-size:15px 20px;background-repeat:no-repeat;padding-inline-end:calc(15px + 1.5rem);}',
@@ -4125,8 +4188,8 @@ __def("backend", function (module, exports, __require) {
  * module-scope binding and dispatches on literal action strings only.
  *
  * Actions: bootstrap | setLanguage | setPanelWidth | createTool | importTool |
- * addOption | updateOption | importOptions | deleteOption | setToolBase |
- * setToolsRoot | savePreset | deletePreset | ensureTab
+ * addOption | updateOption | reorderOptions | importOptions | deleteOption |
+ * setToolBase | setToolsRoot | savePreset | deletePreset | ensureTab
  */
 
 function beRun(params) {
@@ -4769,6 +4832,29 @@ function beRun(params) {
         return { ok: true };
     }
 
+    /**
+     * Persist a whole option ordering in one round-trip. Each target must be an
+     * option note; the caller already computed the sequential `#cmOrder` values.
+     */
+    function reorderOptions() {
+        const entries = Array.isArray(options.order) ? options.order : [];
+        const noteIds = [];
+        for (let index = 0; index < entries.length; index += 1) {
+            const entry = entries[index] || {};
+            const note = requireNote(entry.noteId, text('back.errorOptionNote', 'Option note not found'));
+            if (!hasLabel(note, labels.option)) {
+                throw new Error(text('back.errorNotAnOptionPrefix', 'Note is not an option of a tool: ') + note.noteId);
+            }
+            const order = Number(entry.order);
+            if (!isFinite(order)) {
+                throw new Error(text('back.errorInvalidOrder', 'Option order must be a number: ') + note.noteId);
+            }
+            note.setLabel(labels.order, String(order));
+            noteIds.push(note.noteId);
+        }
+        return { noteIds: noteIds };
+    }
+
     function setToolBase() {
         const tool = requireNote(options.toolId, text('back.errorToolNote', 'Tool note not found'));
         if (nonEmpty(options.base)) {
@@ -4940,6 +5026,8 @@ function beRun(params) {
             return addOption();
         case 'updateOption':
             return updateOption();
+        case 'reorderOptions':
+            return reorderOptions();
         case 'importOptions':
             return importOptions();
         case 'deleteOption':
@@ -6192,7 +6280,14 @@ function openPalette(controller, options) {
             editToggle.setAttribute('aria-pressed', state.editMode ? 'true' : 'false');
         }, 'cm-options-edit');
         editToggle.setAttribute('aria-pressed', state.editMode ? 'true' : 'false');
-        optionsHead.appendChild(editToggle);
+        const optionsActions = Dom.el('div', 'cm-options-actions');
+        if (definition.options.length > 1) {
+            optionsActions.appendChild(button(I18n.t('ui.reorderOptions'), function () {
+                openReorderModal();
+            }, 'cm-options-reorder'));
+        }
+        optionsActions.appendChild(editToggle);
+        optionsHead.appendChild(optionsActions);
         detail.appendChild(optionsHead);
         const filter = document.createElement('input');
         filter.type = 'search';
@@ -6750,6 +6845,95 @@ function openPalette(controller, options) {
         actionsNode.appendChild(closeButton2);
 
         modalShell(I18n.t('export.title', { title: file.tool.title }), bodyNode, actionsNode);
+    }
+
+    /**
+     * Reorder every option in the tool. The list is the command insertion
+     * order (definition.options is already sorted), so the Required/Optional
+     * grouping in the palette cannot hide where a flag really lands.
+     */
+    function openReorderModal() {
+        if (!state.current || !state.definition) {
+            notify(new Error(I18n.t('status.selectToolFirst')));
+            return;
+        }
+        const tool = state.current;
+        const items = state.definition.options.filter(function (option) {
+            return option && option.noteId;
+        });
+        if (items.length < 2) {
+            return;
+        }
+
+        const bodyNode = Dom.el('div', '');
+        bodyNode.appendChild(Dom.el('div', 'cm-note', I18n.t('reorder.note')));
+        const listNode = Dom.el('div', 'cm-reorder-list');
+        bodyNode.appendChild(listNode);
+
+        function move(index, delta) {
+            const target = index + delta;
+            if (target < 0 || target >= items.length) {
+                return;
+            }
+            const moved = items.splice(index, 1)[0];
+            items.splice(target, 0, moved);
+            renderItems();
+        }
+
+        function renderItems() {
+            listNode.textContent = '';
+            items.forEach(function (option, index) {
+                const row = Dom.el('div', 'cm-reorder-item');
+                row.appendChild(Dom.el('span', 'cm-reorder-pos', String(index + 1)));
+                const info = Dom.el('div', 'cm-reorder-info');
+                info.appendChild(Dom.el('span', 'cm-opt-title', option.title));
+                if (option.flag) {
+                    info.appendChild(Dom.el('code', 'cm-opt-flag', option.flag));
+                }
+                row.appendChild(info);
+
+                const buttons = Dom.el('div', 'cm-reorder-buttons');
+                const up = button('↑', function () {
+                    move(index, -1);
+                }, 'cm-reorder-move');
+                up.setAttribute('aria-label', I18n.t('reorder.moveUpLabel', { title: option.title }));
+                up.disabled = index === 0;
+                buttons.appendChild(up);
+                const down = button('↓', function () {
+                    move(index, 1);
+                }, 'cm-reorder-move');
+                down.setAttribute('aria-label', I18n.t('reorder.moveDownLabel', { title: option.title }));
+                down.disabled = index === items.length - 1;
+                buttons.appendChild(down);
+                row.appendChild(buttons);
+                listNode.appendChild(row);
+            });
+        }
+
+        renderItems();
+
+        const save = Dom.el('button', 'cm-button', I18n.t('ui.save'));
+        save.type = 'button';
+        save.addEventListener('click', guarded(async function () {
+            save.disabled = true;
+            try {
+                await controller.reorderOptions(Model.orderPlan(items));
+            } catch (error) {
+                save.disabled = false;
+                throw error;
+            }
+            closeModal();
+            await controller.refresh();
+            await runSearch();
+            await selectItem(tool, { preserveValues: true });
+            setStatus(I18n.t('status.optionsReordered'));
+        }, notify));
+
+        const actionsNode = Dom.el('div', 'cm-inline');
+        actionsNode.appendChild(save);
+        actionsNode.appendChild(modalCloseButton());
+
+        modalShell(I18n.t('reorder.title', { title: tool.title }), bodyNode, actionsNode);
     }
 
     function openOptionModal(existing) {
@@ -7943,6 +8127,10 @@ function controller() {
             const saved = await backendAction('updateOption', { noteId: noteId, option: option });
             patchOptionSnapshot(noteId, saved);
             return saved;
+        },
+
+        reorderOptions(order) {
+            return backendAction('reorderOptions', { order: order || [] });
         },
 
         exportTool(noteId) {
