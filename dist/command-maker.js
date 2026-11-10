@@ -54,7 +54,7 @@ const EN = {
     'ui.addOption': 'Add option',
     'ui.reorderOptions': 'Reorder options',
     'reorder.title': 'Reorder options for "{title}"',
-    'reorder.note': 'This list follows the order the options are inserted into the command. Use the arrows to move one, then save.',
+    'reorder.note': 'This list follows the order the options are inserted into the command. Use the arrows or drag a row to move one, then save.',
     'reorder.moveUp': 'Move up',
     'reorder.moveDown': 'Move down',
     'reorder.moveUpLabel': 'Move "{title}" up',
@@ -500,7 +500,7 @@ const ES = {
     'ui.addOption': 'Añadir opción',
     'ui.reorderOptions': 'Reordenar opciones',
     'reorder.title': 'Reordenar opciones de "{title}"',
-    'reorder.note': 'La lista sigue el orden en que las opciones se insertan en el comando. Usa las flechas para mover una y guarda.',
+    'reorder.note': 'La lista sigue el orden en que las opciones se insertan en el comando. Usa las flechas o arrastra una fila para moverla y guarda.',
     'reorder.moveUp': 'Subir',
     'reorder.moveDown': 'Bajar',
     'reorder.moveUpLabel': 'Subir "{title}"',
@@ -3767,6 +3767,9 @@ const CSS = [
     '.cm-filter{width:100%;box-sizing:border-box;margin-bottom:4px;}',
     '.cm-reorder-list{display:flex;flex-direction:column;gap:4px;}',
     '.cm-reorder-item{display:flex;align-items:center;gap:8px;padding:4px 6px;border:1px solid var(--main-border-color,#ddd);border-radius:6px;}',
+    '.cm-reorder-item.is-dragging{opacity:.45;}',
+    '.cm-reorder-item.is-drop-target{border-color:var(--link-color,#4f8cff);box-shadow:inset 0 0 0 1px var(--link-color,#4f8cff);}',
+    '.cm-reorder-handle{opacity:.45;cursor:grab;user-select:none;font-size:14px;line-height:1;}',
     '.cm-reorder-pos{width:2em;text-align:end;opacity:.6;font-variant-numeric:tabular-nums;}',
     '.cm-reorder-info{flex:1;min-width:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}',
     '.cm-reorder-buttons{display:flex;gap:4px;}',
@@ -6880,10 +6883,25 @@ function openPalette(controller, options) {
             renderItems();
         }
 
+        let dragIndex = null;
+
+        function clearDropTargets() {
+            Array.prototype.forEach.call(listNode.children, function (node) {
+                if (node.classList) {
+                    node.classList.remove('is-drop-target');
+                }
+            });
+        }
+
         function renderItems() {
             listNode.textContent = '';
             items.forEach(function (option, index) {
                 const row = Dom.el('div', 'cm-reorder-item');
+                row.draggable = true;
+                row.setAttribute('draggable', 'true');
+                const handle = Dom.el('span', 'cm-reorder-handle', '⠿');
+                handle.setAttribute('aria-hidden', 'true');
+                row.appendChild(handle);
                 row.appendChild(Dom.el('span', 'cm-reorder-pos', String(index + 1)));
                 const info = Dom.el('div', 'cm-reorder-info');
                 info.appendChild(Dom.el('span', 'cm-opt-title', option.title));
@@ -6906,6 +6924,69 @@ function openPalette(controller, options) {
                 down.disabled = index === items.length - 1;
                 buttons.appendChild(down);
                 row.appendChild(buttons);
+
+                row.addEventListener('dragstart', function (event) {
+                    dragIndex = index;
+                    row.classList.add('is-dragging');
+                    if (event && event.dataTransfer) {
+                        event.dataTransfer.effectAllowed = 'move';
+                        if (typeof event.dataTransfer.setData === 'function') {
+                            event.dataTransfer.setData('text/plain', String(index));
+                        }
+                    }
+                });
+                row.addEventListener('dragover', function (event) {
+                    if (dragIndex === null) {
+                        return;
+                    }
+                    if (event && typeof event.preventDefault === 'function') {
+                        event.preventDefault();
+                    }
+                    if (event && event.dataTransfer) {
+                        event.dataTransfer.dropEffect = 'move';
+                    }
+                    clearDropTargets();
+                    row.classList.add('is-drop-target');
+                });
+                row.addEventListener('drop', function (event) {
+                    if (dragIndex === null) {
+                        return;
+                    }
+                    if (event && typeof event.preventDefault === 'function') {
+                        event.preventDefault();
+                    }
+                    const from = dragIndex;
+                    dragIndex = null;
+                    // Drop above the row midpoint inserts before it and below
+                    // inserts after it. Without geometry (tests, odd browsers)
+                    // the drop falls back to "before this row".
+                    const rect = typeof row.getBoundingClientRect === 'function'
+                        ? row.getBoundingClientRect()
+                        : null;
+                    const after = rect && event && typeof event.clientY === 'number'
+                        ? event.clientY > rect.top + rect.height / 2
+                        : false;
+                    let target = index + (after ? 1 : 0);
+                    if (from < target) {
+                        target -= 1;
+                    }
+                    target = Math.max(0, Math.min(items.length - 1, target));
+                    if (target !== from) {
+                        const moved = items.splice(from, 1)[0];
+                        items.splice(target, 0, moved);
+                    }
+                    renderItems();
+                });
+                row.addEventListener('dragend', function () {
+                    dragIndex = null;
+                    clearDropTargets();
+                    Array.prototype.forEach.call(listNode.children, function (node) {
+                        if (node.classList) {
+                            node.classList.remove('is-dragging');
+                        }
+                    });
+                });
+
                 listNode.appendChild(row);
             });
         }

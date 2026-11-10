@@ -1946,3 +1946,42 @@ test('reorder options modal saves the command insertion order in one action', as
         { noteId: 'o3', order: 30 }
     ]);
 });
+
+test('reorder options modal supports drag and drop', async () => {
+    const dom = createDom();
+    const fixture = buildFixture();
+    const env = makeApi(fixture);
+    run(dom, env.api, env.navigator);
+
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-result')), 'search results');
+    findAll(dom.body, (node) => classed(node, 'cm-result'))[0].click();
+    await waitFor(() => find(dom.body, (node) => classed(node, 'cm-preview')), 'preview');
+
+    find(dom.body, (node) => classed(node, 'cm-options-reorder')).click();
+    const modal = await waitFor(() => find(dom.body, (node) => classed(node, 'cm-modal')), 'reorder modal');
+    let items = findAll(modal, (node) => classed(node, 'cm-reorder-item'));
+
+    items[2].dispatch('dragstart');
+    assert.equal(classed(items[2], 'is-dragging'), true, 'the dragged row is marked');
+    items[0].dispatch('dragover');
+    assert.equal(classed(items[0], 'is-drop-target'), true, 'the hovered row is marked');
+    items[0].dispatch('drop');
+
+    items = findAll(modal, (node) => classed(node, 'cm-reorder-item'));
+    assert.deepEqual(
+        items.map((node) => find(node, (entry) => classed(entry, 'cm-opt-title')).textContent),
+        ['Verbose', 'Input file', 'Video codec']
+    );
+
+    buttonWithText(modal, 'Save').click();
+    await waitFor(
+        () => env.calls.backend.filter((call) => call.action === 'reorderOptions').length > 0,
+        'reorder options action'
+    );
+    const call = env.calls.backend.filter((entry) => entry.action === 'reorderOptions')[0];
+    assert.deepEqual(JSON.parse(JSON.stringify(call.order)), [
+        { noteId: 'o3', order: 10 },
+        { noteId: 'o1', order: 20 },
+        { noteId: 'o2', order: 30 }
+    ]);
+});

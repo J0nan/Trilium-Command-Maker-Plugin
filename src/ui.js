@@ -1827,10 +1827,25 @@ function openPalette(controller, options) {
             renderItems();
         }
 
+        let dragIndex = null;
+
+        function clearDropTargets() {
+            Array.prototype.forEach.call(listNode.children, function (node) {
+                if (node.classList) {
+                    node.classList.remove('is-drop-target');
+                }
+            });
+        }
+
         function renderItems() {
             listNode.textContent = '';
             items.forEach(function (option, index) {
                 const row = Dom.el('div', 'cm-reorder-item');
+                row.draggable = true;
+                row.setAttribute('draggable', 'true');
+                const handle = Dom.el('span', 'cm-reorder-handle', '⠿');
+                handle.setAttribute('aria-hidden', 'true');
+                row.appendChild(handle);
                 row.appendChild(Dom.el('span', 'cm-reorder-pos', String(index + 1)));
                 const info = Dom.el('div', 'cm-reorder-info');
                 info.appendChild(Dom.el('span', 'cm-opt-title', option.title));
@@ -1853,6 +1868,69 @@ function openPalette(controller, options) {
                 down.disabled = index === items.length - 1;
                 buttons.appendChild(down);
                 row.appendChild(buttons);
+
+                row.addEventListener('dragstart', function (event) {
+                    dragIndex = index;
+                    row.classList.add('is-dragging');
+                    if (event && event.dataTransfer) {
+                        event.dataTransfer.effectAllowed = 'move';
+                        if (typeof event.dataTransfer.setData === 'function') {
+                            event.dataTransfer.setData('text/plain', String(index));
+                        }
+                    }
+                });
+                row.addEventListener('dragover', function (event) {
+                    if (dragIndex === null) {
+                        return;
+                    }
+                    if (event && typeof event.preventDefault === 'function') {
+                        event.preventDefault();
+                    }
+                    if (event && event.dataTransfer) {
+                        event.dataTransfer.dropEffect = 'move';
+                    }
+                    clearDropTargets();
+                    row.classList.add('is-drop-target');
+                });
+                row.addEventListener('drop', function (event) {
+                    if (dragIndex === null) {
+                        return;
+                    }
+                    if (event && typeof event.preventDefault === 'function') {
+                        event.preventDefault();
+                    }
+                    const from = dragIndex;
+                    dragIndex = null;
+                    // Drop above the row midpoint inserts before it and below
+                    // inserts after it. Without geometry (tests, odd browsers)
+                    // the drop falls back to "before this row".
+                    const rect = typeof row.getBoundingClientRect === 'function'
+                        ? row.getBoundingClientRect()
+                        : null;
+                    const after = rect && event && typeof event.clientY === 'number'
+                        ? event.clientY > rect.top + rect.height / 2
+                        : false;
+                    let target = index + (after ? 1 : 0);
+                    if (from < target) {
+                        target -= 1;
+                    }
+                    target = Math.max(0, Math.min(items.length - 1, target));
+                    if (target !== from) {
+                        const moved = items.splice(from, 1)[0];
+                        items.splice(target, 0, moved);
+                    }
+                    renderItems();
+                });
+                row.addEventListener('dragend', function () {
+                    dragIndex = null;
+                    clearDropTargets();
+                    Array.prototype.forEach.call(listNode.children, function (node) {
+                        if (node.classList) {
+                            node.classList.remove('is-dragging');
+                        }
+                    });
+                });
+
                 listNode.appendChild(row);
             });
         }
