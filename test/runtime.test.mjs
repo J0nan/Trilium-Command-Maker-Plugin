@@ -145,6 +145,44 @@ test('refresh indexes tool title, category, base, option help and What is? text'
     globalThis.api = undefined;
 });
 
+test('updateOption applies the backend snapshot without waiting for a refresh', async () => {
+    const built = makeTool();
+    const calls = installApi(built.tool, {});
+    await Runtime.refresh();
+
+    const api = globalThis.api;
+    const originalRun = api.runOnBackend;
+    api.runOnBackend = async function (fn, params) {
+        calls.push(params[0]);
+        if (params[0].action === 'updateOption') {
+            return {
+                noteId: 'o1',
+                title: 'Source file',
+                labels: {
+                    cmOption: '',
+                    cmFlag: '--src',
+                    cmType: 'string',
+                    cmDoc: 'Where to read.',
+                    cmDefault: 'in.mp4',
+                    cmOrder: '5'
+                }
+            };
+        }
+        return originalRun(fn, params);
+    };
+
+    await Runtime.controller().updateOption('o1', { label: 'Source file', flag: '--src', type: 'string' });
+    const loaded = await Runtime.load('t1');
+    const option = loaded.definition.options.filter((entry) => entry.noteId === 'o1')[0];
+    assert.equal(option.title, 'Source file');
+    assert.equal(option.flag, '--src');
+    assert.equal(option.help, 'Where to read.');
+    assert.equal(option.order, 5);
+    assert.equal(Runtime.search('where to read').length, 1, 'the edited help is searchable immediately');
+    assert.equal(Runtime.search('input file to read').length, 0, 'the old help is not searchable');
+    globalThis.api = undefined;
+});
+
 test('a tool nested under two folders exposes its whole category path', async () => {
     const built = makeTool();
     const outer = makeNote({ noteId: 'cat-outer', title: 'Infrastructure' });

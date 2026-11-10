@@ -307,6 +307,22 @@ function makeApi(fixture) {
             if (params[0].action === 'ensureTab') {
                 return { tabNoteId: 'tab-note', htmlNoteId: 'tab-html' };
             }
+            if (params[0].action === 'updateOption') {
+                const option = params[0].option || {};
+                const saved = { cmOption: '' };
+                if (option.flag) { saved.cmFlag = option.flag; }
+                if (option.help) { saved.cmDoc = option.help; }
+                if (option.type) { saved.cmType = option.type; }
+                if (option.defaultValue !== undefined) { saved.cmDefault = String(option.defaultValue); }
+                if (option.order !== undefined) { saved.cmOrder = String(option.order); }
+                if (option.required) { saved.cmRequired = 'true'; }
+                if (option.placeholder) { saved.cmPlaceholder = option.placeholder; }
+                if (option.quote) { saved.cmQuote = option.quote; }
+                if (option.separator === '=') { saved.cmSep = '='; }
+                if (option.mode === 'inline') { saved.cmMode = 'inline'; }
+                if (option.values && option.values.length) { saved.cmValues = option.values.join(','); }
+                return { noteId: params[0].noteId, title: option.label, labels: saved };
+            }
             return {};
         },
         async searchForNote(query) {
@@ -855,6 +871,14 @@ test('palette can edit an existing option and saves every attribute', async () =
     );
     const reloadedForm = find(dom.body, (node) => classed(node, 'cm-form'));
     assert.equal(classed(reloadedForm, 'cm-edit-mode'), true, 'edit mode survives the post-save reload');
+    assert.ok(
+        find(dom.body, (node) => classed(node, 'cm-opt-title') && node.textContent === 'Source file'),
+        'the saved label is visible without a refresh'
+    );
+    assert.ok(
+        find(dom.body, (node) => classed(node, 'cm-opt-flag') && node.textContent === '-src'),
+        'the saved flag is visible without a refresh'
+    );
     const done = find(dom.body, (node) => classed(node, 'cm-options-edit'));
     assert.equal(done.textContent, 'Done');
     done.click();

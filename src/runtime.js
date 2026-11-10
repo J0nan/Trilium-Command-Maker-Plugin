@@ -314,6 +314,7 @@ async function refresh() {
             categoryLabel: categoryLabel,
             labels: labels,
             note: note,
+            whatIs: whatIs,
             optionSnapshots: optionSnapshots
         };
 
@@ -349,6 +350,45 @@ async function refresh() {
 function search(query) {
     return index.filter(function (item) {
         return Model.matchesText(item.searchable, query);
+    });
+}
+
+/**
+ * Apply an option snapshot returned by the backend to the cached entry, so the
+ * detail pane reflects a saved edit immediately instead of waiting for the
+ * frontend entity cache to receive the backend change (or an F5 reload).
+ */
+function patchOptionSnapshot(noteId, saved) {
+    if (!saved || saved.noteId !== noteId) {
+        return;
+    }
+    entriesById.forEach(function (entry, entryId) {
+        const snapshots = entry.optionSnapshots || [];
+        let touched = false;
+        for (let snapshotIndex = 0; snapshotIndex < snapshots.length; snapshotIndex += 1) {
+            if (snapshots[snapshotIndex].noteId === noteId) {
+                snapshots[snapshotIndex].title = saved.title;
+                snapshots[snapshotIndex].labels = saved.labels || {};
+                touched = true;
+            }
+        }
+        if (!touched) {
+            return;
+        }
+        const item = index.find(function (candidate) {
+            return candidate.noteId === entryId;
+        });
+        if (item) {
+            item.searchable = Model.searchableText({
+                title: entry.title,
+                category: entry.categoryLabel,
+                description: entry.labels[Model.LABELS.description] || '',
+                tags: entry.labels[Model.LABELS.tags],
+                base: entry.labels[Model.LABELS.base] || Model.deriveBase(entry.title),
+                whatIs: entry.whatIs,
+                optionText: Model.optionNotesText(snapshots)
+            });
+        }
     });
 }
 
@@ -825,8 +865,10 @@ function controller() {
             return backendAction('addOption', { toolId: toolId, option: option });
         },
 
-        updateOption(noteId, option) {
-            return backendAction('updateOption', { noteId: noteId, option: option });
+        async updateOption(noteId, option) {
+            const saved = await backendAction('updateOption', { noteId: noteId, option: option });
+            patchOptionSnapshot(noteId, saved);
+            return saved;
         },
 
         exportTool(noteId) {

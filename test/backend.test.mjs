@@ -721,6 +721,10 @@ test('updateOption rewrites an option in place and refuses notes that are not op
         }
     });
     assert.equal(updated.noteId, added.noteId);
+    assert.equal(updated.title, 'New label');
+    assert.equal(updated.labels[labels.type], 'boolean');
+    assert.equal(updated.labels[labels.doc], 'New help.');
+    assert.equal(Object.prototype.hasOwnProperty.call(updated.labels, labels.flag), false, 'cleared labels are absent from the snapshot');
 
     const note = api.getNote(added.noteId);
     assert.equal(note.title, 'New label');

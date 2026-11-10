@@ -419,6 +419,22 @@ function beRun(params) {
         return note;
     }
 
+    /** Current label map of an option note, keyed by attribute name. */
+    function optionLabelSnapshot(note) {
+        const snapshot = {};
+        const keys = Object.keys(labels);
+        for (let index = 0; index < keys.length; index += 1) {
+            const name = labels[keys[index]];
+            if (hasLabel(note, name)) {
+                const value = note.getLabelValue(name);
+                if (value !== null && value !== undefined) {
+                    snapshot[name] = String(value);
+                }
+            }
+        }
+        return snapshot;
+    }
+
     /**
      * Rewrite one existing option note in place. The target must carry the
      * option label, so a wrong or hostile note id can never edit an unrelated
@@ -432,7 +448,13 @@ function beRun(params) {
         const spec = options.option || {};
         note.title = nonEmpty(spec.label) ? String(spec.label) : text('back.noteOption', 'Option');
         applyOptionLabels(note, spec);
-        return { noteId: note.noteId };
+        // Return the saved attributes so the frontend can update its cached
+        // entity before Trilium's entity-change event reaches the UI.
+        return {
+            noteId: note.noteId,
+            title: note.title,
+            labels: optionLabelSnapshot(note)
+        };
     }
 
     function parentForRoot() {

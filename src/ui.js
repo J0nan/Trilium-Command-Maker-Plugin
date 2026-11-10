@@ -1937,7 +1937,12 @@ function openPalette(controller, options) {
                 await controller.addOption(tool.noteId, spec);
             }
             closeModal();
-            await controller.refresh();
+            // An edit patches the runtime cache from the backend's saved
+            // snapshot, so a refresh would overwrite it with the stale
+            // frontend entity and hide the change until the next reload.
+            if (!editing) {
+                await controller.refresh();
+            }
             await runSearch();
             await selectItem(tool, { preserveValues: true });
             setStatus(I18n.t(editing ? 'status.optionUpdated' : 'status.optionAdded'));

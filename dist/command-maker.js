@@ -4518,6 +4518,22 @@ function beRun(params) {
         return note;
     }
 
+    /** Current label map of an option note, keyed by attribute name. */
+    function optionLabelSnapshot(note) {
+        const snapshot = {};
+        const keys = Object.keys(labels);
+        for (let index = 0; index < keys.length; index += 1) {
+            const name = labels[keys[index]];
+            if (hasLabel(note, name)) {
+                const value = note.getLabelValue(name);
+                if (value !== null && value !== undefined) {
+                    snapshot[name] = String(value);
+                }
+            }
+        }
+        return snapshot;
+    }
+
     /**
      * Rewrite one existing option note in place. The target must carry the
      * option label, so a wrong or hostile note id can never edit an unrelated
@@ -4531,7 +4547,13 @@ function beRun(params) {
         const spec = options.option || {};
         note.title = nonEmpty(spec.label) ? String(spec.label) : text('back.noteOption', 'Option');
         applyOptionLabels(note, spec);
-        return { noteId: note.noteId };
+        // Return the saved attributes so the frontend can update its cached
+        // entity before Trilium's entity-change event reaches the UI.
+        return {
+            noteId: note.noteId,
+            title: note.title,
+            labels: optionLabelSnapshot(note)
+        };
     }
 
     function parentForRoot() {
@@ -6865,7 +6887,12 @@ function openPalette(controller, options) {
                 await controller.addOption(tool.noteId, spec);
             }
             closeModal();
-            await controller.refresh();
+            // An edit patches the runtime cache from the backend's saved
+            // snapshot, so a refresh would overwrite it with the stale
+            // frontend entity and hide the change until the next reload.
+            if (!editing) {
+                await controller.refresh();
+            }
             await runSearch();
             await selectItem(tool, { preserveValues: true });
             setStatus(I18n.t(editing ? 'status.optionUpdated' : 'status.optionAdded'));
@@ -7346,6 +7373,7 @@ async function refresh() {
             categoryLabel: categoryLabel,
             labels: labels,
             note: note,
+            whatIs: whatIs,
             optionSnapshots: optionSnapshots
         };
 
@@ -7381,6 +7409,45 @@ async function refresh() {
 function search(query) {
     return index.filter(function (item) {
         return Model.matchesText(item.searchable, query);
+    });
+}
+
+/**
+ * Apply an option snapshot returned by the backend to the cached entry, so the
+ * detail pane reflects a saved edit immediately instead of waiting for the
+ * frontend entity cache to receive the backend change (or an F5 reload).
+ */
+function patchOptionSnapshot(noteId, saved) {
+    if (!saved || saved.noteId !== noteId) {
+        return;
+    }
+    entriesById.forEach(function (entry, entryId) {
+        const snapshots = entry.optionSnapshots || [];
+        let touched = false;
+        for (let snapshotIndex = 0; snapshotIndex < snapshots.length; snapshotIndex += 1) {
+            if (snapshots[snapshotIndex].noteId === noteId) {
+                snapshots[snapshotIndex].title = saved.title;
+                snapshots[snapshotIndex].labels = saved.labels || {};
+                touched = true;
+            }
+        }
+        if (!touched) {
+            return;
+        }
+        const item = index.find(function (candidate) {
+            return candidate.noteId === entryId;
+        });
+        if (item) {
+            item.searchable = Model.searchableText({
+                title: entry.title,
+                category: entry.categoryLabel,
+                description: entry.labels[Model.LABELS.description] || '',
+                tags: entry.labels[Model.LABELS.tags],
+                base: entry.labels[Model.LABELS.base] || Model.deriveBase(entry.title),
+                whatIs: entry.whatIs,
+                optionText: Model.optionNotesText(snapshots)
+            });
+        }
     });
 }
 
@@ -7857,8 +7924,10 @@ function controller() {
             return backendAction('addOption', { toolId: toolId, option: option });
         },
 
-        updateOption(noteId, option) {
-            return backendAction('updateOption', { noteId: noteId, option: option });
+        async updateOption(noteId, option) {
+            const saved = await backendAction('updateOption', { noteId: noteId, option: option });
+            patchOptionSnapshot(noteId, saved);
+            return saved;
         },
 
         exportTool(noteId) {
