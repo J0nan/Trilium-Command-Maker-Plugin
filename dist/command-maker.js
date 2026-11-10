@@ -3776,7 +3776,7 @@ const CSS = [
     '.cm-reorder-flag{font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;padding:1px 6px;border-radius:4px;border:1px solid transparent;background:var(--accented-background-color,#eef2ff);opacity:.4;}',
     '.cm-reorder-flag.is-emitted{opacity:1;border-color:var(--link-color,#4f8cff);}',
     '.cm-reorder-list{display:flex;flex-direction:column;gap:4px;}',
-    '.cm-reorder-item{display:flex;align-items:center;gap:8px;padding:4px 6px;border:1px solid var(--main-border-color,#ddd);border-radius:6px;}',
+    '.cm-reorder-item{display:flex;align-items:center;gap:8px;padding:4px 6px;border:1px solid var(--main-border-color,#ddd);border-radius:6px;transition:box-shadow .12s ease,opacity .12s ease;}',
     '.cm-reorder-item.is-dragging{opacity:.45;}',
     '.cm-reorder-item.is-drop-before{box-shadow:inset 0 2px 0 0 var(--link-color,#4f8cff);}',
     '.cm-reorder-item.is-drop-after{box-shadow:inset 0 -2px 0 0 var(--link-color,#4f8cff);}',
@@ -6893,6 +6893,9 @@ function openPalette(controller, options) {
 
         let scrollBody = null;
         let dragIndex = null;
+        let dropRow = null;
+        let scrollFrame = null;
+        let scrollVelocity = 0;
 
         function flagLabel(option) {
             if (option.mode === 'inline') {
@@ -6927,13 +6930,14 @@ function openPalette(controller, options) {
             return true;
         }
 
-        function renderPreview() {
-            stripNode.textContent = '';
-            items.forEach(function (option) {
-                const chip = Dom.el('code', 'cm-reorder-flag' + (isEmitted(option) ? ' is-emitted' : ''), flagLabel(option));
-                chip.setAttribute('title', option.title);
-                stripNode.appendChild(chip);
-            });
+        function buildChip(option) {
+            const chip = Dom.el('code', 'cm-reorder-flag' + (isEmitted(option) ? ' is-emitted' : ''), flagLabel(option));
+            chip.setAttribute('title', option.title);
+            return chip;
+        }
+
+        function indexOfRow(row) {
+            return Array.prototype.indexOf.call(listNode.children, row);
         }
 
         function captureTops() {
@@ -6964,9 +6968,46 @@ function openPalette(controller, options) {
                 }
                 node.animate(
                     [{ transform: 'translateY(' + delta + 'px)' }, { transform: 'translateY(0)' }],
-                    { duration: 180, easing: 'ease-out' }
+                    { duration: 140, easing: 'ease-out' }
                 );
             });
+        }
+
+        function insertNodeAt(container, node, from, to) {
+            const reference = to > from
+                ? container.children[to + 1] || null
+                : container.children[to] || null;
+            container.insertBefore(node, reference);
+        }
+
+        function updateRowStates() {
+            const rows = listNode.children;
+            for (let index = 0; index < rows.length; index += 1) {
+                const row = rows[index];
+                if (row.cmPosNode) {
+                    row.cmPosNode.textContent = String(index + 1);
+                }
+                if (row.cmUpButton) {
+                    row.cmUpButton.disabled = index === 0;
+                }
+                if (row.cmDownButton) {
+                    row.cmDownButton.disabled = index === rows.length - 1;
+                }
+            }
+        }
+
+        /** Move one row and its preview chip without rebuilding the list. */
+        function reorderTo(from, to) {
+            if (from === to || from < 0 || to < 0 || from >= items.length || to >= items.length) {
+                return;
+            }
+            const previousTops = captureTops();
+            insertNodeAt(listNode, listNode.children[from], from, to);
+            insertNodeAt(stripNode, stripNode.children[from], from, to);
+            const moved = items.splice(from, 1)[0];
+            items.splice(to, 0, moved);
+            updateRowStates();
+            animateRows(previousTops);
         }
 
         function dropAfter(row, event) {
@@ -6977,141 +7018,175 @@ function openPalette(controller, options) {
             return Boolean(rect) && event.clientY > rect.top + rect.height / 2;
         }
 
-        function autoScroll(event) {
+        function clearDropMarker() {
+            if (!dropRow) {
+                return;
+            }
+            dropRow.classList.remove('is-drop-before');
+            dropRow.classList.remove('is-drop-after');
+            dropRow = null;
+        }
+
+        function markDrop(row, after) {
+            if (dropRow !== row) {
+                clearDropMarker();
+                dropRow = row;
+            }
+            row.classList.toggle('is-drop-before', !after);
+            row.classList.toggle('is-drop-after', after);
+        }
+
+        function stopAutoScroll() {
+            scrollVelocity = 0;
+            if (scrollFrame && typeof cancelAnimationFrame === 'function') {
+                cancelAnimationFrame(scrollFrame);
+            }
+            scrollFrame = null;
+        }
+
+        function scrollTick() {
+            scrollFrame = null;
+            if (!scrollVelocity) {
+                return;
+            }
+            const current = Number(scrollBody && scrollBody.scrollTop) || 0;
+            if (scrollBody) {
+                scrollBody.scrollTop = Math.max(0, current + scrollVelocity);
+            }
+            scrollFrame = requestAnimationFrame(scrollTick);
+        }
+
+        function updateAutoScroll(event) {
             if (!scrollBody || typeof scrollBody.getBoundingClientRect !== 'function' || !event || typeof event.clientY !== 'number') {
+                stopAutoScroll();
                 return;
             }
             const rect = scrollBody.getBoundingClientRect();
             if (!rect) {
+                stopAutoScroll();
                 return;
             }
-            const threshold = 48;
-            const speed = 18;
-            const current = Number(scrollBody.scrollTop) || 0;
+            const threshold = 56;
+            const maxSpeed = 14;
+            let velocity = 0;
             if (event.clientY < rect.top + threshold) {
-                scrollBody.scrollTop = Math.max(0, current - speed);
+                velocity = -maxSpeed * (1 - Math.max(0, event.clientY - rect.top) / threshold);
             } else if (event.clientY > rect.bottom - threshold) {
-                scrollBody.scrollTop = current + speed;
+                velocity = maxSpeed * (1 - Math.max(0, rect.bottom - event.clientY) / threshold);
+            }
+            scrollVelocity = Math.round(velocity);
+            if (!scrollVelocity) {
+                stopAutoScroll();
+                return;
+            }
+            if (typeof requestAnimationFrame !== 'function') {
+                const current = Number(scrollBody.scrollTop) || 0;
+                scrollBody.scrollTop = Math.max(0, current + scrollVelocity);
+                return;
+            }
+            if (!scrollFrame) {
+                scrollFrame = requestAnimationFrame(scrollTick);
             }
         }
 
         function move(index, delta) {
-            const target = index + delta;
-            if (target < 0 || target >= items.length) {
-                return;
+            reorderTo(index, index + delta);
+        }
+
+        function buildRow(option) {
+            const row = Dom.el('div', 'cm-reorder-item');
+            row.cmNoteId = option.noteId;
+            row.draggable = true;
+            row.setAttribute('draggable', 'true');
+            const handle = Dom.el('span', 'cm-reorder-handle', '⠿');
+            handle.setAttribute('aria-hidden', 'true');
+            row.appendChild(handle);
+            row.cmPosNode = Dom.el('span', 'cm-reorder-pos', '');
+            row.appendChild(row.cmPosNode);
+            const info = Dom.el('div', 'cm-reorder-info');
+            info.appendChild(Dom.el('span', 'cm-opt-title', option.title));
+            if (option.flag) {
+                info.appendChild(Dom.el('code', 'cm-opt-flag', option.flag));
             }
-            const previousTops = captureTops();
-            const moved = items.splice(index, 1)[0];
-            items.splice(target, 0, moved);
-            renderItems(previousTops);
-        }
+            row.appendChild(info);
 
-        function clearDropTargets() {
-            Array.prototype.forEach.call(listNode.children, function (node) {
-                if (node.classList) {
-                    node.classList.remove('is-drop-before');
-                    node.classList.remove('is-drop-after');
-                    node.classList.remove('is-drop-target');
+            const buttons = Dom.el('div', 'cm-reorder-buttons');
+            row.cmUpButton = button('↑', function () {
+                move(indexOfRow(row), -1);
+            }, 'cm-reorder-move');
+            row.cmUpButton.setAttribute('aria-label', I18n.t('reorder.moveUpLabel', { title: option.title }));
+            buttons.appendChild(row.cmUpButton);
+            row.cmDownButton = button('↓', function () {
+                move(indexOfRow(row), 1);
+            }, 'cm-reorder-move');
+            row.cmDownButton.setAttribute('aria-label', I18n.t('reorder.moveDownLabel', { title: option.title }));
+            buttons.appendChild(row.cmDownButton);
+            row.appendChild(buttons);
+
+            row.addEventListener('dragstart', function (event) {
+                dragIndex = indexOfRow(row);
+                row.classList.add('is-dragging');
+                if (event && event.dataTransfer) {
+                    event.dataTransfer.effectAllowed = 'move';
+                    if (typeof event.dataTransfer.setData === 'function') {
+                        event.dataTransfer.setData('text/plain', String(dragIndex));
+                    }
                 }
             });
+            row.addEventListener('dragover', function (event) {
+                if (dragIndex === null) {
+                    return;
+                }
+                if (event && typeof event.preventDefault === 'function') {
+                    event.preventDefault();
+                }
+                if (event && event.dataTransfer) {
+                    event.dataTransfer.dropEffect = 'move';
+                }
+                updateAutoScroll(event);
+                markDrop(row, dropAfter(row, event));
+            });
+            row.addEventListener('drop', function (event) {
+                if (dragIndex === null) {
+                    return;
+                }
+                if (event && typeof event.preventDefault === 'function') {
+                    event.preventDefault();
+                }
+                const from = dragIndex;
+                dragIndex = null;
+                stopAutoScroll();
+                clearDropMarker();
+                const after = dropAfter(row, event);
+                let target = indexOfRow(row) + (after ? 1 : 0);
+                if (from < target) {
+                    target -= 1;
+                }
+                target = Math.max(0, Math.min(items.length - 1, target));
+                reorderTo(from, target);
+            });
+            row.addEventListener('dragend', function () {
+                dragIndex = null;
+                stopAutoScroll();
+                clearDropMarker();
+                Array.prototype.forEach.call(listNode.children, function (node) {
+                    if (node.classList) {
+                        node.classList.remove('is-dragging');
+                    }
+                });
+            });
+
+            return row;
         }
 
-        function renderItems(previousTops) {
+        function renderItems() {
             listNode.textContent = '';
-            items.forEach(function (option, index) {
-                const row = Dom.el('div', 'cm-reorder-item');
-                row.cmNoteId = option.noteId;
-                row.draggable = true;
-                row.setAttribute('draggable', 'true');
-                const handle = Dom.el('span', 'cm-reorder-handle', '⠿');
-                handle.setAttribute('aria-hidden', 'true');
-                row.appendChild(handle);
-                row.appendChild(Dom.el('span', 'cm-reorder-pos', String(index + 1)));
-                const info = Dom.el('div', 'cm-reorder-info');
-                info.appendChild(Dom.el('span', 'cm-opt-title', option.title));
-                if (option.flag) {
-                    info.appendChild(Dom.el('code', 'cm-opt-flag', option.flag));
-                }
-                row.appendChild(info);
-
-                const buttons = Dom.el('div', 'cm-reorder-buttons');
-                const up = button('↑', function () {
-                    move(index, -1);
-                }, 'cm-reorder-move');
-                up.setAttribute('aria-label', I18n.t('reorder.moveUpLabel', { title: option.title }));
-                up.disabled = index === 0;
-                buttons.appendChild(up);
-                const down = button('↓', function () {
-                    move(index, 1);
-                }, 'cm-reorder-move');
-                down.setAttribute('aria-label', I18n.t('reorder.moveDownLabel', { title: option.title }));
-                down.disabled = index === items.length - 1;
-                buttons.appendChild(down);
-                row.appendChild(buttons);
-
-                row.addEventListener('dragstart', function (event) {
-                    dragIndex = index;
-                    row.classList.add('is-dragging');
-                    if (event && event.dataTransfer) {
-                        event.dataTransfer.effectAllowed = 'move';
-                        if (typeof event.dataTransfer.setData === 'function') {
-                            event.dataTransfer.setData('text/plain', String(index));
-                        }
-                    }
-                });
-                row.addEventListener('dragover', function (event) {
-                    if (dragIndex === null) {
-                        return;
-                    }
-                    if (event && typeof event.preventDefault === 'function') {
-                        event.preventDefault();
-                    }
-                    if (event && event.dataTransfer) {
-                        event.dataTransfer.dropEffect = 'move';
-                    }
-                    autoScroll(event);
-                    clearDropTargets();
-                    row.classList.add(dropAfter(row, event) ? 'is-drop-after' : 'is-drop-before');
-                });
-                row.addEventListener('drop', function (event) {
-                    if (dragIndex === null) {
-                        return;
-                    }
-                    if (event && typeof event.preventDefault === 'function') {
-                        event.preventDefault();
-                    }
-                    const from = dragIndex;
-                    dragIndex = null;
-                    // Drop above the row midpoint inserts before it and below
-                    // inserts after it. Without geometry (tests, odd browsers)
-                    // the drop falls back to "before this row".
-                    const after = dropAfter(row, event);
-                    let target = index + (after ? 1 : 0);
-                    if (from < target) {
-                        target -= 1;
-                    }
-                    target = Math.max(0, Math.min(items.length - 1, target));
-                    const previousTops = captureTops();
-                    if (target !== from) {
-                        const moved = items.splice(from, 1)[0];
-                        items.splice(target, 0, moved);
-                    }
-                    renderItems(previousTops);
-                });
-                row.addEventListener('dragend', function () {
-                    dragIndex = null;
-                    clearDropTargets();
-                    Array.prototype.forEach.call(listNode.children, function (node) {
-                        if (node.classList) {
-                            node.classList.remove('is-dragging');
-                        }
-                    });
-                });
-
-                listNode.appendChild(row);
+            stripNode.textContent = '';
+            items.forEach(function (option) {
+                listNode.appendChild(buildRow(option));
+                stripNode.appendChild(buildChip(option));
             });
-            renderPreview();
-            animateRows(previousTops);
+            updateRowStates();
         }
 
         renderItems();

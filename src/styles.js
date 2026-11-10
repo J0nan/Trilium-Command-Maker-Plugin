@@ -69,7 +69,7 @@ const CSS = [
     '.cm-reorder-flag{font-family:var(--monospace-font-family,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;padding:1px 6px;border-radius:4px;border:1px solid transparent;background:var(--accented-background-color,#eef2ff);opacity:.4;}',
     '.cm-reorder-flag.is-emitted{opacity:1;border-color:var(--link-color,#4f8cff);}',
     '.cm-reorder-list{display:flex;flex-direction:column;gap:4px;}',
-    '.cm-reorder-item{display:flex;align-items:center;gap:8px;padding:4px 6px;border:1px solid var(--main-border-color,#ddd);border-radius:6px;}',
+    '.cm-reorder-item{display:flex;align-items:center;gap:8px;padding:4px 6px;border:1px solid var(--main-border-color,#ddd);border-radius:6px;transition:box-shadow .12s ease,opacity .12s ease;}',
     '.cm-reorder-item.is-dragging{opacity:.45;}',
     '.cm-reorder-item.is-drop-before{box-shadow:inset 0 2px 0 0 var(--link-color,#4f8cff);}',
     '.cm-reorder-item.is-drop-after{box-shadow:inset 0 -2px 0 0 var(--link-color,#4f8cff);}',

@@ -83,6 +83,24 @@ function createDom() {
                 node.children.push(child);
                 return child;
             },
+            insertBefore(child, reference) {
+                const existing = node.children.indexOf(child);
+                if (existing !== -1) {
+                    node.children.splice(existing, 1);
+                }
+                if (!reference) {
+                    node.children.push(child);
+                } else {
+                    const index = node.children.indexOf(reference);
+                    if (index === -1) {
+                        node.children.push(child);
+                    } else {
+                        node.children.splice(index, 0, child);
+                    }
+                }
+                child.parentNode = node;
+                return child;
+            },
             append() {
                 for (const child of arguments) {
                     node.children.push(child);
@@ -1923,6 +1941,7 @@ test('reorder options modal saves the command insertion order in one action', as
     let items = findAll(modal, (node) => classed(node, 'cm-reorder-item'));
     assert.equal(items.length, 3, 'every note-backed option is listed');
     assert.equal(find(items[0], (node) => classed(node, 'cm-opt-title')).textContent, 'Input file');
+    const beforeMove = items.slice();
 
     const down = find(items[0], (node) => node.getAttribute('aria-label') === 'Move "Input file" down');
     assert.ok(down, 'each row has a move-down control');
@@ -1933,6 +1952,9 @@ test('reorder options modal saves the command insertion order in one action', as
         items.map((node) => find(node, (entry) => classed(entry, 'cm-opt-title')).textContent),
         ['Video codec', 'Input file', 'Verbose']
     );
+    assert.equal(items[0], beforeMove[1], 'rows move instead of being rebuilt');
+    assert.equal(items[1], beforeMove[0]);
+    assert.equal(items[2], beforeMove[2]);
 
     buttonWithText(modal, 'Save').click();
     await waitFor(
